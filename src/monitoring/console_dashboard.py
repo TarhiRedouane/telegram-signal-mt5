@@ -363,9 +363,9 @@ Available commands:
 
     def _build_connections_panel(self) -> Panel:
         """Build the connections status panel."""
-        table = Table.grid(padding=(0, 2))
-        table.add_column("Service", style="cyan")
-        table.add_column("Status", justify="left")
+        table = Table.grid(padding=(0, 1), expand=True)
+        table.add_column("Svc", style="cyan", no_wrap=True)
+        table.add_column("Status", justify="left", no_wrap=True)
 
         # Get component healths
         component_healths = self.health_monitor.get_all_component_healths()
@@ -374,33 +374,33 @@ Available commands:
         telegram_health = component_healths.get('telegram')
         if telegram_health:
             if telegram_health.status == HealthStatus.HEALTHY:
-                telegram_status = "[green]● Connected[/green]"
+                telegram_status = "[green]UP[/green]"
             elif telegram_health.status == HealthStatus.DEGRADED:
-                telegram_status = "[yellow]◐ Degraded[/yellow]"
+                telegram_status = "[yellow]DEGRADED[/yellow]"
             else:
-                telegram_status = "[red]○ Disconnected[/red]"
+                telegram_status = "[red]DOWN[/red]"
         else:
-            telegram_status = "[red]○ Not configured[/red]"
+            telegram_status = "[red]OFF[/red]"
 
-        table.add_row("Telegram:", telegram_status)
+        table.add_row("TG", telegram_status)
 
         # MT5 status
         mt5_health = component_healths.get('mt5')
         if mt5_health and mt5_health.status == HealthStatus.HEALTHY:
-            mt5_status = "[green]● Connected[/green]"
+            mt5_status = "[green]UP[/green]"
         else:
-            mt5_status = "[yellow]◐ Not connected[/yellow]"
+            mt5_status = "[yellow]DOWN[/yellow]"
 
-        table.add_row("MT5:", mt5_status)
+        table.add_row("MT5", mt5_status)
 
         # OpenAI status
         openai_health = component_healths.get('openai')
         if openai_health and openai_health.status == HealthStatus.HEALTHY:
-            openai_status = "[green]● Connected[/green]"
+            openai_status = "[green]UP[/green]"
         else:
-            openai_status = "[yellow]◐ Not connected[/yellow]"
+            openai_status = "[yellow]DOWN[/yellow]"
 
-        table.add_row("OpenAI:", openai_status)
+        table.add_row("AI", openai_status)
 
         return Panel(table, title="[bold cyan]CONNECTIONS[/bold cyan]", border_style="cyan")
 

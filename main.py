@@ -322,6 +322,12 @@ class ApplicationManager:
             self.health_monitor.set_telegram_client(self.telegram_client)
         if self.mt5_connection_manager is not None:
             self.health_monitor.set_mt5_connection(self.mt5_connection_manager)
+        if settings.validate_openai_config():
+            try:
+                from config.openai_config import openai_client
+                self.health_monitor.set_openai_client(openai_client)
+            except Exception as e:
+                self.logger.warning(f"OpenAI client setup skipped: {e}")
 
         # Initialize metrics collector
         self.metrics_collector = MetricsCollector(max_history_minutes=60)
