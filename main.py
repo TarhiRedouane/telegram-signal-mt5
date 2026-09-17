@@ -16,9 +16,12 @@ from typing import Any, Dict, Optional
 sys.path.insert(0, str(Path(__file__).parent / "src"))
 
 from config.logging_config import get_logger, setup_logging
+from config.settings import settings
 from src.monitoring.health_checker import HealthMonitor
 from src.monitoring.metrics_collector import MetricsCollector
 from src.monitoring.console_dashboard import ConsoleDashboard
+from src.mt5_executor.connection import MT5ConnectionManager
+from src.telegram_client.auth_manager import AuthManager
 
 
 class ApplicationManager:
@@ -32,11 +35,13 @@ class ApplicationManager:
         self.shutdown_event = asyncio.Event()
         self.shutdown_timeout = 30  # seconds
         
-        # System components (will be initialized during startup)
+        # System components (initialized during startup)
         self.telegram_client = None
+        self.telegram_auth_manager = None
         self.mt5_connection = None
+        self.mt5_connection_manager = None
         self.health_monitor: Optional[HealthMonitor] = None
-        self.metrics_collector: Optional[MetricsCollector] = None  
+        self.metrics_collector: Optional[MetricsCollector] = None
         self.console_dashboard: Optional[ConsoleDashboard] = None
         
         # Component state for shutdown
@@ -49,21 +54,46 @@ class ApplicationManager:
         """Initialize and start all application components."""
         try:
             self.logger.info("Starting Telegram Signal EA application")
-            
+
             # Initialize monitoring components first
             await self._initialize_monitoring_components()
-            
-            # TODO: Initialize configuration
-            # TODO: Initialize database
-            # TODO: Start Telegram client
-            # TODO: Start signal processing pipeline  
-            # TODO: Start MT5 connection
-            
+
+            # Initialize runtime services and attach them to the health monitor
+            await self._initialize_runtime_components()
+
             self.logger.info("Application startup complete - ready to process signals")
-            
+
         except Exception as e:
             self.logger.error(f"Error during startup: {e}", exc_info=True)
             raise
+
+    async def _initialize_runtime_components(self) -> None:
+        """Initialize the real Telegram and MT5 runtime dependencies."""
+        self.logger.info("Initializing runtime components")
+
+        if self.health_monitor is None:
+            raise RuntimeError("Health monitor is not initialized")
+
+        if not settings.validate_telegram_config():
+            raise ValueError("Telegram configuration is incomplete. Check TELEGRAM_API_ID, TELEGRAM_API_HASH, and PHONE_NUMBER.")
+
+        if not settings.validate_mt5_config():
+            raise ValueError("MT5 configuration is incomplete. Check MT5_LOGIN, MT5_PASSWORD, and MT5_SERVER.")
+
+        self.telegram_auth_manager = AuthManager()
+        telegram_ready = await self.telegram_auth_manager.startup_authentication()
+        if not telegram_ready:
+            self.logger.warning("Telegram authentication did not complete successfully during startup")
+
+        self.telegram_client = self.telegram_auth_manager.telegram_client
+        self.health_monitor.set_telegram_client(self.telegram_client)
+
+        self.mt5_connection_manager = MT5ConnectionManager(max_connections=settings.mt5_max_connections)
+        await self.mt5_connection_manager._ensure_initialized()
+        self.mt5_connection = self.mt5_connection_manager
+        self.health_monitor.set_mt5_connection(self.mt5_connection_manager)
+
+        self.logger.info("Runtime components initialized and attached to health monitoring")
     
     async def _initialize_monitoring_components(self) -> None:
         """Initialize health monitoring, metrics collection, and dashboard."""
