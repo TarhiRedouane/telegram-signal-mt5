@@ -29,7 +29,7 @@ dependencies = [
     "aiohttp==3.11.11",
     "MetaTrader5==5.0.5200",
     "pydantic==2.10.6",
-    "pydantic-settings==2.7.4",
+    "pydantic-settings==2.6.1",
 ]
 
 [project.optional-dependencies]

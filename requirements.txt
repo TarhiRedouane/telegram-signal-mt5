@@ -22,7 +22,7 @@ ruff==0.8.4
 
 # Configuration and Logging
 pydantic==2.10.6
-pydantic-settings==2.7.4
+pydantic-settings==2.6.1
 
 # Monitoring and Dashboard
 rich==13.9.4
