@@ -247,10 +247,7 @@ class TestMessageHandler:
             result = self.handler.create_event_handler(mock_entities)
             
             # Verify NewMessage was called with correct parameters
-            mock_new_message.assert_called_once_with(
-                chats=mock_entities,
-                incoming=True
-            )
+            mock_new_message.assert_called_once_with(chats=mock_entities)
             assert result == mock_handler
 
     def test_get_monitoring_stats_initial(self):

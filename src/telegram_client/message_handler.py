@@ -180,11 +180,9 @@ class MessageHandler:
             Configured event handler
         """
         try:
-            # Create event handler for new messages from specified groups
-            handler = events.NewMessage(
-                chats=group_entities,
-                incoming=True
-            )
+            # Capture all new messages in configured chats. Restricting to
+            # incoming-only drops messages posted by the logged-in account.
+            handler = events.NewMessage(chats=group_entities)
 
             self.logger.info(f"Created event handler for {len(group_entities)} groups")
             return handler
