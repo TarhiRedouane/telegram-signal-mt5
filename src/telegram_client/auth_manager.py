@@ -28,6 +28,7 @@ class AuthManager:
         self.telegram_client = TelegramClient(session_name)
         self.session_manager = SessionManager(self.telegram_client)
         self._is_authenticated = False
+        self.last_startup_error: str | None = None
 
     async def startup_authentication(self) -> bool:
         """
@@ -39,15 +40,18 @@ class AuthManager:
         """
         try:
             self.logger.info("Starting Telegram authentication process...")
+            self.last_startup_error = None
 
             # Initialize client
             if not await self.telegram_client.initialize():
                 self.logger.error("Failed to initialize Telegram client")
+                self.last_startup_error = "Failed to initialize Telegram client"
                 return False
 
             # Connect to Telegram
             if not await self.telegram_client.connect():
                 self.logger.error("Failed to connect to Telegram")
+                self.last_startup_error = "Failed to connect to Telegram"
                 return False
 
             # Check if existing session is valid
@@ -65,10 +69,12 @@ class AuthManager:
                 return True
             else:
                 self.logger.error("Authentication failed")
+                self.last_startup_error = "Authentication failed (code or 2FA flow not completed)"
                 return False
 
         except Exception as e:
             self.logger.error(f"Startup authentication failed: {e}")
+            self.last_startup_error = str(e)
             return False
 
     async def _validate_existing_session(self) -> bool:

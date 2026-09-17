@@ -24,7 +24,7 @@ def test_start_uses_current_python_executable(monkeypatch):
 
 @pytest.mark.asyncio
 async def test_startup_wires_live_telegram_and_mt5_clients(monkeypatch):
-    """Startup should initialize Telegram and start MT5 initialization without blocking."""
+    """Startup should initialize Telegram, register monitoring, and start MT5 initialization without blocking."""
     manager = ApplicationManager()
     manager.health_monitor = AsyncMock()
     manager.health_monitor.set_telegram_client = lambda client: setattr(manager, "_test_telegram_set", client)
@@ -32,6 +32,8 @@ async def test_startup_wires_live_telegram_and_mt5_clients(monkeypatch):
 
     initialize_monitoring_mock = AsyncMock()
     monkeypatch.setattr(manager, "_initialize_monitoring_components", initialize_monitoring_mock)
+    initialize_telegram_monitoring_mock = AsyncMock()
+    monkeypatch.setattr(manager, "_initialize_telegram_monitoring", initialize_telegram_monitoring_mock)
     initialize_mt5_mock = AsyncMock()
     monkeypatch.setattr(manager, "_initialize_mt5_connection", initialize_mt5_mock)
     monkeypatch.setattr(settings, "validate_telegram_config", lambda: True)
@@ -48,6 +50,7 @@ async def test_startup_wires_live_telegram_and_mt5_clients(monkeypatch):
     assert manager.telegram_client is mock_auth_manager.telegram_client
     mock_auth_manager.startup_authentication.assert_awaited_once()
     initialize_monitoring_mock.assert_awaited_once()
+    initialize_telegram_monitoring_mock.assert_awaited_once()
     initialize_mt5_mock.assert_awaited_once()
 
 

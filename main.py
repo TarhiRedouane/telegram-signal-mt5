@@ -22,6 +22,8 @@ from src.monitoring.metrics_collector import MetricsCollector
 from src.monitoring.console_dashboard import ConsoleDashboard
 from src.mt5_executor.connection import MT5ConnectionManager
 from src.telegram_client.auth_manager import AuthManager
+from src.telegram_client.message_handler import MessageHandler
+from src.signal_parser.regex_parser import RegexParser
 
 
 class ApplicationManager:
@@ -38,11 +40,19 @@ class ApplicationManager:
         # System components (initialized during startup)
         self.telegram_client = None
         self.telegram_auth_manager = None
+        self.message_handler: Optional[MessageHandler] = None
+        self.regex_parser: Optional[RegexParser] = None
+        self._telegram_event_filter = None
         self.mt5_connection = None
         self.mt5_connection_manager = None
         self.health_monitor: Optional[HealthMonitor] = None
         self.metrics_collector: Optional[MetricsCollector] = None
         self.console_dashboard: Optional[ConsoleDashboard] = None
+
+        # Lightweight runtime telemetry for dashboard updates
+        self._messages_today = 0
+        self._parsed_signals_today = 0
+        self._last_message_time = None
         
         # Component state for shutdown
         self._component_tasks: Dict[str, asyncio.Task] = {}
@@ -62,6 +72,9 @@ class ApplicationManager:
             # Launch the monitoring plane as soon as Telegram auth is complete.
             await self._initialize_monitoring_components()
 
+            # Start Telegram group monitoring and message parsing.
+            await self._initialize_telegram_monitoring()
+
             # MT5 startup can be slow; initialize it in background so the
             # dashboard is visible instead of appearing blocked.
             self._component_tasks['mt5_init'] = asyncio.create_task(
@@ -75,7 +88,7 @@ class ApplicationManager:
             raise
 
     async def _initialize_runtime_components(self) -> None:
-        """Initialize the real Telegram and MT5 runtime dependencies."""
+        """Initialize core runtime dependencies that must be ready before monitoring."""
         self.logger.info("Initializing runtime components")
 
         if not settings.validate_telegram_config():
@@ -85,10 +98,91 @@ class ApplicationManager:
         telegram_ready = await self.telegram_auth_manager.startup_authentication()
         if not telegram_ready:
             self.logger.warning("Telegram authentication did not complete successfully during startup")
-            raise RuntimeError("Telegram authentication required before the application can continue")
+            startup_reason = self.telegram_auth_manager.last_startup_error or "Unknown Telegram startup error"
+            raise RuntimeError(
+                f"Telegram startup failed: {startup_reason}. "
+                "Check logs/app.log and ensure the Telegram session is not used by another process."
+            )
 
         self.telegram_client = self.telegram_auth_manager.telegram_client
         self.logger.info("Telegram runtime initialized")
+
+    async def _initialize_telegram_monitoring(self) -> None:
+        """Connect to configured groups and register Telegram message handlers."""
+        if self.telegram_client is None or self.telegram_client.client is None:
+            self.logger.warning("Telegram client unavailable; skipping message monitoring setup")
+            return
+
+        try:
+            connection_results = await self.telegram_client.connect_to_groups()
+            successful_groups = [
+                group
+                for group, result in connection_results.items()
+                if result.get("success")
+            ]
+
+            if not successful_groups:
+                self.logger.warning(
+                    "No Telegram groups connected. Check TELEGRAM_GROUPS and channel membership."
+                )
+                return
+
+            self.message_handler = MessageHandler()
+            self.regex_parser = RegexParser()
+            self.message_handler.set_message_callback(self._on_telegram_message)
+
+            group_entities = self.telegram_client.get_connected_group_entities()
+            self._telegram_event_filter = self.message_handler.create_event_handler(group_entities)
+            self.telegram_client.client.add_event_handler(
+                self.message_handler.handle_new_message,
+                self._telegram_event_filter
+            )
+
+            self.logger.info(
+                f"Telegram monitoring active for {len(successful_groups)} group(s): {successful_groups}"
+            )
+        except Exception as e:
+            self.logger.error(f"Failed to initialize Telegram monitoring: {e}", exc_info=True)
+
+    async def _on_telegram_message(self, metadata: Dict[str, Any]) -> None:
+        """Parse incoming Telegram messages and push actionable signals to dashboard."""
+        self._messages_today += 1
+        self._last_message_time = metadata.get("timestamp")
+
+        started_at = asyncio.get_running_loop().time()
+        raw_text = metadata.get("raw_text", "")
+        parsed_signal = self.regex_parser.parse(raw_text) if self.regex_parser else None
+        latency_ms = int((asyncio.get_running_loop().time() - started_at) * 1000)
+
+        if parsed_signal:
+            self._parsed_signals_today += 1
+            parsed_signal.telegram_message_id = int(metadata.get("telegram_message_id", 0))
+            parsed_signal.telegram_chat_id = int(metadata.get("telegram_chat_id", 0))
+            parsed_signal.sender = str(metadata.get("sender", "unknown"))
+            parsed_signal.timestamp = metadata.get("timestamp")
+
+            if self.console_dashboard is not None:
+                self.console_dashboard.add_recent_signal(
+                    signal_type="NEW",
+                    symbol=parsed_signal.symbol,
+                    action=parsed_signal.parsed_action.value,
+                    price=float(parsed_signal.entry_price),
+                    timestamp=parsed_signal.timestamp,
+                )
+
+            self.logger.info(
+                f"Signal detected from chat {parsed_signal.telegram_chat_id}: "
+                f"{parsed_signal.parsed_action.value} {parsed_signal.symbol} @ {parsed_signal.entry_price}"
+            )
+
+        success_rate = (self._parsed_signals_today / self._messages_today) * 100
+        if self.console_dashboard is not None:
+            self.console_dashboard.set_message_stats(
+                messages_today=self._messages_today,
+                last_message_time=self._last_message_time,
+                success_rate=round(success_rate, 2),
+                processing_latency_ms=latency_ms,
+            )
 
     async def _initialize_mt5_connection(self) -> None:
         """Initialize MT5 connection manager in background and attach it to monitoring."""

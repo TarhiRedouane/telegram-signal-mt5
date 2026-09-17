@@ -100,27 +100,50 @@ class TelegramClient:
             self.logger.error("Client not initialized. Call initialize() first")
             return False
 
-        try:
-            self.logger.info("Connecting to Telegram servers...")
-            await self.client.connect()
+        max_lock_retries = 4
+        lock_retry_delay = 0.75
 
-            if await self.client.is_user_authorized():
-                self._is_connected = True
-                self.logger.info("Connected to Telegram successfully (user authorized)")
-                return True
-            else:
+        for attempt in range(max_lock_retries + 1):
+            try:
+                self.logger.info("Connecting to Telegram servers...")
+                await self.client.connect()
+
+                if await self.client.is_user_authorized():
+                    self._is_connected = True
+                    self.logger.info("Connected to Telegram successfully (user authorized)")
+                    return True
+
                 self.logger.info("Connected to Telegram but user not authorized")
                 return True  # Connection successful, authentication needed separately
 
-        except ApiIdInvalidError:
-            self.logger.error("Invalid API ID or API Hash")
-            return False
-        except FloodWaitError as e:
-            self.logger.warning(f"Rate limited by Telegram, wait {e.seconds} seconds")
-            return False
-        except Exception as e:
-            self.logger.error(f"Failed to connect to Telegram: {e}")
-            return False
+            except ApiIdInvalidError:
+                self.logger.error("Invalid API ID or API Hash")
+                return False
+            except FloodWaitError as e:
+                self.logger.warning(f"Rate limited by Telegram, wait {e.seconds} seconds")
+                return False
+            except Exception as e:
+                error_text = str(e)
+                is_locked = "database is locked" in error_text.lower()
+
+                if is_locked and attempt < max_lock_retries:
+                    wait_seconds = lock_retry_delay * (attempt + 1)
+                    self.logger.warning(
+                        f"Telegram session DB locked (attempt {attempt + 1}/{max_lock_retries + 1}); retrying in {wait_seconds:.2f}s"
+                    )
+                    await asyncio.sleep(wait_seconds)
+                    continue
+
+                if is_locked:
+                    self.logger.error(
+                        f"Failed to connect to Telegram: session database is locked at {self.session_path}. "
+                        "Ensure only one app instance uses this session file."
+                    )
+                else:
+                    self.logger.error(f"Failed to connect to Telegram: {e}")
+                return False
+
+        return False
 
     async def disconnect(self) -> None:
         """
