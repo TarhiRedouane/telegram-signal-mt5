@@ -7,6 +7,7 @@ Provides start, stop, status, and configuration commands.
 import argparse
 import os
 import signal
+import subprocess
 import sys
 from pathlib import Path
 
@@ -33,9 +34,19 @@ class SignalEAManager:
         self.logger.info("Starting Signal EA application")
         print("Starting Signal EA application...")
 
-        # TODO: Implement daemon mode startup
-        # For now, just run main.py
-        os.system("python main.py &")
+        project_root = Path(__file__).resolve().parent
+        cmd = [sys.executable, str(project_root / "main.py")]
+        self.pid_file.parent.mkdir(parents=True, exist_ok=True)
+
+        process = subprocess.Popen(
+            cmd,
+            cwd=str(project_root),
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            start_new_session=True,
+        )
+
+        self.pid_file.write_text(str(process.pid), encoding="utf-8")
         print("Signal EA started successfully")
 
     def stop(self) -> None:
@@ -108,6 +119,8 @@ class SignalEAManager:
             os.kill(pid, 0)
             return True
         except (ProcessLookupError, PermissionError):
+            return False
+        except OSError:
             return False
 
     def get_pid(self) -> int | None:
