@@ -9,6 +9,7 @@ import json
 import logging
 import signal
 import sys
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any, Dict, Optional
 
@@ -53,6 +54,8 @@ class ApplicationManager:
         self._messages_today = 0
         self._parsed_signals_today = 0
         self._last_message_time = None
+        self._seen_message_keys: set[str] = set()
+        self._connected_group_entities: list[Any] = []
         
         # Component state for shutdown
         self._component_tasks: Dict[str, asyncio.Task] = {}
@@ -132,10 +135,17 @@ class ApplicationManager:
             self.message_handler.set_message_callback(self._on_telegram_message)
 
             group_entities = self.telegram_client.get_connected_group_entities()
+            self._connected_group_entities = group_entities
             self._telegram_event_filter = self.message_handler.create_event_handler(group_entities)
             self.telegram_client.client.add_event_handler(
                 self.message_handler.handle_new_message,
                 self._telegram_event_filter
+            )
+
+            # Fallback path: poll connected groups so we still ingest messages
+            # when Telegram push events are delayed or missed.
+            self._component_tasks['telegram_polling'] = asyncio.create_task(
+                self._poll_telegram_groups()
             )
 
             self.logger.info(
@@ -146,11 +156,29 @@ class ApplicationManager:
 
     async def _on_telegram_message(self, metadata: Dict[str, Any]) -> None:
         """Parse incoming Telegram messages and push actionable signals to dashboard."""
+        message_key = (
+            f"{metadata.get('telegram_chat_id', 0)}_"
+            f"{metadata.get('telegram_message_id', 0)}"
+        )
+        if message_key in self._seen_message_keys:
+            return
+
+        self._seen_message_keys.add(message_key)
+        if len(self._seen_message_keys) > 5000:
+            # Keep memory bounded while preserving recent dedupe keys.
+            self._seen_message_keys = set(list(self._seen_message_keys)[-2500:])
+
         self._messages_today += 1
         self._last_message_time = metadata.get("timestamp")
 
-        started_at = asyncio.get_running_loop().time()
         raw_text = metadata.get("raw_text", "")
+        preview = raw_text.replace("\n", " ").replace("\r", " ")[:120]
+        self.logger.info(
+            f"Message received chat={metadata.get('telegram_chat_id')} "
+            f"message_id={metadata.get('telegram_message_id')} text='{preview}'"
+        )
+
+        started_at = asyncio.get_running_loop().time()
         parsed_signal = self.regex_parser.parse(raw_text) if self.regex_parser else None
         latency_ms = int((asyncio.get_running_loop().time() - started_at) * 1000)
 
@@ -174,6 +202,11 @@ class ApplicationManager:
                 f"Signal detected from chat {parsed_signal.telegram_chat_id}: "
                 f"{parsed_signal.parsed_action.value} {parsed_signal.symbol} @ {parsed_signal.entry_price}"
             )
+        else:
+            self.logger.info(
+                f"Parse failed - no patterns matched for chat={metadata.get('telegram_chat_id')} "
+                f"message_id={metadata.get('telegram_message_id')}"
+            )
 
         success_rate = (self._parsed_signals_today / self._messages_today) * 100
         if self.console_dashboard is not None:
@@ -183,6 +216,81 @@ class ApplicationManager:
                 success_rate=round(success_rate, 2),
                 processing_latency_ms=latency_ms,
             )
+
+    async def _poll_telegram_groups(self) -> None:
+        """Fallback polling loop to ingest channel messages when push events are not received."""
+        if self.telegram_client is None or self.telegram_client.client is None:
+            return
+
+        if not self._connected_group_entities:
+            return
+
+        client = self.telegram_client.client
+        last_seen: dict[int, int] = {}
+
+        try:
+            # Seed per-group last seen IDs so only newer messages are processed.
+            for entity in self._connected_group_entities:
+                latest = await client.get_messages(entity, limit=1)
+                if latest and len(latest) > 0:
+                    last_seen[int(entity.id)] = int(latest[0].id)
+                else:
+                    last_seen[int(entity.id)] = 0
+
+            self.logger.info(
+                f"Telegram polling fallback started for {len(self._connected_group_entities)} group(s)"
+            )
+
+            while True:
+                await asyncio.sleep(3)
+
+                for entity in self._connected_group_entities:
+                    entity_id = int(entity.id)
+                    min_id = last_seen.get(entity_id, 0)
+
+                    messages = await client.get_messages(entity, min_id=min_id, limit=20)
+                    if not messages:
+                        continue
+
+                    ordered_messages = sorted(messages, key=lambda msg: msg.id)
+                    for message in ordered_messages:
+                        if not getattr(message, 'text', None):
+                            continue
+
+                        chat_id = getattr(message, 'chat_id', None)
+                        if chat_id is None:
+                            chat_id = -1000000000000 + entity_id
+
+                        from_id = getattr(message, 'from_id', None)
+                        sender = "unknown_sender"
+                        if from_id is not None and hasattr(from_id, 'user_id') and from_id.user_id is not None:
+                            sender = f"user_{from_id.user_id}"
+                        elif from_id is not None and hasattr(from_id, 'channel_id') and from_id.channel_id is not None:
+                            sender = f"channel_{from_id.channel_id}"
+
+                        metadata = {
+                            'telegram_message_id': int(message.id),
+                            'telegram_chat_id': int(chat_id),
+                            'sender': sender,
+                            'timestamp': message.date if message.date else datetime.now(UTC),
+                            'raw_text': message.text or '',
+                            'reply_to_message_id': message.reply_to.reply_to_msg_id if message.reply_to else None,
+                            'chat_title': getattr(entity, 'title', str(entity_id)),
+                            'is_forwarded': getattr(message, 'forward', None) is not None,
+                            'message_type': 'text',
+                        }
+
+                        await self._on_telegram_message(metadata)
+
+                    newest_id = int(ordered_messages[-1].id)
+                    if newest_id > min_id:
+                        last_seen[entity_id] = newest_id
+
+        except asyncio.CancelledError:
+            self.logger.info("Telegram polling fallback stopped")
+            raise
+        except Exception as e:
+            self.logger.error(f"Telegram polling fallback failed: {e}", exc_info=True)
 
     async def _initialize_mt5_connection(self) -> None:
         """Initialize MT5 connection manager in background and attach it to monitoring."""
