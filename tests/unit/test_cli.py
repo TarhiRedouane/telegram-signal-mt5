@@ -1,3 +1,4 @@
+import asyncio
 import os
 import sys
 from unittest.mock import AsyncMock, patch
@@ -23,30 +24,31 @@ def test_start_uses_current_python_executable(monkeypatch):
 
 @pytest.mark.asyncio
 async def test_startup_wires_live_telegram_and_mt5_clients(monkeypatch):
-    """Startup should register the real Telegram and MT5 clients with the health monitor."""
+    """Startup should initialize Telegram and start MT5 initialization without blocking."""
     manager = ApplicationManager()
     manager.health_monitor = AsyncMock()
-    manager.health_monitor.set_telegram_client = lambda client: setattr(manager, "telegram_client", client)
-    manager.health_monitor.set_mt5_connection = lambda connection: setattr(manager, "mt5_connection", connection)
-    monkeypatch.setattr(manager, "_initialize_monitoring_components", AsyncMock())
+    manager.health_monitor.set_telegram_client = lambda client: setattr(manager, "_test_telegram_set", client)
+    manager.health_monitor.set_mt5_connection = lambda connection: setattr(manager, "_test_mt5_set", connection)
+
+    initialize_monitoring_mock = AsyncMock()
+    monkeypatch.setattr(manager, "_initialize_monitoring_components", initialize_monitoring_mock)
+    initialize_mt5_mock = AsyncMock()
+    monkeypatch.setattr(manager, "_initialize_mt5_connection", initialize_mt5_mock)
     monkeypatch.setattr(settings, "validate_telegram_config", lambda: True)
-    monkeypatch.setattr(settings, "validate_mt5_config", lambda: True)
 
     mock_auth_manager = AsyncMock()
     mock_auth_manager.telegram_client = object()
     mock_auth_manager.startup_authentication = AsyncMock(return_value=True)
-    mock_mt5_manager = AsyncMock()
-    mock_mt5_manager._ensure_initialized = AsyncMock()
 
     monkeypatch.setattr("main.AuthManager", lambda: mock_auth_manager)
-    monkeypatch.setattr("main.MT5ConnectionManager", lambda max_connections=None: mock_mt5_manager)
 
     await manager.startup()
+    await asyncio.sleep(0)
 
     assert manager.telegram_client is mock_auth_manager.telegram_client
-    assert manager.mt5_connection is mock_mt5_manager
     mock_auth_manager.startup_authentication.assert_awaited_once()
-    mock_mt5_manager._ensure_initialized.assert_awaited_once()
+    initialize_monitoring_mock.assert_awaited_once()
+    initialize_mt5_mock.assert_awaited_once()
 
 
 def test_is_running_handles_windows_invalid_pid(monkeypatch, tmp_path):

@@ -55,11 +55,18 @@ class ApplicationManager:
         try:
             self.logger.info("Starting Telegram Signal EA application")
 
-            # Initialize monitoring components first
+            # Do the interactive Telegram auth first so the user can complete the
+            # verification flow before the monitor/dashboard starts.
+            await self._initialize_runtime_components()
+
+            # Launch the monitoring plane as soon as Telegram auth is complete.
             await self._initialize_monitoring_components()
 
-            # Initialize runtime services and attach them to the health monitor
-            await self._initialize_runtime_components()
+            # MT5 startup can be slow; initialize it in background so the
+            # dashboard is visible instead of appearing blocked.
+            self._component_tasks['mt5_init'] = asyncio.create_task(
+                self._initialize_mt5_connection()
+            )
 
             self.logger.info("Application startup complete - ready to process signals")
 
@@ -71,50 +78,62 @@ class ApplicationManager:
         """Initialize the real Telegram and MT5 runtime dependencies."""
         self.logger.info("Initializing runtime components")
 
-        if self.health_monitor is None:
-            raise RuntimeError("Health monitor is not initialized")
-
         if not settings.validate_telegram_config():
             raise ValueError("Telegram configuration is incomplete. Check TELEGRAM_API_ID, TELEGRAM_API_HASH, and PHONE_NUMBER.")
-
-        if not settings.validate_mt5_config():
-            raise ValueError("MT5 configuration is incomplete. Check MT5_LOGIN, MT5_PASSWORD, and MT5_SERVER.")
 
         self.telegram_auth_manager = AuthManager()
         telegram_ready = await self.telegram_auth_manager.startup_authentication()
         if not telegram_ready:
             self.logger.warning("Telegram authentication did not complete successfully during startup")
+            raise RuntimeError("Telegram authentication required before the application can continue")
 
         self.telegram_client = self.telegram_auth_manager.telegram_client
-        self.health_monitor.set_telegram_client(self.telegram_client)
+        self.logger.info("Telegram runtime initialized")
 
-        self.mt5_connection_manager = MT5ConnectionManager(max_connections=settings.mt5_max_connections)
-        await self.mt5_connection_manager._ensure_initialized()
-        self.mt5_connection = self.mt5_connection_manager
-        self.health_monitor.set_mt5_connection(self.mt5_connection_manager)
+    async def _initialize_mt5_connection(self) -> None:
+        """Initialize MT5 connection manager in background and attach it to monitoring."""
+        if not settings.validate_mt5_config():
+            self.logger.warning("MT5 configuration is incomplete; MT5 startup skipped")
+            return
 
-        self.logger.info("Runtime components initialized and attached to health monitoring")
+        try:
+            self.mt5_connection_manager = MT5ConnectionManager(max_connections=settings.mt5_max_connections)
+            self.mt5_connection = self.mt5_connection_manager
+
+            if self.health_monitor is not None:
+                self.health_monitor.set_mt5_connection(self.mt5_connection_manager)
+
+            await self.mt5_connection_manager._ensure_initialized()
+            self.logger.info("MT5 runtime initialized")
+        except asyncio.CancelledError:
+            raise
+        except Exception as e:
+            self.logger.warning(f"MT5 initialization failed, continuing in degraded mode: {e}")
     
     async def _initialize_monitoring_components(self) -> None:
         """Initialize health monitoring, metrics collection, and dashboard."""
         self.logger.info("Initializing monitoring components")
-        
+
         # Initialize health monitor
         self.health_monitor = HealthMonitor(check_interval=60)
-        
+        if self.telegram_client is not None:
+            self.health_monitor.set_telegram_client(self.telegram_client)
+        if self.mt5_connection_manager is not None:
+            self.health_monitor.set_mt5_connection(self.mt5_connection_manager)
+
         # Initialize metrics collector
         self.metrics_collector = MetricsCollector(max_history_minutes=60)
-        
+
         # Initialize console dashboard
         self.console_dashboard = ConsoleDashboard(
             health_monitor=self.health_monitor,
             refresh_interval=2
         )
-        
+
         # Start monitoring components
         await self.health_monitor.start_monitoring()
         self.logger.info("Health monitoring started")
-        
+
         # Start dashboard in background task
         self._component_tasks['dashboard'] = asyncio.create_task(
             self.console_dashboard.start_dashboard()
