@@ -25,6 +25,8 @@ from src.mt5_executor.connection import MT5ConnectionManager
 from src.telegram_client.auth_manager import AuthManager
 from src.telegram_client.message_handler import MessageHandler
 from src.signal_parser.regex_parser import RegexParser
+from src.database import close_database, get_signal_repository, initialize_database
+from telethon.utils import get_peer_id
 
 
 class ApplicationManager:
@@ -49,6 +51,8 @@ class ApplicationManager:
         self.health_monitor: Optional[HealthMonitor] = None
         self.metrics_collector: Optional[MetricsCollector] = None
         self.console_dashboard: Optional[ConsoleDashboard] = None
+        self._database_ready = False
+        self._signal_repository = None
 
         # Lightweight runtime telemetry for dashboard updates
         self._messages_today = 0
@@ -74,6 +78,9 @@ class ApplicationManager:
 
             # Launch the monitoring plane as soon as Telegram auth is complete.
             await self._initialize_monitoring_components()
+
+            # Initialize persistence components in degraded-safe mode.
+            await self._initialize_persistence_components()
 
             # Start Telegram group monitoring and message parsing.
             await self._initialize_telegram_monitoring()
@@ -117,16 +124,32 @@ class ApplicationManager:
             return
 
         try:
-            connection_results = await self.telegram_client.connect_to_groups()
-            successful_groups = [
-                group
-                for group, result in connection_results.items()
-                if result.get("success")
-            ]
+            successful_groups: list[str] = []
+            max_attempts = 3
+
+            for attempt in range(1, max_attempts + 1):
+                connection_results = await self.telegram_client.connect_to_groups()
+                successful_groups = [
+                    group
+                    for group, result in connection_results.items()
+                    if result.get("success")
+                ]
+
+                if successful_groups:
+                    break
+
+                if attempt < max_attempts:
+                    wait_seconds = float(attempt)
+                    self.logger.warning(
+                        "No Telegram groups connected (attempt "
+                        f"{attempt}/{max_attempts}); retrying in {wait_seconds:.1f}s"
+                    )
+                    await asyncio.sleep(wait_seconds)
 
             if not successful_groups:
                 self.logger.warning(
-                    "No Telegram groups connected. Check TELEGRAM_GROUPS and channel membership."
+                    "No Telegram groups connected after retries. "
+                    "If logs show 'database is locked', ensure only one app instance is running."
                 )
                 return
 
@@ -147,12 +170,25 @@ class ApplicationManager:
             self._component_tasks['telegram_polling'] = asyncio.create_task(
                 self._poll_telegram_groups()
             )
+            self.logger.info("Telegram polling fallback task scheduled")
 
             self.logger.info(
                 f"Telegram monitoring active for {len(successful_groups)} group(s): {successful_groups}"
             )
         except Exception as e:
             self.logger.error(f"Failed to initialize Telegram monitoring: {e}", exc_info=True)
+
+    async def _initialize_persistence_components(self) -> None:
+        """Initialize database and repositories needed for signal persistence."""
+        try:
+            await initialize_database(run_migrations=False)
+            self._signal_repository = get_signal_repository()
+            self._database_ready = True
+            self.logger.info("Persistence components initialized")
+        except Exception as e:
+            self._database_ready = False
+            self._signal_repository = None
+            self.logger.warning(f"Persistence initialization failed, continuing in degraded mode: {e}")
 
     async def _on_telegram_message(self, metadata: Dict[str, Any]) -> None:
         """Parse incoming Telegram messages and push actionable signals to dashboard."""
@@ -189,6 +225,26 @@ class ApplicationManager:
             parsed_signal.sender = str(metadata.get("sender", "unknown"))
             parsed_signal.timestamp = metadata.get("timestamp")
 
+            if self._database_ready and self._signal_repository is not None:
+                try:
+                    await self._signal_repository.save_signal({
+                        "telegram_message_id": parsed_signal.telegram_message_id,
+                        "telegram_chat_id": parsed_signal.telegram_chat_id,
+                        "sender": parsed_signal.sender,
+                        "timestamp": parsed_signal.timestamp,
+                        "raw_text": parsed_signal.raw_text,
+                        "parsed_action": parsed_signal.parsed_action.value,
+                        "symbol": parsed_signal.symbol,
+                        "entry_price": float(parsed_signal.entry_price),
+                        "stop_loss": float(parsed_signal.stop_loss) if parsed_signal.stop_loss is not None else None,
+                        "take_profit": float(parsed_signal.take_profit) if parsed_signal.take_profit is not None else None,
+                        "confidence_score": float(parsed_signal.confidence_score),
+                        "parser_type": parsed_signal.parser_type,
+                        "status": parsed_signal.status,
+                    })
+                except Exception as e:
+                    self.logger.warning(f"Failed to persist parsed signal: {e}")
+
             if self.console_dashboard is not None:
                 self.console_dashboard.add_recent_signal(
                     signal_type="NEW",
@@ -220,9 +276,11 @@ class ApplicationManager:
     async def _poll_telegram_groups(self) -> None:
         """Fallback polling loop to ingest channel messages when push events are not received."""
         if self.telegram_client is None or self.telegram_client.client is None:
+            self.logger.warning("Telegram polling fallback skipped: Telegram client unavailable")
             return
 
         if not self._connected_group_entities:
+            self.logger.warning("Telegram polling fallback skipped: no connected groups")
             return
 
         client = self.telegram_client.client
@@ -234,8 +292,18 @@ class ApplicationManager:
                 latest = await client.get_messages(entity, limit=1)
                 if latest and len(latest) > 0:
                     last_seen[int(entity.id)] = int(latest[0].id)
+                    self.logger.info(
+                        "Telegram polling seed "
+                        f"chat={get_peer_id(entity)} title='{getattr(entity, 'title', str(entity.id))}' "
+                        f"last_message_id={int(latest[0].id)}"
+                    )
                 else:
                     last_seen[int(entity.id)] = 0
+                    self.logger.info(
+                        "Telegram polling seed "
+                        f"chat={get_peer_id(entity)} title='{getattr(entity, 'title', str(entity.id))}' "
+                        "last_message_id=0"
+                    )
 
             self.logger.info(
                 f"Telegram polling fallback started for {len(self._connected_group_entities)} group(s)"
@@ -259,7 +327,7 @@ class ApplicationManager:
 
                         chat_id = getattr(message, 'chat_id', None)
                         if chat_id is None:
-                            chat_id = -1000000000000 + entity_id
+                            chat_id = get_peer_id(entity)
 
                         from_id = getattr(message, 'from_id', None)
                         sender = "unknown_sender"
@@ -369,11 +437,19 @@ class ApplicationManager:
             
             # Stop monitoring components
             await self._shutdown_monitoring_components()
-            
-            # TODO: Stop signal processing pipeline
-            # TODO: Close MT5 connections
-            # TODO: Close Telegram connections
-            # TODO: Close database connections
+
+            # Stop Telegram auth/client lifecycle
+            if self.telegram_auth_manager is not None:
+                await self.telegram_auth_manager.cleanup()
+
+            # Stop MT5 connection manager lifecycle
+            if self.mt5_connection_manager is not None:
+                await self.mt5_connection_manager.shutdown()
+
+            # Close database lifecycle
+            if self._database_ready:
+                await close_database()
+                self._database_ready = False
             
             # Cancel all component tasks
             await self._cancel_component_tasks()
