@@ -2,7 +2,15 @@
   "permissions": {
     "allow": [
       "Bash(git add *)",
-      "Bash(git commit *)"
+      "Bash(git commit *)",
+      "Bash(./.venv/Scripts/python.exe *)",
+      "Bash(tasklist)",
+      "Read(//c/Program Files/**)",
+      "Read(//c/Program Files \\(x86\\)/**)",
+      "Read(//c/Users/**)",
+      "Bash(python cli.py status)",
+      "Bash(wmic process *)",
+      "Bash(powershell -Command \"Get-CimInstance Win32_Process -Filter \\\\\"name='python.exe'\\\\\" | Select-Object ProcessId,CommandLine | Format-List\")"
     ]
   },
   "prefersReducedMotion": true
