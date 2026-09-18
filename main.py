@@ -25,6 +25,7 @@ from src.mt5_executor.connection import MT5ConnectionManager
 from src.telegram_client.auth_manager import AuthManager
 from src.telegram_client.message_handler import MessageHandler
 from src.signal_parser.regex_parser import RegexParser
+from src.signal_parser.llm_parser import LLMParser
 from src.database import close_database, get_signal_repository, initialize_database
 from telethon.utils import get_peer_id
 
@@ -45,6 +46,7 @@ class ApplicationManager:
         self.telegram_auth_manager = None
         self.message_handler: Optional[MessageHandler] = None
         self.regex_parser: Optional[RegexParser] = None
+        self.llm_parser: Optional[LLMParser] = None
         self._telegram_event_filter = None
         self.mt5_connection = None
         self.mt5_connection_manager = None
@@ -155,6 +157,13 @@ class ApplicationManager:
 
             self.message_handler = MessageHandler()
             self.regex_parser = RegexParser()
+            if settings.validate_openai_config():
+                try:
+                    from src.database.cache import llm_cache
+                    await llm_cache.initialize()
+                    self.llm_parser = LLMParser()
+                except Exception as e:
+                    self.logger.warning(f"LLM parser init skipped: {e}")
             self.message_handler.set_message_callback(self._on_telegram_message)
 
             group_entities = self.telegram_client.get_connected_group_entities()
@@ -216,6 +225,13 @@ class ApplicationManager:
 
         started_at = asyncio.get_running_loop().time()
         parsed_signal = self.regex_parser.parse(raw_text) if self.regex_parser else None
+
+        if parsed_signal is None and self.llm_parser is not None:
+            try:
+                parsed_signal = await self.llm_parser.parse_with_llm(raw_text)
+            except Exception as e:
+                self.logger.warning(f"LLM fallback parse failed: {e}")
+
         latency_ms = int((asyncio.get_running_loop().time() - started_at) * 1000)
 
         if parsed_signal:
@@ -225,39 +241,7 @@ class ApplicationManager:
             parsed_signal.sender = str(metadata.get("sender", "unknown"))
             parsed_signal.timestamp = metadata.get("timestamp")
 
-            if self._database_ready and self._signal_repository is not None:
-                try:
-                    await self._signal_repository.save_signal({
-                        "telegram_message_id": parsed_signal.telegram_message_id,
-                        "telegram_chat_id": parsed_signal.telegram_chat_id,
-                        "sender": parsed_signal.sender,
-                        "timestamp": parsed_signal.timestamp,
-                        "raw_text": parsed_signal.raw_text,
-                        "parsed_action": parsed_signal.parsed_action.value,
-                        "symbol": parsed_signal.symbol,
-                        "entry_price": float(parsed_signal.entry_price),
-                        "stop_loss": float(parsed_signal.stop_loss) if parsed_signal.stop_loss is not None else None,
-                        "take_profit": float(parsed_signal.take_profit) if parsed_signal.take_profit is not None else None,
-                        "confidence_score": float(parsed_signal.confidence_score),
-                        "parser_type": parsed_signal.parser_type,
-                        "status": parsed_signal.status,
-                    })
-                except Exception as e:
-                    self.logger.warning(f"Failed to persist parsed signal: {e}")
-
-            if self.console_dashboard is not None:
-                self.console_dashboard.add_recent_signal(
-                    signal_type="NEW",
-                    symbol=parsed_signal.symbol,
-                    action=parsed_signal.parsed_action.value,
-                    price=float(parsed_signal.entry_price),
-                    timestamp=parsed_signal.timestamp,
-                )
-
-            self.logger.info(
-                f"Signal detected from chat {parsed_signal.telegram_chat_id}: "
-                f"{parsed_signal.parsed_action.value} {parsed_signal.symbol} @ {parsed_signal.entry_price}"
-            )
+            await self._handle_parsed_signal(parsed_signal)
         else:
             self.logger.info(
                 f"Parse failed - no patterns matched for chat={metadata.get('telegram_chat_id')} "
@@ -272,6 +256,42 @@ class ApplicationManager:
                 success_rate=round(success_rate, 2),
                 processing_latency_ms=latency_ms,
             )
+
+    async def _handle_parsed_signal(self, parsed_signal) -> None:
+        """Persist a successfully parsed signal and update the dashboard."""
+        if self._database_ready and self._signal_repository is not None:
+            try:
+                await self._signal_repository.save_signal({
+                    "telegram_message_id": parsed_signal.telegram_message_id,
+                    "telegram_chat_id": parsed_signal.telegram_chat_id,
+                    "sender": parsed_signal.sender,
+                    "timestamp": parsed_signal.timestamp,
+                    "raw_text": parsed_signal.raw_text,
+                    "parsed_action": parsed_signal.parsed_action.value,
+                    "symbol": parsed_signal.symbol,
+                    "entry_price": float(parsed_signal.entry_price),
+                    "stop_loss": float(parsed_signal.stop_loss) if parsed_signal.stop_loss is not None else None,
+                    "take_profit": float(parsed_signal.take_profit) if parsed_signal.take_profit is not None else None,
+                    "confidence_score": float(parsed_signal.confidence_score),
+                    "parser_type": parsed_signal.parser_type,
+                    "status": parsed_signal.status,
+                })
+            except Exception as e:
+                self.logger.warning(f"Failed to persist parsed signal: {e}")
+
+        if self.console_dashboard is not None:
+            self.console_dashboard.add_recent_signal(
+                signal_type="NEW",
+                symbol=parsed_signal.symbol,
+                action=parsed_signal.parsed_action.value,
+                price=float(parsed_signal.entry_price),
+                timestamp=parsed_signal.timestamp,
+            )
+
+        self.logger.info(
+            f"Signal detected from chat {parsed_signal.telegram_chat_id}: "
+            f"{parsed_signal.parsed_action.value} {parsed_signal.symbol} @ {parsed_signal.entry_price}"
+        )
 
     async def _poll_telegram_groups(self) -> None:
         """Fallback polling loop to ingest channel messages when push events are not received."""

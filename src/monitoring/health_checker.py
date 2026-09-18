@@ -275,14 +275,24 @@ class HealthMonitor:
             )
             self.logger.error(f"MT5 health check exception: {e}")
 
+    @circuit_breaker(failure_threshold=3, recovery_timeout=30)
     async def _check_openai_health(self) -> None:
-        """Check OpenAI client health (future implementation)."""
-        # Placeholder for future OpenAI health checks
-        self._update_component_health(
-            "openai",
-            HealthStatus.DEGRADED,
-            "OpenAI health check not implemented yet"
-        )
+        """Check OpenAI API reachability with circuit breaker protection."""
+        try:
+            await self.openai_client.client.models.retrieve(self.openai_client.model)
+            self._update_component_health(
+                "openai",
+                HealthStatus.HEALTHY,
+                "API reachable",
+                details={"model": self.openai_client.model}
+            )
+        except Exception as e:
+            self._update_component_health(
+                "openai",
+                HealthStatus.DEGRADED,
+                f"API unreachable: {e}"
+            )
+            self.logger.error(f"OpenAI health check failed: {e}")
 
     def _update_component_health(
         self,

@@ -19,7 +19,11 @@
       "Bash(.venv/Scripts/python.exe -m pytest tests -k health -q)",
       "Bash(.venv/Scripts/python.exe -m pytest tests/integration/test_monitoring_system.py::TestMonitoringSystemIntegration::test_health_monitoring_integration tests/integration/test_telegram_monitoring.py::TestTelegramMonitoringIntegration::test_connection_health_monitoring -q)",
       "Bash(.venv/Scripts/python.exe -m ruff check src/monitoring/health_checker.py)",
-      "Bash(.venv/Scripts/python.exe -m mypy src/monitoring/health_checker.py)"
+      "Bash(.venv/Scripts/python.exe -m mypy src/monitoring/health_checker.py)",
+      "Bash(.venv/Scripts/python.exe -m pytest tests/unit/test_health_checker.py tests/unit/test_regex_parser.py -q)",
+      "Bash(.venv/Scripts/python.exe -c \"import ast; ast.parse\\(open\\('main.py'\\).read\\(\\)\\)\")",
+      "Bash(.venv/Scripts/python.exe -m mypy main.py src/monitoring/health_checker.py)",
+      "Bash(.venv/Scripts/python.exe -m pytest tests/unit/ -q)"
     ]
   },
   "prefersReducedMotion": true
