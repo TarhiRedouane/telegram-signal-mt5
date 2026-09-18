@@ -10,7 +10,16 @@
       "Read(//c/Users/**)",
       "Bash(python cli.py status)",
       "Bash(wmic process *)",
-      "Bash(powershell -Command \"Get-CimInstance Win32_Process -Filter \\\\\"name='python.exe'\\\\\" | Select-Object ProcessId,CommandLine | Format-List\")"
+      "Bash(powershell -Command \"Get-CimInstance Win32_Process -Filter \\\\\"name='python.exe'\\\\\" | Select-Object ProcessId,CommandLine | Format-List\")",
+      "Bash(python -m pytest tests/unit/test_mt5_connection.py -q)",
+      "Bash(.venv/Scripts/python.exe -m pytest tests/unit/test_mt5_connection.py -q)",
+      "Bash(powershell *)",
+      "Bash(tasklist *)",
+      "Bash(./venv/Scripts/python.exe -m pytest tests/unit/test_mt5_connection.py -q)",
+      "Bash(.venv/Scripts/python.exe -m pytest tests -k health -q)",
+      "Bash(.venv/Scripts/python.exe -m pytest tests/integration/test_monitoring_system.py::TestMonitoringSystemIntegration::test_health_monitoring_integration tests/integration/test_telegram_monitoring.py::TestTelegramMonitoringIntegration::test_connection_health_monitoring -q)",
+      "Bash(.venv/Scripts/python.exe -m ruff check src/monitoring/health_checker.py)",
+      "Bash(.venv/Scripts/python.exe -m mypy src/monitoring/health_checker.py)"
     ]
   },
   "prefersReducedMotion": true

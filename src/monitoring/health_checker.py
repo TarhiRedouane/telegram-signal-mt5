@@ -230,14 +230,50 @@ class HealthMonitor:
             # Log ERROR level alert as required by AC 5
             self.logger.error(f"Telegram health check exception: {e}")
 
+    @circuit_breaker(failure_threshold=3, recovery_timeout=30)
     async def _check_mt5_health(self) -> None:
-        """Check MT5 connection health (future implementation)."""
-        # Placeholder for future MT5 health checks
-        self._update_component_health(
-            "mt5",
-            HealthStatus.DEGRADED,
-            "MT5 health check not implemented yet"
-        )
+        """Check MT5 connection health with circuit breaker protection."""
+        try:
+            status = await self.mt5_connection.check_connection_health()
+
+            if status["healthy_connections"] > 0:
+                self._update_component_health(
+                    "mt5",
+                    HealthStatus.HEALTHY,
+                    "Connected and responding",
+                    details={
+                        "pool_size": status["pool_size"],
+                        "active_connections": status["active_connections"],
+                        "healthy_connections": status["healthy_connections"],
+                    }
+                )
+            elif status["active_connections"] > 0:
+                self._update_component_health(
+                    "mt5",
+                    HealthStatus.DEGRADED,
+                    "Connected but unhealthy",
+                    details={
+                        "pool_size": status["pool_size"],
+                        "active_connections": status["active_connections"],
+                        "healthy_connections": status["healthy_connections"],
+                    }
+                )
+                self.logger.error("MT5 connection degraded: connected but ping failed")
+            else:
+                self._update_component_health(
+                    "mt5",
+                    HealthStatus.UNHEALTHY,
+                    "Not connected to MT5 terminal"
+                )
+                self.logger.error("MT5 connection failed: not connected")
+
+        except Exception as e:
+            self._update_component_health(
+                "mt5",
+                HealthStatus.UNHEALTHY,
+                f"Health check failed: {e}"
+            )
+            self.logger.error(f"MT5 health check exception: {e}")
 
     async def _check_openai_health(self) -> None:
         """Check OpenAI client health (future implementation)."""
