@@ -173,21 +173,21 @@ class TestRegexParser:
 
     def test_validation_price_ranges(self, parser):
         """Test GOLD price range validation."""
-        # Valid range (3000-4000)
+        # Valid range (2000-10000)
         valid_signal = parser.parse("BUY GOLD 3500")
         assert valid_signal is not None
         validation = parser._validate_signal(valid_signal)
         assert validation.is_valid
 
         # Below range
-        low_result = parser.parse("BUY GOLD 2500")  # Will parse but fail validation
+        low_result = parser.parse("BUY GOLD 1500")  # Will parse but fail validation
         if low_result:
             validation = parser._validate_signal(low_result)
             assert not validation.is_valid
             assert any("outside valid range" in error for error in validation.errors)
 
         # Above range
-        high_result = parser.parse("BUY GOLD 5000")  # Will parse but fail validation
+        high_result = parser.parse("BUY GOLD 12000")  # Will parse but fail validation
         if high_result:
             validation = parser._validate_signal(high_result)
             assert not validation.is_valid

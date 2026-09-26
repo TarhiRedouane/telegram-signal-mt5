@@ -95,11 +95,11 @@
       "reason": "missing_price"
     },
     {
-      "text": "SELL GOLD 2500",
+      "text": "SELL GOLD 1500",
       "reason": "price_out_of_range"
     },
     {
-      "text": "BUY GOLD 5000",
+      "text": "BUY GOLD 12000",
       "reason": "price_out_of_range"
     },
     {

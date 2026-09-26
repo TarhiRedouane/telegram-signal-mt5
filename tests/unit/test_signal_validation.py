@@ -63,12 +63,12 @@ class TestSignalValidation:
         assert "High risk" in result.warnings
 
     def test_valid_gold_price_ranges(self, parser):
-        """Test valid GOLD price range validation (3000-4000)."""
+        """Test valid GOLD price range validation (2000-10000)."""
         valid_prices = [
-            Decimal("3000.0"),   # Lower boundary
+            Decimal("2000.0"),   # Lower boundary
             Decimal("3365.5"),   # Middle
-            Decimal("3999.99"),  # Near upper boundary
-            Decimal("4000.0")    # Upper boundary
+            Decimal("9999.99"),  # Near upper boundary
+            Decimal("10000.0")   # Upper boundary
         ]
 
         for price in valid_prices:
@@ -80,10 +80,10 @@ class TestSignalValidation:
     def test_invalid_gold_price_ranges(self, parser):
         """Test invalid GOLD price range validation."""
         invalid_prices = [
-            Decimal("2999.99"),  # Below range
-            Decimal("2500.0"),   # Well below
-            Decimal("4000.01"),  # Above range
-            Decimal("5000.0")    # Well above
+            Decimal("1999.99"),  # Below range
+            Decimal("1500.0"),   # Well below
+            Decimal("10000.01"), # Above range
+            Decimal("12000.0")   # Well above
         ]
 
         for price in invalid_prices:
@@ -299,9 +299,9 @@ class TestSignalValidation:
         # Signal with multiple validation issues
         problematic_signal = self.create_test_signal(
             action=ParsedAction.BUY,
-            entry_price=Decimal("2500"),        # Invalid price range
-            stop_loss=Decimal("2510"),          # Invalid SL logic
-            take_profit=Decimal("2490")         # Invalid TP logic
+            entry_price=Decimal("1500"),        # Invalid price range
+            stop_loss=Decimal("1510"),          # Invalid SL logic
+            take_profit=Decimal("1490")         # Invalid TP logic
         )
         validation = parser._validate_signal(problematic_signal)
         assert not validation.is_valid
@@ -331,7 +331,7 @@ class TestSignalValidation:
         # Invalid XAUUSD price should fail
         invalid_signal = self.create_test_signal(
             symbol="XAUUSD",
-            entry_price=Decimal("2500")  # Below valid range
+            entry_price=Decimal("1500")  # Below valid range
         )
         validation = parser._validate_signal(invalid_signal)
         assert not validation.is_valid
@@ -341,10 +341,10 @@ class TestSignalValidation:
         """Test validation edge cases and boundary conditions."""
         # Exactly at price boundaries
         boundary_signals = [
-            (Decimal("3000.0"), True),    # Lower boundary - valid
-            (Decimal("4000.0"), True),    # Upper boundary - valid
-            (Decimal("2999.99"), False),  # Just below - invalid
-            (Decimal("4000.01"), False)   # Just above - invalid
+            (Decimal("2000.0"), True),    # Lower boundary - valid
+            (Decimal("10000.0"), True),   # Upper boundary - valid
+            (Decimal("1999.99"), False),  # Just below - invalid
+            (Decimal("10000.01"), False)  # Just above - invalid
         ]
 
         for price, should_be_valid in boundary_signals:

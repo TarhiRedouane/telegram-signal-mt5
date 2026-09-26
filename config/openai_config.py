@@ -70,15 +70,17 @@ class OpenAIClient:
         """
         config = {
             "model": self._model,
-            "temperature": 0.1,  # Low temperature for consistent parsing
             "response_format": {"type": "json_object"}  # Structured JSON output
         }
-        
+
         # Add reasoning configuration and token limits for o1/gpt-5 series models
         if "gpt-5" in self._model.lower() or "o1" in self._model.lower():
+            # gpt-5/o1 models only support the default temperature (1) -- omit
+            # the param entirely rather than sending an unsupported value.
             config["reasoning_effort"] = settings.llm_reasoning_level
             config["max_completion_tokens"] = 1000  # Use new parameter for GPT-5
         else:
+            config["temperature"] = 0.1  # Low temperature for consistent parsing
             config["max_tokens"] = 1000  # Use legacy parameter for older models
             
         return config

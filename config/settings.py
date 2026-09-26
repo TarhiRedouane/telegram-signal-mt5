@@ -4,6 +4,7 @@ Follows coding standards: use python-dotenv for secure credential handling.
 """
 
 import os
+from decimal import Decimal
 from pathlib import Path
 from typing import Optional, List
 import re
@@ -53,6 +54,11 @@ class Settings:
         self.mt5_timeout_seconds: int = int(os.getenv("MT5_TIMEOUT_SECONDS", "60"))
         self.mt5_max_connections: int = int(os.getenv("MT5_MAX_CONNECTIONS", "5"))
         self.mt5_reconnect_delay: int = int(os.getenv("MT5_RECONNECT_DELAY", "5"))
+
+        # Signal validation
+        self.gold_price_min: Decimal = Decimal(os.getenv("GOLD_PRICE_MIN", "2000"))
+        self.gold_price_max: Decimal = Decimal(os.getenv("GOLD_PRICE_MAX", "10000"))
+        self.gold_max_price_deviation: Decimal = Decimal(os.getenv("GOLD_MAX_PRICE_DEVIATION", "100"))
 
         # Application Settings
         self.dev_mode: bool = os.getenv("DEV_MODE", "false").lower() == "true"

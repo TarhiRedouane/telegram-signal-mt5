@@ -9,6 +9,7 @@ import logging
 import os
 from contextlib import asynccontextmanager
 from datetime import UTC, datetime
+from decimal import Decimal
 from typing import Any, NamedTuple
 
 try:
@@ -830,6 +831,33 @@ class MT5ConnectionManager:
                 health_status["healthy_connections"] += 1
 
         return health_status
+
+    async def get_current_price(self, symbol: str) -> Decimal | None:
+        """
+        Get current mid price (bid/ask average) for a symbol.
+
+        Returns:
+            Mid price as Decimal, or None if unavailable
+        """
+        self.logger.info(f"Getting current price for symbol: {symbol}")
+        self.logger.info(f"Checking if MT5 module is available for symbol: {symbol}")
+        if mt5 is None:
+            self.logger.info(f"MT5 module is not available for symbol: {symbol}")
+            return None
+        try:
+            async with self.get_connection() as connection:
+                if not connection.connected:
+                    self.logger.warning(f"Connection not established for symbol: {symbol}")
+                    return None
+                tick = mt5.symbol_info_tick(symbol)
+                self.logger.info(f"Fetching tick data for symbol: {symbol}")
+                if tick is None:
+                    self.logger.warning(f"No tick data available for symbol: {symbol}")
+                    return None
+                return Decimal(str((tick.bid + tick.ask) / 2))
+        except Exception as e:
+            self.logger.warning(f"Failed to get current price for {symbol}: {e}")
+            return None
 
     async def detect_mt5_terminal_status(self) -> dict[str, Any]:
         """

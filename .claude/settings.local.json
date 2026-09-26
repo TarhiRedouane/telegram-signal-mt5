@@ -23,7 +23,10 @@
       "Bash(.venv/Scripts/python.exe -m pytest tests/unit/test_health_checker.py tests/unit/test_regex_parser.py -q)",
       "Bash(.venv/Scripts/python.exe -c \"import ast; ast.parse\\(open\\('main.py'\\).read\\(\\)\\)\")",
       "Bash(.venv/Scripts/python.exe -m mypy main.py src/monitoring/health_checker.py)",
-      "Bash(.venv/Scripts/python.exe -m pytest tests/unit/ -q)"
+      "Bash(.venv/Scripts/python.exe -m pytest tests/unit/ -q)",
+      "Bash(pytest tests/unit/test_regex_parser.py tests/unit/test_llm_parser.py tests/unit/test_mt5_connection.py -q)",
+      "Bash(python -m pytest tests/unit/test_regex_parser.py tests/unit/test_llm_parser.py tests/unit/test_mt5_connection.py -q)",
+      "Bash(git stash *)"
     ]
   },
   "prefersReducedMotion": true

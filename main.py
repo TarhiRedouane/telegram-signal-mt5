@@ -235,13 +235,19 @@ class ApplicationManager:
         latency_ms = int((asyncio.get_running_loop().time() - started_at) * 1000)
 
         if parsed_signal:
-            self._parsed_signals_today += 1
             parsed_signal.telegram_message_id = int(metadata.get("telegram_message_id", 0))
             parsed_signal.telegram_chat_id = int(metadata.get("telegram_chat_id", 0))
             parsed_signal.sender = str(metadata.get("sender", "unknown"))
             parsed_signal.timestamp = metadata.get("timestamp")
 
-            await self._handle_parsed_signal(parsed_signal)
+            if await self._validate_live_price(parsed_signal):
+                self._parsed_signals_today += 1
+                await self._handle_parsed_signal(parsed_signal)
+            else:
+                self.logger.info(
+                    f"Signal rejected - live price check failed for chat={metadata.get('telegram_chat_id')} "
+                    f"message_id={metadata.get('telegram_message_id')}"
+                )
         else:
             self.logger.info(
                 f"Parse failed - no patterns matched for chat={metadata.get('telegram_chat_id')} "
@@ -256,6 +262,36 @@ class ApplicationManager:
                 success_rate=round(success_rate, 2),
                 processing_latency_ms=latency_ms,
             )
+
+    async def _validate_live_price(self, parsed_signal) -> bool:
+        """Reject signals that can't be confirmed against a live MT5 market price."""
+        if self.mt5_connection_manager is None:
+            self.logger.warning(
+                f"Live price check rejected signal (MT5 not connected): "
+                f"{parsed_signal.symbol} @ {parsed_signal.entry_price}"
+            )
+            return False
+
+        current_price = await self.mt5_connection_manager.get_current_price(parsed_signal.symbol)
+        self.logger.info(
+            f"Live price check for {parsed_signal.symbol}: entry {parsed_signal.entry_price} vs market {current_price}"
+        )
+        if current_price is None:
+            self.logger.warning(
+                f"Live price check rejected signal (no market price for {parsed_signal.symbol}): "
+                f"{parsed_signal.entry_price}"
+            )
+            return False
+
+        deviation = abs(parsed_signal.entry_price - current_price)
+        if deviation > settings.gold_max_price_deviation:
+            self.logger.warning(
+                f"Live price check rejected signal: entry {parsed_signal.entry_price} vs market "
+                f"{current_price} (deviation {deviation} > {settings.gold_max_price_deviation})"
+            )
+            return False
+
+        return True
 
     async def _handle_parsed_signal(self, parsed_signal) -> None:
         """Persist a successfully parsed signal and update the dashboard."""

@@ -11,6 +11,7 @@ from config.logging_config import (
     set_correlation_id,
     set_service_context,
 )
+from config.settings import settings
 
 from . import ParsedAction, ParsedSignal, ValidationResult
 from .patterns import FrenchSignalPatterns
@@ -332,10 +333,10 @@ class RegexParser:
         errors = []
         warnings = []
 
-        # Validate GOLD price range (3000-4000 as per specs)
+        # Validate GOLD price range (configurable via settings)
         if (signal.symbol in ['GOLD', 'XAUUSD'] and
-            (signal.entry_price < Decimal('3000.0') or signal.entry_price > Decimal('4000.0'))):
-            errors.append(f"GOLD price {signal.entry_price} outside valid range (3000-4000)")
+            (signal.entry_price < settings.gold_price_min or signal.entry_price > settings.gold_price_max)):
+            errors.append(f"GOLD price {signal.entry_price} outside valid range ({settings.gold_price_min}-{settings.gold_price_max})")
 
         # Validate SL logic
         if signal.stop_loss:

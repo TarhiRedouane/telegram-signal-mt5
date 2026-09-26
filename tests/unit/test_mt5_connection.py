@@ -7,6 +7,7 @@ import asyncio
 import pytest
 from unittest.mock import Mock, AsyncMock, patch, MagicMock
 from datetime import datetime, UTC
+from decimal import Decimal
 import json
 
 from src.mt5_executor.connection import (
@@ -497,6 +498,54 @@ class TestMT5ConnectionManager:
         assert health_status["active_connections"] == 1
         assert health_status["healthy_connections"] == 1
         assert len(health_status["connections"]) == 2
+
+    @pytest.mark.asyncio
+    async def test_get_current_price_success(self, connection_manager, mock_mt5_module):
+        """Test get_current_price returns bid/ask mid price."""
+        mock_connection = Mock()
+        mock_connection.connected = True
+
+        with patch.object(connection_manager, "get_connection") as mock_get_conn:
+            mock_get_conn.return_value.__aenter__ = AsyncMock(return_value=mock_connection)
+            mock_get_conn.return_value.__aexit__ = AsyncMock(return_value=None)
+
+            price = await connection_manager.get_current_price("XAUUSD")
+
+            assert price == Decimal(str((2535.50 + 2535.70) / 2))
+
+    @pytest.mark.asyncio
+    async def test_get_current_price_mt5_none(self, connection_manager):
+        """Test get_current_price returns None when mt5 module unavailable."""
+        with patch("src.mt5_executor.connection.mt5", None):
+            price = await connection_manager.get_current_price("XAUUSD")
+            assert price is None
+
+    @pytest.mark.asyncio
+    async def test_get_current_price_not_connected(self, connection_manager):
+        """Test get_current_price returns None when not connected."""
+        mock_connection = Mock()
+        mock_connection.connected = False
+
+        with patch.object(connection_manager, "get_connection") as mock_get_conn:
+            mock_get_conn.return_value.__aenter__ = AsyncMock(return_value=mock_connection)
+            mock_get_conn.return_value.__aexit__ = AsyncMock(return_value=None)
+
+            price = await connection_manager.get_current_price("XAUUSD")
+            assert price is None
+
+    @pytest.mark.asyncio
+    async def test_get_current_price_no_tick(self, connection_manager, mock_mt5_module):
+        """Test get_current_price returns None when symbol tick unavailable."""
+        mock_connection = Mock()
+        mock_connection.connected = True
+        mock_mt5_module.symbol_info_tick.return_value = None
+
+        with patch.object(connection_manager, "get_connection") as mock_get_conn:
+            mock_get_conn.return_value.__aenter__ = AsyncMock(return_value=mock_connection)
+            mock_get_conn.return_value.__aexit__ = AsyncMock(return_value=None)
+
+            price = await connection_manager.get_current_price("XAUUSD")
+            assert price is None
 
     @pytest.mark.asyncio
     async def test_detect_terminal_status_running(self, connection_manager, mock_mt5_module):

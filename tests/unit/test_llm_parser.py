@@ -334,7 +334,7 @@ class TestLLMParser:
         signal = ParsedSignal(
             parsed_action=ParsedAction.BUY,
             symbol="GOLD",
-            entry_price=Decimal("2500.00"),  # Below valid range
+            entry_price=Decimal("1500.00"),  # Below valid range
             confidence_score=0.80,
             parser_type="LLM"
         )
