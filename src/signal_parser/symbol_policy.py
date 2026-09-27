@@ -20,6 +20,12 @@ class SymbolPolicy:
         "XAUUSD": ("XAUUSD", "XAU/USD", "XAU"),
     }
 
+    # Preferred broker lookup order for price/tick retrieval.
+    _BROKER_LOOKUP_CANDIDATES: ClassVar[dict[str, tuple[str, ...]]] = {
+        "GOLD": ("GOLD", "XAUUSD", "XAU/USD", "XAUUSD.", "XAUUSD#"),
+        "XAUUSD": ("XAUUSD", "GOLD", "XAU/USD", "XAUUSD.", "XAUUSD#"),
+    }
+
     def __init__(self) -> None:
         alias_map: dict[str, str] = {}
         for canonical, aliases in self._CANONICAL_ALIASES.items():
@@ -30,6 +36,30 @@ class SymbolPolicy:
     def get_enabled_aliases(self) -> list[str]:
         """Return all symbol aliases accepted by the current execution profile."""
         return list(self._alias_to_canonical.keys())
+
+    def get_broker_lookup_candidates(self, symbol_text: str) -> list[str]:
+        """Return broker symbol candidates for price/tick lookup."""
+        canonical_symbol = self.canonicalize_symbol(symbol_text)
+
+        if canonical_symbol and canonical_symbol in self._BROKER_LOOKUP_CANDIDATES:
+            return list(self._BROKER_LOOKUP_CANDIDATES[canonical_symbol])
+
+        symbol_upper = (symbol_text or "").upper().strip()
+        if not symbol_upper:
+            return []
+
+        # Generic fallback for non-profile symbols.
+        candidates = [
+            symbol_upper,
+            symbol_upper.replace("/", ""),
+            f"{symbol_upper}.",
+            f"{symbol_upper}#",
+        ]
+        deduped: list[str] = []
+        for candidate in candidates:
+            if candidate and candidate not in deduped:
+                deduped.append(candidate)
+        return deduped
 
     def get_enabled_canonical_symbols(self) -> list[str]:
         """Return canonical symbols enabled for execution."""

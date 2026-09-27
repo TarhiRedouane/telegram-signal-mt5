@@ -24,6 +24,7 @@ from config.logging_config import (
     set_service_context,
 )
 from config.settings import settings
+from src.signal_parser.symbol_policy import symbol_policy
 from src.utils.circuit_breaker import circuit_breaker
 
 
@@ -832,6 +833,48 @@ class MT5ConnectionManager:
 
         return health_status
 
+    def _build_price_lookup_candidates(self, symbol: str) -> list[str]:
+        """Build broker symbol candidates for tick lookup via centralized policy."""
+        return symbol_policy.get_broker_lookup_candidates(symbol)
+
+    def _resolve_broker_symbol_name(self, candidate: str) -> str:
+        """Resolve candidate to the exact broker symbol name when possible."""
+        symbols_get = getattr(mt5, "symbols_get", None)
+        if mt5 is None or not callable(symbols_get):
+            return candidate
+
+        try:
+            all_symbols = symbols_get()
+            if not all_symbols:
+                return candidate
+
+            # 1) Exact match first.
+            for symbol_info in all_symbols:
+                name = getattr(symbol_info, "name", None)
+                if name == candidate:
+                    return name
+
+            # 2) Case-insensitive match.
+            candidate_upper = candidate.upper()
+            for symbol_info in all_symbols:
+                name = getattr(symbol_info, "name", None)
+                if isinstance(name, str) and name.upper() == candidate_upper:
+                    return name
+
+            # 3) Normalized match (ignore '/', '.', '#').
+            def _normalize_symbol_key(value: str) -> str:
+                return value.upper().replace("/", "").replace(".", "").replace("#", "")
+
+            candidate_key = _normalize_symbol_key(candidate)
+            for symbol_info in all_symbols:
+                name = getattr(symbol_info, "name", None)
+                if isinstance(name, str) and _normalize_symbol_key(name) == candidate_key:
+                    return name
+        except Exception as exc:
+            self.logger.debug(f"Symbol name resolution failed for '{candidate}': {exc}")
+
+        return candidate
+
     async def get_current_price(self, symbol: str) -> Decimal | None:
         """
         Get current mid price (bid/ask average) for a symbol.
@@ -849,12 +892,44 @@ class MT5ConnectionManager:
                 if not connection.connected:
                     self.logger.warning(f"Connection not established for symbol: {symbol}")
                     return None
-                tick = mt5.symbol_info_tick(symbol)
-                self.logger.info(f"Fetching tick data for symbol: {symbol}")
-                if tick is None:
-                    self.logger.warning(f"No tick data available for symbol: {symbol}")
-                    return None
-                return Decimal(str((tick.bid + tick.ask) / 2))
+
+                candidates = self._build_price_lookup_candidates(symbol)
+                attempted_symbols: list[str] = []
+                for candidate in candidates:
+                    resolved_candidate = self._resolve_broker_symbol_name(candidate)
+                    attempted_symbols.append(resolved_candidate)
+
+                    if resolved_candidate != candidate:
+                        self.logger.info(
+                            f"Resolved broker symbol case/format: '{candidate}' -> '{resolved_candidate}'"
+                        )
+
+                    symbol_select = getattr(mt5, "symbol_select", None)
+                    if callable(symbol_select):
+                        try:
+                            symbol_select(resolved_candidate, True)
+                        except Exception:
+                            pass
+
+                    self.logger.info(
+                        f"Fetching tick data for symbol candidate: {candidate} (resolved: {resolved_candidate})"
+                    )
+                    tick = mt5.symbol_info_tick(resolved_candidate)
+                    if tick is None:
+                        continue
+
+                    if resolved_candidate != symbol:
+                        self.logger.info(
+                            f"Resolved symbol '{symbol}' to broker symbol '{resolved_candidate}' for price lookup"
+                        )
+
+                    return Decimal(str((tick.bid + tick.ask) / 2))
+
+                self.logger.warning(
+                    "No tick data available for symbol: "
+                    f"{symbol} (candidates tried: {candidates}, resolved attempts: {attempted_symbols})"
+                )
+                return None
         except Exception as e:
             self.logger.warning(f"Failed to get current price for {symbol}: {e}")
             return None

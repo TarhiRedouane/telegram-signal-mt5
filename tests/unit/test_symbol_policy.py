@@ -30,3 +30,21 @@ class TestSymbolPolicy:
         error = symbol_policy.validate_entry_price("BTCUSD", Decimal("50000"))
         assert error is not None
         assert "Unsupported symbol" in error
+
+    def test_broker_lookup_candidates_for_gold_aliases(self):
+        """Broker lookup candidates should be centralized and consistent."""
+        gold_candidates = symbol_policy.get_broker_lookup_candidates("GOLD")
+        xau_candidates = symbol_policy.get_broker_lookup_candidates("XAU")
+
+        assert gold_candidates[0] == "GOLD"
+        assert "XAUUSD" in gold_candidates
+        # XAU canonicalizes to XAUUSD candidate order.
+        assert xau_candidates[0] == "XAUUSD"
+
+    def test_broker_lookup_candidates_generic_fallback(self):
+        """Unknown symbols should still produce generic lookup variants."""
+        candidates = symbol_policy.get_broker_lookup_candidates("EUR/USD")
+        assert candidates[0] == "EUR/USD"
+        assert "EURUSD" in candidates
+        assert "EUR/USD." in candidates
+        assert "EUR/USD#" in candidates

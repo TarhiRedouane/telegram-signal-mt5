@@ -9,6 +9,7 @@ from unittest.mock import Mock, AsyncMock, patch, MagicMock
 from datetime import datetime, UTC
 from decimal import Decimal
 import json
+from types import SimpleNamespace
 
 from src.mt5_executor.connection import (
     MT5ConnectionManager,
@@ -546,6 +547,65 @@ class TestMT5ConnectionManager:
 
             price = await connection_manager.get_current_price("XAUUSD")
             assert price is None
+
+    @pytest.mark.asyncio
+    async def test_get_current_price_symbol_fallback(self, connection_manager, mock_mt5_module):
+        """Test get_current_price resolves fallback symbol when primary has no tick."""
+        mock_connection = Mock()
+        mock_connection.connected = True
+
+        fallback_tick = Mock(
+            bid=2600.10,
+            ask=2600.30,
+        )
+
+        def symbol_tick_side_effect(name: str):
+            if name == "GOLD":
+                return None
+            if name == "XAUUSD":
+                return fallback_tick
+            return None
+
+        mock_mt5_module.symbol_info_tick.side_effect = symbol_tick_side_effect
+
+        with patch.object(connection_manager, "get_connection") as mock_get_conn:
+            mock_get_conn.return_value.__aenter__ = AsyncMock(return_value=mock_connection)
+            mock_get_conn.return_value.__aexit__ = AsyncMock(return_value=None)
+
+            price = await connection_manager.get_current_price("GOLD")
+
+            assert price == Decimal(str((2600.10 + 2600.30) / 2))
+
+    @pytest.mark.asyncio
+    async def test_get_current_price_case_sensitive_broker_symbol_resolution(self, connection_manager, mock_mt5_module):
+        """Test get_current_price resolves case/format from MT5 symbols list before tick lookup."""
+        mock_connection = Mock()
+        mock_connection.connected = True
+
+        mock_mt5_module.symbols_get.return_value = [
+            SimpleNamespace(name="gold"),
+            SimpleNamespace(name="xauusd.m"),
+        ]
+
+        resolved_tick = Mock(
+            bid=2590.00,
+            ask=2590.20,
+        )
+
+        def symbol_tick_side_effect(name: str):
+            if name == "gold":
+                return resolved_tick
+            return None
+
+        mock_mt5_module.symbol_info_tick.side_effect = symbol_tick_side_effect
+
+        with patch.object(connection_manager, "get_connection") as mock_get_conn:
+            mock_get_conn.return_value.__aenter__ = AsyncMock(return_value=mock_connection)
+            mock_get_conn.return_value.__aexit__ = AsyncMock(return_value=None)
+
+            price = await connection_manager.get_current_price("GOLD")
+
+            assert price == Decimal(str((2590.00 + 2590.20) / 2))
 
     @pytest.mark.asyncio
     async def test_detect_terminal_status_running(self, connection_manager, mock_mt5_module):
