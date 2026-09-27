@@ -1,8 +1,56 @@
 # Method-Level Execution Sequence
 
-This diagram focuses on concrete method calls from the runtime entry point to shutdown so code navigation is easier.
+This page contains two Mermaid diagrams:
 
-## End-to-End Runtime Flow (Method Names)
+- Current runtime flow with method names (summary)
+- Detailed end-to-end runtime flow with method names
+
+Mermaid source files are also saved in `docs/architecture/diagrams/`.
+
+## Current Runtime Flow (Method Names - Summary)
+
+```mermaid
+sequenceDiagram
+    autonumber
+    participant main as main.main()
+    participant app as ApplicationManager
+    participant auth as AuthManager
+    participant tg as TelegramClient
+    participant mh as MessageHandler
+    participant rp as RegexParser
+    participant lp as LLMParser
+    participant mt5 as MT5ConnectionManager
+    participant db as SignalRepository
+
+    main->>app: startup()
+    app->>app: _initialize_runtime_components()
+    app->>auth: startup_authentication()
+    app->>app: _initialize_monitoring_components()
+    app->>app: _initialize_persistence_components()
+    app->>app: _initialize_telegram_monitoring()
+    app->>tg: connect_to_groups()
+    app->>app: _initialize_mt5_connection() (task)
+    main->>app: run()
+
+    tg->>mh: handle_new_message(event)
+    mh->>app: _on_telegram_message(metadata)
+    app->>rp: parse(raw_text)
+    alt regex miss
+        app->>lp: parse_with_llm(raw_text)
+    end
+    app->>app: _validate_live_price(parsed_signal)
+    app->>mt5: get_current_price(symbol)
+    app->>app: _handle_parsed_signal(parsed_signal)
+    app->>db: save_signal({...})
+
+    main->>app: shutdown()
+    app->>app: _save_application_state()
+    app->>app: _shutdown_monitoring_components()
+    app->>auth: cleanup()
+    app->>mt5: shutdown()
+```
+
+## New Runtime Flow (Method Names - Detailed)
 
 ```mermaid
 sequenceDiagram
