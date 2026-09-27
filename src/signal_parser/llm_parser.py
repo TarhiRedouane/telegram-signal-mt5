@@ -10,7 +10,6 @@ from pathlib import Path
 from typing import Optional
 
 from config.openai_config import openai_client
-from config.settings import settings
 from config.logging_config import (
     get_contextual_logger,
     set_correlation_id,
@@ -21,6 +20,7 @@ from src.utils.rate_limiter import llm_rate_limiter
 from src.database.cache import llm_cache
 
 from . import ParsedAction, ParsedSignal, ValidationResult
+from .symbol_policy import symbol_policy
 
 
 class LLMParser:
@@ -310,6 +310,8 @@ class LLMParser:
             if isinstance(signal_data.get("stop_loss"), str) and signal_data["stop_loss"].lower() == "break_even":
                 stop_loss = "break_even"  # This will be handled by the risk manager
             
+            canonical_symbol = symbol_policy.canonicalize_symbol(signal_data["symbol"])
+
             # Create ParsedSignal object
             signal = ParsedSignal(
                 telegram_message_id=0,  # Will be set by caller
@@ -318,7 +320,7 @@ class LLMParser:
                 timestamp=datetime.now(),
                 raw_text=original_text,
                 parsed_action=parsed_action,
-                symbol=signal_data["symbol"],
+                symbol=canonical_symbol or str(signal_data["symbol"]).upper().strip(),
                 entry_price=entry_price or Decimal("0.0"),
                 stop_loss=stop_loss,
                 take_profit=take_profit,
@@ -377,14 +379,25 @@ class LLMParser:
             return None
 
     def _validate_signal(self, signal: ParsedSignal) -> ValidationResult:
-        """Validate parsed signal according to GOLD trading specs."""
+        """Validate parsed signal according to symbol policy and trading specs."""
         errors = []
         warnings = []
 
-        # Validate GOLD price range (configurable via settings)
-        if (signal.symbol in ['GOLD', 'XAUUSD'] and signal.entry_price and
-            (signal.entry_price < settings.gold_price_min or signal.entry_price > settings.gold_price_max)):
-            errors.append(f"GOLD price {signal.entry_price} outside valid range ({settings.gold_price_min}-{settings.gold_price_max})")
+        canonical_symbol = symbol_policy.canonicalize_symbol(signal.symbol)
+        if canonical_symbol is None:
+            errors.append(
+                f"Unsupported symbol '{signal.symbol}'. "
+                f"Enabled symbols: {', '.join(symbol_policy.get_enabled_canonical_symbols())}"
+            )
+            return ValidationResult(is_valid=False, errors=errors, warnings=warnings)
+
+        signal.symbol = canonical_symbol
+
+        # Validate symbol-specific entry-price range.
+        if signal.entry_price:
+            price_error = symbol_policy.validate_entry_price(signal.symbol, signal.entry_price)
+            if price_error:
+                errors.append(price_error)
 
         # Basic logical validations for non-zero entry prices
         if signal.entry_price and signal.entry_price > Decimal('0.0'):

@@ -26,6 +26,7 @@ from src.telegram_client.auth_manager import AuthManager
 from src.telegram_client.message_handler import MessageHandler
 from src.signal_parser.regex_parser import RegexParser
 from src.signal_parser.llm_parser import LLMParser
+from src.signal_parser.symbol_policy import symbol_policy
 from src.database import close_database, get_signal_repository, initialize_database
 from telethon.utils import get_peer_id
 
@@ -265,6 +266,16 @@ class ApplicationManager:
 
     async def _validate_live_price(self, parsed_signal) -> bool:
         """Reject signals that can't be confirmed against a live MT5 market price."""
+        canonical_symbol = symbol_policy.canonicalize_symbol(parsed_signal.symbol)
+        if canonical_symbol is None:
+            self.logger.warning(
+                f"Live price check rejected signal (symbol not enabled): {parsed_signal.symbol}. "
+                f"Enabled symbols: {symbol_policy.get_enabled_canonical_symbols()}"
+            )
+            return False
+
+        parsed_signal.symbol = canonical_symbol
+
         if self.mt5_connection_manager is None:
             self.logger.warning(
                 f"Live price check rejected signal (MT5 not connected): "
@@ -284,10 +295,17 @@ class ApplicationManager:
             return False
 
         deviation = abs(parsed_signal.entry_price - current_price)
-        if deviation > settings.gold_max_price_deviation:
+        max_deviation = symbol_policy.get_max_live_price_deviation(parsed_signal.symbol)
+        if max_deviation is None:
+            self.logger.warning(
+                f"Live price check rejected signal (no deviation policy for symbol): {parsed_signal.symbol}"
+            )
+            return False
+
+        if deviation > max_deviation:
             self.logger.warning(
                 f"Live price check rejected signal: entry {parsed_signal.entry_price} vs market "
-                f"{current_price} (deviation {deviation} > {settings.gold_max_price_deviation})"
+                f"{current_price} (deviation {deviation} > {max_deviation})"
             )
             return False
 

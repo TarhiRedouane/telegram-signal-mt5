@@ -11,10 +11,10 @@ from config.logging_config import (
     set_correlation_id,
     set_service_context,
 )
-from config.settings import settings
 
 from . import ParsedAction, ParsedSignal, ValidationResult
 from .patterns import FrenchSignalPatterns
+from .symbol_policy import symbol_policy
 
 
 class RegexParser:
@@ -294,17 +294,10 @@ class RegexParser:
 
     def _normalize_symbol(self, symbol_text: str) -> str:
         """Normalize symbol to standard format."""
-        symbol_upper = symbol_text.upper()
-
-        # Map French/variations to standard symbols
-        if symbol_upper in ['OR']:
-            return 'GOLD'
-        elif symbol_upper in ['XAU/USD', 'XAU']:
-            return 'XAUUSD'
-        elif symbol_upper in ['GOLD', 'XAUUSD']:
-            return symbol_upper
-
-        return symbol_text.upper()
+        canonical_symbol = symbol_policy.canonicalize_symbol(symbol_text)
+        if canonical_symbol:
+            return canonical_symbol
+        return symbol_text.upper().strip()
 
     def _extract_stop_loss(self, text: str) -> Decimal | None:
         """Extract stop loss from text."""
@@ -329,14 +322,25 @@ class RegexParser:
         return None
 
     def _validate_signal(self, signal: ParsedSignal) -> ValidationResult:
-        """Validate parsed signal according to GOLD trading specs."""
+        """Validate parsed signal according to symbol policy and trading specs."""
         errors = []
         warnings = []
 
-        # Validate GOLD price range (configurable via settings)
-        if (signal.symbol in ['GOLD', 'XAUUSD'] and
-            (signal.entry_price < settings.gold_price_min or signal.entry_price > settings.gold_price_max)):
-            errors.append(f"GOLD price {signal.entry_price} outside valid range ({settings.gold_price_min}-{settings.gold_price_max})")
+        canonical_symbol = symbol_policy.canonicalize_symbol(signal.symbol)
+        if canonical_symbol is None:
+            errors.append(
+                f"Unsupported symbol '{signal.symbol}'. "
+                f"Enabled symbols: {', '.join(symbol_policy.get_enabled_canonical_symbols())}"
+            )
+            return ValidationResult(is_valid=False, errors=errors, warnings=warnings)
+
+        # Ensure downstream layers always receive canonical symbols.
+        signal.symbol = canonical_symbol
+
+        # Validate symbol-specific entry-price range.
+        price_error = symbol_policy.validate_entry_price(signal.symbol, signal.entry_price)
+        if price_error:
+            errors.append(price_error)
 
         # Validate SL logic
         if signal.stop_loss:

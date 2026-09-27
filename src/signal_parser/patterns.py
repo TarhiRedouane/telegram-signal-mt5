@@ -3,10 +3,12 @@
 import re
 from typing import ClassVar
 
+from .symbol_policy import symbol_policy
+
 
 class FrenchSignalPatterns:
     """French trading signal regex patterns."""
-    
+
     # Class-level caches for compiled patterns
     _compiled_patterns_cache: ClassVar[dict[str, list[re.Pattern]] | None] = None
     _main_patterns_cache: ClassVar[list[re.Pattern] | None] = None
@@ -16,7 +18,7 @@ class FrenchSignalPatterns:
         r"JE\s+BUY",
         r"BUY",
         r"ACHETER",
-        r"J'ACHÈTE",
+        r"J'ACH(?:È|E|Ãˆ)TE",
         r"LONG"
     ]
 
@@ -28,13 +30,10 @@ class FrenchSignalPatterns:
         r"JE\s+VENDS"
     ]
 
-    # Instrument patterns (gold variations)
+    # Instrument patterns are driven by enabled symbol aliases.
     INSTRUMENTS: ClassVar[list[str]] = [
-        r"GOLD",
-        r"XAUUSD",
-        r"OR",  # French for gold
-        r"XAU/USD",
-        r"XAU"
+        re.escape(alias)
+        for alias in sorted(symbol_policy.get_enabled_aliases(), key=len, reverse=True)
     ]
 
     # Price patterns with various formats
