@@ -1,4 +1,4 @@
-"""LLM-based signal parser for contextual French trading message understanding."""
+"""LLM-based signal parser for contextual French/English trading message understanding."""
 
 import asyncio
 import hashlib
@@ -24,7 +24,7 @@ from . import ParsedAction, ParsedSignal, ValidationResult
 
 
 class LLMParser:
-    """GPT-5-mini based parser for complex French trading signals."""
+    """GPT-5-mini based parser for complex bilingual (French/English) trading signals."""
 
     def __init__(self) -> None:
         """Initialize LLM parser with prompt template and configuration."""
