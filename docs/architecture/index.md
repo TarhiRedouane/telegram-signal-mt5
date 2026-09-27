@@ -43,6 +43,7 @@
     - [Implementation Pattern](./telegram-rate-limiting-strategy.md#implementation-pattern)
     - [MetaTrader 5 Server API](./telegram-rate-limiting-strategy.md#metatrader-5-server-api)
   - [Core Workflows](./core-workflows.md)
+  - [Method-Level Execution Sequence](./execution-sequence-method-level.md)
   - [REST API Spec](./rest-api-spec.md)
   - [Database Schema](./database-schema.md)
     - [Database Performance Strategy](./database-schema.md#database-performance-strategy)
