@@ -1,38 +1,57 @@
 sequenceDiagram
     autonumber
-    participant main as main.main()
-    participant app as ApplicationManager
-    participant auth as AuthManager
-    participant tg as TelegramClient
-    participant mh as MessageHandler
-    participant rp as RegexParser
-    participant lp as LLMParser
-    participant mt5 as MT5ConnectionManager
-    participant db as SignalRepository
+    participant OS as OS Signal/Console
+    participant M as main()
+    participant A as ApplicationManager
+    participant TG as Telegram/Auth
+    participant MH as MessageHandler
+    participant RP as RegexParser
+    participant LP as LLMParser
+    participant MT5 as MT5ConnectionManager
+    participant DB as SignalRepository/Database
+    participant MON as Health+Dashboard
 
-    main->>app: startup()
-    app->>app: _initialize_runtime_components()
-    app->>auth: startup_authentication()
-    app->>app: _initialize_monitoring_components()
-    app->>app: _initialize_persistence_components()
-    app->>app: _initialize_telegram_monitoring()
-    app->>tg: connect_to_groups()
-    app->>app: _initialize_mt5_connection() (task)
-    main->>app: run()
+    M->>A: startup()
+    A->>TG: startup_authentication()
+    TG-->>A: authenticated client
+    A->>MON: init/start monitoring
+    A->>DB: initialize_database + repository
+    A->>TG: connect_to_groups (retry up to 3)
+    A->>MH: register event handler
+    A->>MT5: initialize in background
+    M->>A: run() wait for shutdown_event
 
-    tg->>mh: handle_new_message(event)
-    mh->>app: _on_telegram_message(metadata)
-    app->>rp: parse(raw_text)
-    alt regex miss
-        app->>lp: parse_with_llm(raw_text)
+    TG->>MH: new message
+    MH->>A: _on_telegram_message(metadata)
+    A->>A: dedupe chat_id+message_id
+    A->>RP: parse(raw_text)
+
+    alt regex success
+        RP-->>A: parsed_signal
+    else regex fails
+        A->>LP: parse_with_llm(raw_text)
+        LP-->>A: parsed_signal or None
     end
-    app->>app: _validate_live_price(parsed_signal)
-    app->>mt5: get_current_price(symbol)
-    app->>app: _handle_parsed_signal(parsed_signal)
-    app->>db: save_signal({...})
 
-    main->>app: shutdown()
-    app->>app: _save_application_state()
-    app->>app: _shutdown_monitoring_components()
-    app->>auth: cleanup()
-    app->>mt5: shutdown()
+    alt parsed_signal exists
+        A->>MT5: get_current_price(symbol)
+        MT5-->>A: current_price
+        alt price valid
+            A->>DB: save_signal(...)
+            A->>MON: update metrics/dashboard
+        else price invalid
+            A->>A: reject + log
+        end
+    else no parsed signal
+        A->>A: parse failed + log
+    end
+
+    OS->>M: SIGINT/SIGTERM
+    M->>A: signal_shutdown()
+    M->>A: shutdown()
+    A->>A: save state files
+    A->>MON: stop dashboard + health monitor
+    A->>TG: cleanup client
+    A->>MT5: shutdown manager
+    A->>DB: close database
+    A->>A: cancel background tasks
