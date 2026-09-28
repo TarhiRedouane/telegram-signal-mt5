@@ -63,6 +63,110 @@ class PositionManager:
     @circuit_breaker(failure_threshold=3, recovery_timeout=30)
     @retry_on_failure(max_attempts=3, delay=1.0, backoff=2.0)
     @log_execution_time
+    async def modify_position_levels(
+        self,
+        ticket: int,
+        new_sl: float | None = None,
+        new_tp: float | None = None,
+    ) -> MT5Result:
+        """Update position SL and/or TP, preserving levels not supplied."""
+        if new_sl is None and new_tp is None:
+            return MT5Result(
+                success=False,
+                ticket=ticket,
+                operation="modify_position_levels",
+                error_message="At least one of new_sl or new_tp must be provided",
+            )
+
+        if mt5 is None:
+            return MT5Result(
+                success=False,
+                ticket=ticket,
+                operation="modify_position_levels",
+                error_message="MT5 module not available",
+            )
+
+        try:
+            async with self.connection_manager.get_connection() as connection:
+                if not connection.connected:
+                    return MT5Result(
+                        success=False,
+                        ticket=ticket,
+                        operation="modify_position_levels",
+                        error_message="MT5 connection not available",
+                    )
+
+                positions = mt5.positions_get(ticket=ticket)
+                if not positions:
+                    return MT5Result(
+                        success=False,
+                        ticket=ticket,
+                        operation="modify_position_levels",
+                        error_message=f"Position {ticket} not found",
+                    )
+
+                position = positions[0]
+                normalized_sl = normalize_price(new_sl, position.symbol) if new_sl is not None else position.sl
+                normalized_tp = normalize_price(new_tp, position.symbol) if new_tp is not None else position.tp
+                request = {
+                    "action": mt5.TRADE_ACTION_SLTP,
+                    "symbol": position.symbol,
+                    "position": ticket,
+                    "sl": normalized_sl or 0.0,
+                    "tp": normalized_tp or 0.0,
+                    "magic": position.magic,
+                    "comment": "Correlated signal update",
+                }
+
+                result = mt5.order_send(request)
+                if result is None:
+                    error = mt5.last_error()
+                    return MT5Result(
+                        success=False,
+                        ticket=ticket,
+                        operation="modify_position_levels",
+                        error_code=error[0] if error else None,
+                        error_message=f"MT5 order_send failed: {error[1] if error else 'Unknown error'}",
+                    )
+
+                if result.retcode != mt5.TRADE_RETCODE_DONE:
+                    error_message = self._get_retcode_description(result.retcode)
+                    return MT5Result(
+                        success=False,
+                        ticket=ticket,
+                        operation="modify_position_levels",
+                        old_sl=position.sl,
+                        new_sl=normalized_sl,
+                        old_tp=position.tp,
+                        new_tp=normalized_tp,
+                        retcode=result.retcode,
+                        error_message=error_message,
+                    )
+
+                return MT5Result(
+                    success=True,
+                    ticket=ticket,
+                    operation="modify_position_levels",
+                    old_sl=position.sl,
+                    new_sl=normalized_sl,
+                    old_tp=position.tp,
+                    new_tp=normalized_tp,
+                    retcode=result.retcode,
+                )
+        except asyncio.CancelledError:
+            raise
+        except Exception as exc:
+            self.logger.error("Failed to modify MT5 position levels for ticket %s: %s", ticket, exc)
+            return MT5Result(
+                success=False,
+                ticket=ticket,
+                operation="modify_position_levels",
+                error_message=f"Exception: {exc!s}",
+            )
+
+    @circuit_breaker(failure_threshold=3, recovery_timeout=30)
+    @retry_on_failure(max_attempts=3, delay=1.0, backoff=2.0)
+    @log_execution_time
     async def open_market_order(self, signal: Any, volume: float = 0.01) -> MT5Result:
         """Open a market order from a parsed trading signal."""
         try:

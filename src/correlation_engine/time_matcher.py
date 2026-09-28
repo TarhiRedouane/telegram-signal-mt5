@@ -49,7 +49,7 @@ class TimeMatcher:
         self.position_repo = position_repo
 
         # Correlation parameters
-        self.default_window_minutes = 5
+        self.default_window_minutes = 15
         self.min_confidence_threshold = 0.75
         self.max_candidates = 10
 
@@ -59,7 +59,7 @@ class TimeMatcher:
             'close': re.compile(r'\b(close|fermer|closed)\b', re.IGNORECASE),
             'stop_loss': re.compile(r'\b(sl|stop\s*loss|stop)\b', re.IGNORECASE),
             'take_profit': re.compile(r'\b(tp|take\s*profit|profit)\b', re.IGNORECASE),
-            'modify': re.compile(r'\b(modif|modify|change|changer)\b', re.IGNORECASE),
+            'modify': re.compile(r'\b(modif|modify|change|changer|invalidation|vise|objectif)\b', re.IGNORECASE),
             'partial': re.compile(r'\b(partial|partiel)\b', re.IGNORECASE)
         }
 
@@ -92,6 +92,13 @@ class TimeMatcher:
         try:
             self._match_attempts += 1
 
+            if self._looks_like_new_trade(message.raw_text):
+                self.logger.debug(
+                    "Skipping time correlation for a new trade announcement",
+                    extra={'message_id': message.telegram_message_id},
+                )
+                return []
+
             self.logger.info(
                 f"Starting time-based matching for message {message.telegram_message_id}",
                 extra={
@@ -110,7 +117,11 @@ class TimeMatcher:
 
             # Get candidate positions within time window
             candidates = await self._get_candidate_positions(
-                start_time, end_time, detected_symbols, match_id
+                start_time,
+                end_time,
+                detected_symbols,
+                message.telegram_chat_id,
+                match_id,
             )
 
             if not candidates:
@@ -129,6 +140,7 @@ class TimeMatcher:
             valid_candidates = [
                 c for c in scored_candidates
                 if c.confidence >= self.min_confidence_threshold
+                or (len(scored_candidates) == 1 and c.confidence >= 0.55)
             ]
 
             if valid_candidates:
@@ -166,7 +178,8 @@ class TimeMatcher:
             return []
 
     async def _get_candidate_positions(self, start_time: datetime, end_time: datetime,
-                                     symbols: set[str], match_id: str) -> list[Position]:
+                                     symbols: set[str], chat_id: int,
+                                     match_id: str) -> list[Position]:
         """
         Get candidate positions within time window.
         
@@ -195,6 +208,9 @@ class TimeMatcher:
                 if not (start_time <= signal.timestamp <= end_time):
                     continue
 
+                if signal.telegram_chat_id != chat_id:
+                    continue
+
                 # Check symbol match if symbols detected
                 if symbols and signal.symbol.upper() not in symbols:
                     continue
@@ -206,8 +222,7 @@ class TimeMatcher:
             for signal in filtered_signals:
                 positions = await self.position_repo.get_positions_by_signal(signal.id)
                 for position in positions:
-                    # Prefer open positions for correlation
-                    if position.is_open or not candidate_positions:
+                    if position.is_open:
                         candidate_positions.append(position)
 
             self.logger.debug(
@@ -260,8 +275,8 @@ class TimeMatcher:
                 # Create metadata for debugging
                 metadata = {
                     'time_diff_seconds': (message.timestamp - signal.timestamp).total_seconds(),
-                    'signal_action': signal.parsed_action.value if signal.parsed_action else None,
-                    'position_status': position.status.value if position.status else None,
+                    'signal_action': getattr(signal.parsed_action, 'value', signal.parsed_action),
+                    'position_status': getattr(position.status, 'value', position.status),
                     'symbol_match': signal.symbol,
                     'scoring_method': 'time_based'
                 }
@@ -415,6 +430,13 @@ class TimeMatcher:
                     detected.add('GBPUSD')
 
         return detected
+
+    def _looks_like_new_trade(self, text: str) -> bool:
+        """Keep explicit BUY/SELL entries out of the contextual update matcher."""
+        has_action = re.search(r"\b(?:buy|sell|achat|vente|long|short)\b", text, re.IGNORECASE)
+        has_symbol = re.search(r"\b(?:gold|or|xau|xauusd)\b", text, re.IGNORECASE)
+        has_price = re.search(r"\b\d{3,5}(?:[.,]\d+)?\b", text)
+        return bool(has_action and has_symbol and has_price)
 
     def get_matcher_stats(self) -> dict[str, Any]:
         """Get time matcher statistics for monitoring."""

@@ -28,8 +28,15 @@ from src.telegram_client.message_handler import MessageHandler
 from src.signal_parser.regex_parser import RegexParser
 from src.signal_parser.llm_parser import LLMParser
 from src.signal_parser.symbol_policy import symbol_policy
-from src.database import close_database, get_position_repository, get_signal_repository, initialize_database
+from src.database import (
+    close_database,
+    get_database_manager,
+    get_position_repository,
+    get_signal_repository,
+    initialize_database,
+)
 from src.database.models import PositionStatus, SignalStatus
+from src.correlation_engine.correlator import CorrelationEngine, TelegramMessage as CorrelationMessage
 from telethon.utils import get_peer_id
 
 
@@ -60,6 +67,7 @@ class ApplicationManager:
         self._database_ready = False
         self._signal_repository = None
         self._position_repository = None
+        self._correlation_engine: Optional[CorrelationEngine] = None
 
         # Lightweight runtime telemetry for dashboard updates
         self._messages_today = 0
@@ -198,6 +206,10 @@ class ApplicationManager:
             await initialize_database(run_migrations=False)
             self._signal_repository = get_signal_repository()
             self._position_repository = get_position_repository()
+            self._correlation_engine = CorrelationEngine(
+                get_database_manager(),
+                self.telegram_client,
+            )
             self._database_ready = True
             self.logger.info("Persistence components initialized")
         except Exception as e:
@@ -230,6 +242,34 @@ class ApplicationManager:
         )
 
         started_at = asyncio.get_running_loop().time()
+        if self._correlation_engine is not None:
+            timestamp = metadata.get("timestamp") or datetime.now(UTC)
+            if timestamp.tzinfo is not None:
+                timestamp = timestamp.astimezone(UTC).replace(tzinfo=None)
+            correlation_message = CorrelationMessage(
+                telegram_message_id=int(metadata.get("telegram_message_id", 0)),
+                telegram_chat_id=int(metadata.get("telegram_chat_id", 0)),
+                sender=str(metadata.get("sender", "unknown")),
+                timestamp=timestamp,
+                raw_text=raw_text,
+                reply_to_message_id=metadata.get("reply_to_message_id"),
+            )
+            correlated_position = await self._correlation_engine.correlate_message(
+                correlation_message
+            )
+            if correlated_position is not None:
+                await self._handle_correlated_message(metadata, correlated_position)
+                latency_ms = int((asyncio.get_running_loop().time() - started_at) * 1000)
+                success_rate = (self._parsed_signals_today / self._messages_today) * 100
+                if self.console_dashboard is not None:
+                    self.console_dashboard.set_message_stats(
+                        messages_today=self._messages_today,
+                        last_message_time=self._last_message_time,
+                        success_rate=round(success_rate, 2),
+                        processing_latency_ms=latency_ms,
+                    )
+                return
+
         parsed_signal = self.regex_parser.parse(raw_text) if self.regex_parser else None
 
         if parsed_signal is None and self.llm_parser is not None:
@@ -267,6 +307,133 @@ class ApplicationManager:
                 last_message_time=self._last_message_time,
                 success_rate=round(success_rate, 2),
                 processing_latency_ms=latency_ms,
+            )
+
+    async def _handle_correlated_message(self, metadata: Dict[str, Any], position) -> None:
+        """Analyze a correlated follow-up and apply confident SL/TP updates."""
+        if self._signal_repository is None or self.mt5_connection_manager is None:
+            self.logger.info(
+                f"Correlated follow-up {metadata.get('telegram_message_id')} linked to "
+                f"position {position.mt5_ticket}; context execution unavailable"
+            )
+            return
+
+        if not settings.validate_openai_config():
+            self.logger.info("Correlated follow-up stored; OpenAI context analysis is not configured")
+            return
+
+        try:
+            from src.signal_parser.context_analyzer import (
+                ContextAnalyzer,
+                TelegramMessage as ContextMessage,
+            )
+
+            signal = await self._signal_repository.get_by_id(position.signal_id)
+            if signal is None:
+                self.logger.warning(
+                    f"Could not load parent signal for correlated position {position.id}"
+                )
+                return
+            position.signal = signal
+
+            timestamp = metadata.get("timestamp") or datetime.now(UTC)
+            if timestamp.tzinfo is not None:
+                timestamp = timestamp.astimezone(UTC).replace(tzinfo=None)
+            message = ContextMessage(
+                telegram_message_id=int(metadata.get("telegram_message_id", 0)),
+                telegram_chat_id=int(metadata.get("telegram_chat_id", 0)),
+                sender=str(metadata.get("sender", "unknown")),
+                timestamp=timestamp,
+                raw_text=str(metadata.get("raw_text", "")),
+                reply_to_message_id=metadata.get("reply_to_message_id"),
+                chat_title=str(metadata.get("chat_title", "")),
+                is_forwarded=bool(metadata.get("is_forwarded", False)),
+                message_type=str(metadata.get("message_type", "text")),
+            )
+            parent_message = ContextMessage(
+                telegram_message_id=signal.telegram_message_id,
+                telegram_chat_id=signal.telegram_chat_id,
+                sender=signal.sender,
+                timestamp=signal.timestamp,
+                raw_text=signal.raw_text,
+            )
+            analysis = await ContextAnalyzer().analyze_update_context(
+                message,
+                parent_message,
+                [position],
+            )
+            if analysis is None:
+                self.logger.info(
+                    f"Correlated follow-up {message.telegram_message_id} stored without "
+                    "an actionable context interpretation"
+                )
+                return
+
+            if analysis.action != "modify" or analysis.confidence < 0.75:
+                self.logger.info(
+                    f"Correlated follow-up {message.telegram_message_id} not auto-applied: "
+                    f"action={analysis.action}, confidence={analysis.confidence:.2f}"
+                )
+                return
+
+            if (
+                analysis.target_position is not None
+                and str(analysis.target_position) != str(position.mt5_ticket)
+            ):
+                self.logger.warning(
+                    f"LLM target {analysis.target_position} does not match correlated "
+                    f"ticket {position.mt5_ticket}; update not applied"
+                )
+                return
+
+            new_sl = analysis.parameters.get("new_sl")
+            new_tp = analysis.parameters.get("new_tp")
+            if new_sl is None and new_tp is None:
+                self.logger.info(
+                    f"Correlated follow-up {message.telegram_message_id} had no SL/TP values"
+                )
+                return
+
+            action_name = getattr(signal.parsed_action, "value", str(signal.parsed_action)).upper()
+            reference_price = float(position.open_price or signal.entry_price or 0)
+            if (
+                (new_sl is not None and (float(new_sl) <= reference_price if action_name == "SELL" else float(new_sl) >= reference_price))
+                or (new_tp is not None and (float(new_tp) >= reference_price if action_name == "SELL" else float(new_tp) <= reference_price))
+            ):
+                self.logger.warning(
+                    f"Rejected correlated levels with invalid direction for {action_name} "
+                    f"position {position.mt5_ticket}: SL={new_sl}, TP={new_tp}"
+                )
+                return
+
+            self.position_manager = self.position_manager or PositionManager(self.mt5_connection_manager)
+            update_result = await self.position_manager.modify_position_levels(
+                ticket=position.mt5_ticket,
+                new_sl=float(new_sl) if new_sl is not None else None,
+                new_tp=float(new_tp) if new_tp is not None else None,
+            )
+            if not update_result.success:
+                self.logger.warning(
+                    f"Failed to apply correlated levels to ticket {position.mt5_ticket}: "
+                    f"{update_result.error_message}"
+                )
+                return
+
+            position_update = {}
+            if new_sl is not None:
+                position_update["current_sl"] = float(new_sl)
+            if new_tp is not None:
+                position_update["current_tp"] = float(new_tp)
+            await self._position_repository.update_position_mt5_data(position.id, position_update)
+            self.logger.info(
+                f"Applied correlated levels to ticket {position.mt5_ticket}: "
+                f"SL={new_sl}, TP={new_tp}, confidence={analysis.confidence:.2f}"
+            )
+        except Exception as exc:
+            self.logger.error(
+                f"Failed to process correlated follow-up "
+                f"{metadata.get('telegram_message_id')}: {exc}",
+                exc_info=True,
             )
 
     async def _validate_live_price(self, parsed_signal) -> bool:
@@ -478,9 +645,7 @@ class ApplicationManager:
                         if not getattr(message, 'text', None):
                             continue
 
-                        chat_id = getattr(message, 'chat_id', None)
-                        if chat_id is None:
-                            chat_id = get_peer_id(entity)
+                        chat_id = get_peer_id(entity)
 
                         from_id = getattr(message, 'from_id', None)
                         sender = "unknown_sender"

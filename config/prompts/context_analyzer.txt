@@ -20,6 +20,12 @@ ACTION TYPES:
 - modify: Change stop loss or take profit levels
 - unknown: Cannot determine clear intent
 
+PRICE-LEVEL FOLLOW-UPS:
+- French phrases such as "je vise 4110" or "objectif 4110" state a take-profit target. Return action "modify" and set parameters.new_tp to 4110 for a SELL position (or the relevant target for a BUY).
+- French phrases such as "invalidation ... clôture M30 au-dessus de 4162" state an invalidation stop level. Return action "modify" and set parameters.new_sl to 4162 for a SELL position. Treat an explicit invalidation level as the requested stop-loss level.
+- Preserve any level not mentioned by setting its parameter to null. Do not infer levels from unrelated narrative messages.
+- Messages may arrive as separate consecutive posts rather than Telegram replies; use the supplied parent signal and open position as context.
+
 ANALYSIS REQUIREMENTS:
 1. Identify which open position is being referenced (by ticket number if possible)
 2. Determine the specific action to take

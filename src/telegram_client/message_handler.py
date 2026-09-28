@@ -12,6 +12,7 @@ from typing import Any
 
 from telethon import events
 from telethon.tl.types import Message
+from telethon.utils import get_peer_id
 
 
 class MessageHandler:
@@ -113,9 +114,7 @@ class MessageHandler:
 
             metadata = {
                 'telegram_message_id': message.id,
-                'telegram_chat_id': message.peer_id.channel_id if hasattr(message.peer_id, 'channel_id')
-                                  else message.peer_id.chat_id if hasattr(message.peer_id, 'chat_id')
-                                  else message.peer_id.user_id,
+                'telegram_chat_id': get_peer_id(message.peer_id),
                 'sender': sender_info,
                 'timestamp': message.date if message.date else datetime.now(UTC),
                 'raw_text': message.text or '',

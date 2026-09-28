@@ -265,8 +265,30 @@ class CorrelationEngine:
                 )
                 return None
 
+            ranked_candidates = sorted(
+                candidates,
+                key=lambda candidate: candidate['confidence'],
+                reverse=True,
+            )
+            if (
+                len(ranked_candidates) > 1
+                and ranked_candidates[0]['confidence'] - ranked_candidates[1]['confidence'] < 0.1
+            ):
+                self.logger.warning(
+                    "Time-based correlation is ambiguous; refusing to select a position",
+                    extra={
+                        'correlation_id': correlation_id,
+                        'top_position_id': ranked_candidates[0]['position'].id,
+                        'second_position_id': ranked_candidates[1]['position'].id,
+                        'confidence_gap': (
+                            ranked_candidates[0]['confidence'] - ranked_candidates[1]['confidence']
+                        ),
+                    },
+                )
+                return None
+
             # Select best candidate (highest confidence)
-            best_candidate = max(candidates, key=lambda x: x['confidence'])
+            best_candidate = ranked_candidates[0]
 
             if best_candidate['confidence'] < 0.75:
                 self.logger.debug(
@@ -276,10 +298,20 @@ class CorrelationEngine:
                 return None
 
             position = best_candidate['position']
+            signal = best_candidate.get('signal') or getattr(position, 'signal', None)
+            if signal is None:
+                signal = await self.signal_repo.get_by_id(position.signal_id)
+            if signal is None:
+                self.logger.warning(
+                    "Matched position has no associated signal",
+                    extra={'correlation_id': correlation_id, 'position_id': position.id},
+                )
+                return None
+            position.signal = signal
 
             # Store time-based correlation
             correlation_db_id = await self.correlation_repo.link_messages(
-                parent_id=position.signal.telegram_message_id,
+                parent_id=signal.telegram_message_id,
                 child_id=message.telegram_message_id,
                 correlation_type=CorrelationType.FOLLOWUP,
                 confidence=best_candidate['confidence'],

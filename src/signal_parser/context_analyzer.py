@@ -240,7 +240,7 @@ class ContextAnalyzer:
         ])
 
         # Combine all context elements
-        cache_content = f"{normalized_message}|{normalized_parent}|{positions_context}"
+        cache_content = f"{self._prompt_template}|{normalized_message}|{normalized_parent}|{positions_context}"
 
         # Generate hash
         return hashlib.sha256(cache_content.encode('utf-8')).hexdigest()
@@ -263,12 +263,12 @@ class ContextAnalyzer:
             pos_info = {
                 "ticket": pos.mt5_ticket,
                 "symbol": pos.signal.symbol,
-                "action": pos.signal.parsed_action.value,
+                "action": getattr(pos.signal.parsed_action, "value", pos.signal.parsed_action),
                 "entry_price": float(pos.open_price) if pos.open_price else None,
                 "current_sl": float(pos.current_sl) if pos.current_sl else None,
                 "current_tp": float(pos.current_tp) if pos.current_tp else None,
-                "status": pos.status.value,
-                "profit": float(pos.profit)
+                "status": getattr(pos.status, "value", pos.status),
+                "profit": float(pos.profit) if pos.profit is not None else 0.0
             }
             positions_context.append(pos_info)
 
@@ -312,8 +312,10 @@ class ContextAnalyzer:
             context_data = prompt[context_start:].strip()
 
             # Make chat completion request with JSON mode for structured output
-            response = await openai_client.client.chat.completions.create(
-                messages=[
+            request_options = {
+                **model_config,
+                "response_format": {"type": "json_object"},
+                "messages": [
                     {
                         "role": "system",
                         "content": system_prompt
@@ -323,9 +325,8 @@ class ContextAnalyzer:
                         "content": context_data
                     }
                 ],
-                response_format={"type": "json_object"},  # Enforce JSON mode
-                **model_config
-            )
+            }
+            response = await openai_client.client.chat.completions.create(**request_options)
 
             # Validate API response structure
             if self._validate_api_response(response):

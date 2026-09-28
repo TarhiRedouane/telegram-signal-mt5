@@ -109,8 +109,8 @@ class TestContextAnalyzer:
             "reasoning": "Cached result"
         }
         
-        with patch('src.database.cache.llm_cache') as mock_cache:
-            mock_cache.get.return_value = cached_data
+        with patch('src.signal_parser.context_analyzer.llm_cache') as mock_cache:
+            mock_cache.get = AsyncMock(return_value=cached_data)
             
             result = await context_analyzer.analyze_update_context(
                 sample_message, sample_parent_message, [sample_position]
@@ -124,11 +124,11 @@ class TestContextAnalyzer:
     @pytest.mark.asyncio
     async def test_analyze_update_context_rate_limited(self, context_analyzer, sample_message, sample_parent_message, sample_position):
         """Test rate limiting prevents API call."""
-        with patch('src.database.cache.llm_cache') as mock_cache, \
-             patch('src.utils.rate_limiter.llm_rate_limiter') as mock_limiter:
+        with patch('src.signal_parser.context_analyzer.llm_cache') as mock_cache, \
+            patch('src.signal_parser.context_analyzer.llm_rate_limiter') as mock_limiter:
             
-            mock_cache.get.return_value = None  # No cache hit
-            mock_limiter.acquire.return_value = False  # Rate limited
+            mock_cache.get = AsyncMock(return_value=None)
+            mock_limiter.acquire = AsyncMock(return_value=False)
             
             result = await context_analyzer.analyze_update_context(
                 sample_message, sample_parent_message, [sample_position]
@@ -155,13 +155,14 @@ class TestContextAnalyzer:
             "usage": {"total_tokens": 150}
         }
         
-        with patch('src.database.cache.llm_cache') as mock_cache, \
-             patch('src.utils.rate_limiter.llm_rate_limiter') as mock_limiter, \
-             patch.object(context_analyzer, '_make_openai_request') as mock_api:
+        with patch('src.signal_parser.context_analyzer.llm_cache') as mock_cache, \
+            patch('src.signal_parser.context_analyzer.llm_rate_limiter') as mock_limiter, \
+            patch.object(context_analyzer, '_make_openai_request') as mock_api:
             
-            mock_cache.get.return_value = None  # No cache hit
-            mock_limiter.acquire.return_value = True  # Not rate limited
-            mock_limiter.wait_for_backoff.return_value = None
+            mock_cache.get = AsyncMock(return_value=None)
+            mock_cache.set = AsyncMock()
+            mock_limiter.acquire = AsyncMock(return_value=True)
+            mock_limiter.wait_for_backoff = AsyncMock()
             mock_api.return_value = api_response
             
             result = await context_analyzer.analyze_update_context(
@@ -190,14 +191,14 @@ class TestContextAnalyzer:
             "usage": {"total_tokens": 120}
         }
         
-        with patch('src.database.cache.llm_cache') as mock_cache, \
-             patch('src.utils.rate_limiter.llm_rate_limiter') as mock_limiter, \
-             patch.object(context_analyzer, '_make_openai_request') as mock_api:
+        with patch('src.signal_parser.context_analyzer.llm_cache') as mock_cache, \
+            patch('src.signal_parser.context_analyzer.llm_rate_limiter') as mock_limiter, \
+            patch.object(context_analyzer, '_make_openai_request') as mock_api:
             
-            mock_cache.get.return_value = None
+            mock_cache.get = AsyncMock(return_value=None)
             mock_cache.set = AsyncMock()
-            mock_limiter.acquire.return_value = True
-            mock_limiter.wait_for_backoff.return_value = None
+            mock_limiter.acquire = AsyncMock(return_value=True)
+            mock_limiter.wait_for_backoff = AsyncMock()
             mock_api.return_value = api_response
             
             result = await context_analyzer.analyze_update_context(
@@ -251,15 +252,22 @@ class TestContextAnalyzer:
     @pytest.mark.asyncio
     async def test_make_openai_request_json_mode(self, context_analyzer):
         """Test OpenAI request uses JSON mode for structured output."""
-        with patch('config.openai_config.openai_client') as mock_client:
+        with patch('src.signal_parser.context_analyzer.openai_client') as mock_client:
             mock_response = MagicMock()
+            mock_response.choices = [MagicMock()]
             mock_response.choices[0].message.content = '{"action": "test"}'
             mock_response.usage.model_dump.return_value = {"total_tokens": 100}
             
-            mock_client.get_model_config.return_value = {"model": "gpt-5-mini"}
-            mock_client.client.chat.completions.create.return_value = mock_response
+            mock_client.get_model_config.return_value = {
+                "model": "gpt-5-mini",
+                "response_format": {"type": "json_object"},
+            }
+            mock_client.client.chat.completions.create = AsyncMock(return_value=mock_response)
             
-            result = await context_analyzer._make_openai_request("test prompt", "test_correlation")
+            result = await context_analyzer._make_openai_request(
+                "Return valid JSON. CONTEXT DATA: {}",
+                "test_correlation",
+            )
             
             # Verify JSON mode was used
             call_args = mock_client.client.chat.completions.create.call_args
@@ -347,7 +355,7 @@ class TestContextAnalyzer:
         
         api_response = {"usage": {"total_tokens": 150}}
         
-        with patch('src.database.cache.llm_cache') as mock_cache:
+        with patch('src.signal_parser.context_analyzer.llm_cache') as mock_cache:
             mock_cache.set = AsyncMock()
             
             await context_analyzer._cache_response("test_key", result, api_response)
@@ -382,16 +390,12 @@ class TestContextAnalyzer:
     async def test_circuit_breaker_protection(self, context_analyzer):
         """Test circuit breaker protects against API failures."""
         with patch.object(context_analyzer, '_make_openai_request') as mock_api:
-            # Simulate circuit breaker triggering
             mock_api.side_effect = Exception("Circuit breaker open")
-            
-            with patch('src.database.cache.llm_cache') as mock_cache, \
-                 patch('src.utils.rate_limiter.llm_rate_limiter') as mock_limiter:
-                
-                mock_cache.get.return_value = None
-                mock_limiter.acquire.return_value = True
-                mock_limiter.wait_for_backoff.return_value = None
-                
+            with patch('src.signal_parser.context_analyzer.llm_cache') as mock_cache, \
+                 patch('src.signal_parser.context_analyzer.llm_rate_limiter') as mock_limiter:
+                mock_cache.get = AsyncMock(return_value=None)
+                mock_limiter.acquire = AsyncMock(return_value=True)
+                mock_limiter.wait_for_backoff = AsyncMock()
                 message = TelegramMessage(
                     telegram_message_id=1,
                     telegram_chat_id=1,
@@ -399,11 +403,7 @@ class TestContextAnalyzer:
                     timestamp=datetime.now(),
                     raw_text="test message"
                 )
-                
-                result = await context_analyzer.analyze_update_context(
-                    message, message, []
-                )
-                
+                result = await context_analyzer.analyze_update_context(message, message, [])
                 assert result is None
                 mock_limiter.record_failure.assert_called_once()
     

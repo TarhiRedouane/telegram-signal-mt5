@@ -20,6 +20,7 @@ from src.database.models import (
     Signal, Position, MessageCorrelation, CorrelationType,
     SignalStatus, PositionStatus, ParsedAction, ParserType
 )
+from src.database.repository import DatabaseManager, RepositoryFactory
 
 
 class TestCorrelationEngine:
@@ -145,6 +146,88 @@ class TestCorrelationEngine:
         assert result == sample_position
         assert correlation_engine._time_based_correlations == 1
         correlation_engine.time_matcher.find_matches.assert_called_once()
+
+    @pytest.mark.asyncio
+    async def test_ambiguous_time_matches_are_not_assigned_to_either_position(
+        self, correlation_engine, sample_message, sample_position
+    ):
+        second_position = Position(
+            id=2,
+            signal_id=sample_position.signal_id,
+            mt5_ticket=654321,
+            open_price=1950.0,
+            volume=0.1,
+            status=PositionStatus.OPEN,
+        )
+        candidates = [
+            {
+                "position": sample_position,
+                "signal": sample_position.signal,
+                "confidence": 0.86,
+            },
+            {
+                "position": second_position,
+                "signal": sample_position.signal,
+                "confidence": 0.82,
+            },
+        ]
+        correlation_engine.time_matcher = AsyncMock()
+        correlation_engine.time_matcher.find_matches = AsyncMock(return_value=candidates)
+        correlation_engine.correlation_repo.link_messages = AsyncMock()
+        sample_message.reply_to_message_id = None
+
+        result = await correlation_engine.correlate_message(sample_message)
+
+        assert result is None
+        correlation_engine.correlation_repo.link_messages.assert_not_awaited()
+
+    @pytest.mark.asyncio
+    async def test_context_followup_persists_parent_link_with_real_database(self):
+        database = DatabaseManager("sqlite+aiosqlite:///:memory:")
+        await database.initialize()
+        repositories = RepositoryFactory(database)
+        now = datetime.now(timezone.utc).replace(tzinfo=None)
+
+        try:
+            signal_id = await repositories.get_signal_repository().save_signal({
+                "telegram_message_id": 7100,
+                "telegram_chat_id": -100678,
+                "sender": "provider",
+                "timestamp": now - timedelta(minutes=2),
+                "raw_text": "SELL GOLD 4147 - 4153",
+                "parsed_action": ParsedAction.SELL,
+                "symbol": "GOLD",
+                "entry_price": 4150.0,
+                "confidence_score": 0.95,
+                "parser_type": ParserType.REGEX,
+                "status": SignalStatus.EXECUTED,
+            })
+            await repositories.get_position_repository().create(
+                signal_id=signal_id,
+                mt5_ticket=7101,
+                open_time=now - timedelta(minutes=2),
+                open_price=4150.0,
+                volume=0.01,
+                status=PositionStatus.OPEN,
+            )
+            engine = CorrelationEngine(database)
+            message = TelegramMessage(
+                telegram_message_id=7102,
+                telegram_chat_id=-100678,
+                sender="provider",
+                timestamp=now,
+                raw_text="Je vise les 4110",
+            )
+
+            position = await engine.correlate_message(message)
+
+            assert position is not None
+            correlations = await repositories.get_correlation_repository().find_correlations_by_child(7102)
+            assert len(correlations) == 1
+            assert correlations[0].parent_message_id == 7100
+            assert correlations[0].position_id == position.id
+        finally:
+            await database.close()
     
     @pytest.mark.asyncio
     async def test_correlate_message_no_match(self, correlation_engine, sample_message):
@@ -427,6 +510,109 @@ class TestTimeMatcher:
         
         # Assertions
         assert len(matches) == 0
+
+    @pytest.mark.asyncio
+    async def test_context_only_french_followup_matches_unique_open_position_in_same_chat(
+        self, time_matcher, sample_message_for_matching
+    ):
+        signal_time = sample_message_for_matching.timestamp - timedelta(minutes=10)
+        local_signal = Signal(
+            id=1,
+            telegram_message_id=11111,
+            telegram_chat_id=67890,
+            sender="provider",
+            timestamp=signal_time,
+            raw_text="SELL GOLD 4147 - 4153",
+            parsed_action=ParsedAction.SELL,
+            symbol="GOLD",
+            confidence_score=0.9,
+            parser_type=ParserType.REGEX,
+            status=SignalStatus.EXECUTED,
+        )
+        foreign_signal = Signal(
+            id=2,
+            telegram_message_id=22222,
+            telegram_chat_id=99999,
+            sender="other_provider",
+            timestamp=signal_time,
+            raw_text="SELL GOLD 4147 - 4153",
+            parsed_action=ParsedAction.SELL,
+            symbol="GOLD",
+            confidence_score=0.9,
+            parser_type=ParserType.REGEX,
+            status=SignalStatus.EXECUTED,
+        )
+        position = Position(
+            id=1,
+            signal_id=1,
+            mt5_ticket=123,
+            open_time=signal_time,
+            open_price=4150.0,
+            volume=0.01,
+            status=PositionStatus.OPEN,
+        )
+        sample_message_for_matching.raw_text = "Je vise les 4110"
+        time_matcher.signal_repo.get_recent_signals = AsyncMock(
+            return_value=[foreign_signal, local_signal]
+        )
+        time_matcher.position_repo.get_positions_by_signal = AsyncMock(return_value=[position])
+        time_matcher.signal_repo.get_by_id = AsyncMock(return_value=local_signal)
+
+        matches = await time_matcher.find_matches(sample_message_for_matching)
+
+        assert len(matches) == 1
+        assert matches[0]["position"] is position
+        time_matcher.position_repo.get_positions_by_signal.assert_awaited_once_with(1)
+
+    @pytest.mark.asyncio
+    async def test_new_sell_signal_is_not_consumed_as_time_correlated_update(
+        self, time_matcher, sample_message_for_matching
+    ):
+        sample_message_for_matching.raw_text = "SELL GOLD 4147 - 4153"
+
+        matches = await time_matcher.find_matches(sample_message_for_matching)
+
+        assert matches == []
+        time_matcher.signal_repo.get_recent_signals.assert_not_awaited()
+
+    @pytest.mark.asyncio
+    async def test_narrative_only_message_matches_unique_recent_position_in_same_chat(
+        self, time_matcher, sample_message_for_matching
+    ):
+        signal_time = sample_message_for_matching.timestamp - timedelta(minutes=10)
+        signal = Signal(
+            id=1,
+            telegram_message_id=11111,
+            telegram_chat_id=67890,
+            sender="provider",
+            timestamp=signal_time,
+            raw_text="SELL GOLD 4147 - 4153",
+            parsed_action=ParsedAction.SELL,
+            symbol="GOLD",
+            confidence_score=0.9,
+            parser_type=ParserType.REGEX,
+            status=SignalStatus.EXECUTED,
+        )
+        position = Position(
+            id=1,
+            signal_id=1,
+            mt5_ticket=123,
+            open_time=signal_time,
+            open_price=4150.0,
+            volume=0.01,
+            status=PositionStatus.OPEN,
+        )
+        sample_message_for_matching.raw_text = (
+            "Je vous préviens juste je suis dans les aire si ça prend du temps"
+        )
+        time_matcher.signal_repo.get_recent_signals = AsyncMock(return_value=[signal])
+        time_matcher.position_repo.get_positions_by_signal = AsyncMock(return_value=[position])
+        time_matcher.signal_repo.get_by_id = AsyncMock(return_value=signal)
+
+        matches = await time_matcher.find_matches(sample_message_for_matching)
+
+        assert len(matches) == 1
+        assert matches[0]["position"] is position
     
     def test_calculate_time_score(self, time_matcher):
         """Test time score calculation."""
