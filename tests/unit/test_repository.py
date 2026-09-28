@@ -201,6 +201,15 @@ class TestSignalRepository:
         # Test non-existent message ID
         signal = await signal_repo.find_by_message_id(99999)
         assert signal is None
+
+    async def test_save_signal_duplicate_message_is_idempotent(self, signal_repo: SignalRepository, sample_signal_data: dict):
+        """Duplicate Telegram message IDs should not fail the second save."""
+        first_id = await signal_repo.save_signal(sample_signal_data)
+        duplicate_id = await signal_repo.save_signal(sample_signal_data)
+
+        assert first_id > 0
+        assert duplicate_id == first_id
+        assert await signal_repo.count() == 1
     
     async def test_get_recent_signals(self, signal_repo: SignalRepository):
         """Test get_recent_signals method."""

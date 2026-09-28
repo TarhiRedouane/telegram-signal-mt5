@@ -22,12 +22,14 @@ from src.monitoring.health_checker import HealthMonitor
 from src.monitoring.metrics_collector import MetricsCollector
 from src.monitoring.console_dashboard import ConsoleDashboard
 from src.mt5_executor.connection import MT5ConnectionManager
+from src.mt5_executor.position_manager import PositionManager
 from src.telegram_client.auth_manager import AuthManager
 from src.telegram_client.message_handler import MessageHandler
 from src.signal_parser.regex_parser import RegexParser
 from src.signal_parser.llm_parser import LLMParser
 from src.signal_parser.symbol_policy import symbol_policy
-from src.database import close_database, get_signal_repository, initialize_database
+from src.database import close_database, get_position_repository, get_signal_repository, initialize_database
+from src.database.models import PositionStatus, SignalStatus
 from telethon.utils import get_peer_id
 
 
@@ -51,11 +53,13 @@ class ApplicationManager:
         self._telegram_event_filter = None
         self.mt5_connection = None
         self.mt5_connection_manager = None
+        self.position_manager: Optional[PositionManager] = None
         self.health_monitor: Optional[HealthMonitor] = None
         self.metrics_collector: Optional[MetricsCollector] = None
         self.console_dashboard: Optional[ConsoleDashboard] = None
         self._database_ready = False
         self._signal_repository = None
+        self._position_repository = None
 
         # Lightweight runtime telemetry for dashboard updates
         self._messages_today = 0
@@ -193,6 +197,7 @@ class ApplicationManager:
         try:
             await initialize_database(run_migrations=False)
             self._signal_repository = get_signal_repository()
+            self._position_repository = get_position_repository()
             self._database_ready = True
             self.logger.info("Persistence components initialized")
         except Exception as e:
@@ -342,10 +347,74 @@ class ApplicationManager:
                 timestamp=parsed_signal.timestamp,
             )
 
+        await self._execute_signal_on_mt5(parsed_signal)
+
         self.logger.info(
             f"Signal detected from chat {parsed_signal.telegram_chat_id}: "
             f"{parsed_signal.parsed_action.value} {parsed_signal.symbol} @ {parsed_signal.entry_price}"
         )
+
+    async def _execute_signal_on_mt5(self, parsed_signal) -> None:
+        """Execute BUY/SELL signals on MT5 and persist an open position record."""
+        if self.mt5_connection_manager is None:
+            self.logger.info("MT5 execution skipped: connection manager not ready")
+            return
+
+        action_name = getattr(parsed_signal.parsed_action, "value", str(parsed_signal.parsed_action)).upper()
+        if action_name not in {"BUY", "SELL"}:
+            self.logger.info(
+                f"MT5 execution skipped for non-market action: {action_name} on {parsed_signal.symbol}"
+            )
+            return
+
+        if self._signal_repository is None:
+            self.logger.warning("MT5 execution skipped: signal repository unavailable")
+            return
+
+        try:
+            self.position_manager = self.position_manager or PositionManager(self.mt5_connection_manager)
+            volume = 0.01
+            order_result = await self.position_manager.open_market_order(parsed_signal, volume=volume)
+
+            if not order_result.success:
+                await self._signal_repository.update_signal_status(
+                    signal_id=(await self._signal_repository.find_by_message_id(parsed_signal.telegram_message_id)).id,
+                    status=SignalStatus.REJECTED,
+                    rejection_reason=order_result.error_message or "MT5 order rejected"
+                )
+                self.logger.warning(
+                    f"MT5 order rejected for {parsed_signal.symbol}: {order_result.error_message}"
+                )
+                return
+
+            signal_record = await self._signal_repository.find_by_message_id(parsed_signal.telegram_message_id)
+            if signal_record is None:
+                self.logger.warning("Signal record missing before MT5 position creation")
+                return
+
+            if self._position_repository is not None:
+                await self._position_repository.create(
+                    signal_id=signal_record.id,
+                    mt5_ticket=order_result.ticket,
+                    open_time=datetime.now(UTC),
+                    open_price=float(parsed_signal.entry_price),
+                    volume=volume,
+                    current_sl=float(parsed_signal.stop_loss) if parsed_signal.stop_loss is not None else None,
+                    current_tp=float(parsed_signal.take_profit) if parsed_signal.take_profit is not None else None,
+                    status=PositionStatus.OPEN,
+                    last_sync=datetime.now(UTC),
+                )
+
+            await self._signal_repository.update_signal_status(
+                signal_id=signal_record.id,
+                status=SignalStatus.EXECUTED,
+            )
+
+            self.logger.info(
+                f"MT5 execution successful: {signal_record.id} -> ticket {order_result.ticket}"
+            )
+        except Exception as exc:
+            self.logger.error(f"Failed to execute signal on MT5: {exc}", exc_info=True)
 
     async def _poll_telegram_groups(self) -> None:
         """Fallback polling loop to ingest channel messages when push events are not received."""

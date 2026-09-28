@@ -269,17 +269,44 @@ class SignalRepository(BaseRepository[Signal]):
     async def save_signal(self, signal_data: dict[str, Any]) -> int:
         """
         Persist parsed signal with validation.
-        
+
+        Duplicate Telegram message IDs are treated as idempotent writes so repeated
+        mirroring/re-delivery of the same message does not fail persistence.
+
         Args:
             signal_data: Dictionary containing signal data
-            
+
         Returns:
             Signal ID
         """
+        message_id = signal_data.get("telegram_message_id")
+
+        if message_id is not None:
+            existing_signal = await self.find_by_message_id(message_id)
+            if existing_signal is not None:
+                logger.info(
+                    "Signal already exists for telegram message %s; returning existing signal id %s",
+                    message_id,
+                    existing_signal.id,
+                )
+                return existing_signal.id
+
         try:
             signal = await self.create(**signal_data)
             logger.info(f"Saved signal {signal.id} for message {signal.telegram_message_id}")
             return signal.id
+        except RepositoryError as e:
+            if message_id is not None:
+                existing_signal = await self.find_by_message_id(message_id)
+                if existing_signal is not None:
+                    logger.info(
+                        "Duplicate signal detected during create for telegram message %s; returning existing id %s",
+                        message_id,
+                        existing_signal.id,
+                    )
+                    return existing_signal.id
+            logger.error(f"Failed to save signal: {e}")
+            raise
         except Exception as e:
             logger.error(f"Failed to save signal: {e}")
             raise

@@ -63,6 +63,152 @@ class PositionManager:
     @circuit_breaker(failure_threshold=3, recovery_timeout=30)
     @retry_on_failure(max_attempts=3, delay=1.0, backoff=2.0)
     @log_execution_time
+    async def open_market_order(self, signal: Any, volume: float = 0.01) -> MT5Result:
+        """Open a market order from a parsed trading signal."""
+        try:
+            if mt5 is None:
+                return MT5Result(
+                    success=False,
+                    ticket=None,
+                    operation="open_market_order",
+                    error_message="MT5 module not available"
+                )
+
+            action = getattr(signal, "parsed_action", None)
+            if isinstance(action, str):
+                action_name = action.upper()
+            else:
+                action_name = str(action).upper() if action is not None else ""
+
+            if action_name not in {"BUY", "SELL"}:
+                return MT5Result(
+                    success=False,
+                    ticket=None,
+                    operation="open_market_order",
+                    error_message=f"Unsupported action for MT5 order: {action_name or action}"
+                )
+
+            symbol = str(getattr(signal, "symbol", "")).upper()
+            if not symbol:
+                return MT5Result(
+                    success=False,
+                    ticket=None,
+                    operation="open_market_order",
+                    error_message="Signal has no symbol for MT5 execution"
+                )
+
+            if volume <= 0:
+                return MT5Result(
+                    success=False,
+                    ticket=None,
+                    operation="open_market_order",
+                    error_message=f"Invalid volume for MT5 order: {volume}"
+                )
+
+            async with self.connection_manager.get_connection() as connection:
+                if not connection.connected:
+                    return MT5Result(
+                        success=False,
+                        ticket=None,
+                        operation="open_market_order",
+                        error_message="MT5 connection not available"
+                    )
+
+                tick = mt5.symbol_info_tick(symbol)
+                if tick is None:
+                    return MT5Result(
+                        success=False,
+                        ticket=None,
+                        operation="open_market_order",
+                        error_message=f"Unable to get market tick for symbol {symbol}"
+                    )
+
+                order_type = mt5.ORDER_TYPE_BUY if action_name == "BUY" else mt5.ORDER_TYPE_SELL
+                price = tick.ask if action_name == "BUY" else tick.bid
+                request = {
+                    "action": mt5.TRADE_ACTION_DEAL,
+                    "symbol": symbol,
+                    "volume": float(volume),
+                    "type": order_type,
+                    "price": float(price),
+                    "sl": float(getattr(signal, "stop_loss", 0) or 0),
+                    "tp": float(getattr(signal, "take_profit", 0) or 0),
+                    "magic": 0,
+                    "comment": "Signal execution",
+                    "type_time": mt5.ORDER_TIME_GTC,
+                    "type_filling": mt5.ORDER_FILLING_IOC,
+                }
+
+                self.logger.info(
+                    f"Sending MT5 market order for {symbol} {action_name}",
+                    extra={
+                        'symbol': symbol,
+                        'action': action_name,
+                        'volume': float(volume),
+                        'entry_price': float(getattr(signal, 'entry_price', 0) or 0),
+                        'stop_loss': float(getattr(signal, 'stop_loss', 0) or 0),
+                        'take_profit': float(getattr(signal, 'take_profit', 0) or 0),
+                    }
+                )
+
+                result = mt5.order_send(request)
+                if result is None:
+                    error = mt5.last_error()
+                    return MT5Result(
+                        success=False,
+                        ticket=None,
+                        operation="open_market_order",
+                        error_code=error[0] if error else None,
+                        error_message=f"MT5 order_send failed: {error[1] if error else 'Unknown error'}"
+                    )
+
+                if result.retcode not in {mt5.TRADE_RETCODE_DONE, mt5.TRADE_RETCODE_DONE_PARTIAL}:
+                    error_msg = self._get_retcode_description(result.retcode)
+                    self.logger.error(
+                        f"MT5 order execution failed for {symbol}",
+                        extra={
+                            'symbol': symbol,
+                            'action': action_name,
+                            'retcode': result.retcode,
+                            'error_description': error_msg,
+                        }
+                    )
+                    return MT5Result(
+                        success=False,
+                        ticket=getattr(result, 'order', None),
+                        operation="open_market_order",
+                        retcode=result.retcode,
+                        error_message=error_msg
+                    )
+
+                ticket = getattr(result, "order", None) or getattr(result, "ticket", None)
+                self.logger.info(
+                    f"MT5 market order executed for {symbol} ticket={ticket}",
+                    extra={'symbol': symbol, 'ticket': ticket, 'retcode': result.retcode}
+                )
+                return MT5Result(
+                    success=True,
+                    ticket=ticket,
+                    operation="open_market_order",
+                    retcode=result.retcode,
+                    execution_time_ms=0.0
+                )
+
+        except asyncio.CancelledError:
+            self.logger.info("MT5 market order cancelled")
+            raise
+        except Exception as e:
+            self.logger.error(f"Exception during MT5 market order execution: {e}")
+            return MT5Result(
+                success=False,
+                ticket=None,
+                operation="open_market_order",
+                error_message=f"Exception: {e!s}"
+            )
+
+    @circuit_breaker(failure_threshold=3, recovery_timeout=30)
+    @retry_on_failure(max_attempts=3, delay=1.0, backoff=2.0)
+    @log_execution_time
     async def modify_stop_loss(
         self,
         ticket: int,
