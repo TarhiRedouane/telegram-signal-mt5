@@ -46,7 +46,7 @@ class LLMParser:
         
         Args:
             text: Raw message text to parse
-            context: Additional context for parsing (unused in current implementation)
+            context: Optional context (e.g. pending setup) prepended to the prompt
             
         Returns:
             ParsedSignal object if successful, None if no actionable signal found
@@ -58,8 +58,9 @@ class LLMParser:
         set_service_context("LLMParser", "parse_with_llm")
         correlation_id = set_correlation_id()
 
-        # Check cache first
-        cached_response = await llm_cache.get(text)
+        # Same text can mean different things under different context
+        cache_key = f"{context}\n{text}" if context else text
+        cached_response = await llm_cache.get(cache_key)
         if cached_response:
             # Reconstruct ParsedSignal from cached data
             try:
@@ -131,7 +132,7 @@ class LLMParser:
                 
                 if signal:
                     # Store in cache for future requests
-                    await self._cache_response(text, signal, response)
+                    await self._cache_response(cache_key, signal, response)
                     
                     # Calculate API latency
                     latency_ms = int((datetime.now() - start_time).total_seconds() * 1000)
@@ -195,7 +196,8 @@ class LLMParser:
         Returns:
             Complete prompt string for the LLM
         """
-        # For now, append the user message to parse after the system prompt
+        if context:
+            return f"{self._prompt_template}\n\nContexte:\n{context}\n\nMessage à analyser:\n{text}"
         return f"{self._prompt_template}\n\nMessage à analyser:\n{text}"
 
     @circuit_breaker(failure_threshold=5, recovery_timeout=60, expected_exception=Exception)

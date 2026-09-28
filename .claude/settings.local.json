@@ -26,7 +26,13 @@
       "Bash(.venv/Scripts/python.exe -m pytest tests/unit/ -q)",
       "Bash(pytest tests/unit/test_regex_parser.py tests/unit/test_llm_parser.py tests/unit/test_mt5_connection.py -q)",
       "Bash(python -m pytest tests/unit/test_regex_parser.py tests/unit/test_llm_parser.py tests/unit/test_mt5_connection.py -q)",
-      "Bash(git stash *)"
+      "Bash(git stash *)",
+      "PowerShell(& \\(Get-Content graphify-out\\\\.graphify_python\\) -m graphify update . --code-only 2>&1)",
+      "PowerShell(& \\(Get-Content graphify-out\\\\.graphify_python\\) -m graphify --version 2>&1)",
+      "PowerShell(& \\(Get-Content graphify-out\\\\.graphify_python\\) -m pip install --upgrade graphifyy 2>&1 | Select-Object -Last 5)",
+      "PowerShell(& \\(Get-Content graphify-out\\\\.graphify_python\\) -m pip install --upgrade graphifyy 2>&1 | Select-String -Pattern \"Successfully|already|graphifyy\")",
+      "PowerShell(& \\(Get-Content graphify-out\\\\.graphify_python\\) -c \"import graphify.export; print\\(dir\\(graphify.export\\)\\)\")",
+      "PowerShell(Get-ChildItem graphify-out\\\\ | Select-Object Name, @{N='Size';E={[math]::Round\\($_.Length/1KB,1\\)}})"
     ]
   },
   "prefersReducedMotion": true

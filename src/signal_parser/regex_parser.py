@@ -154,6 +154,12 @@ class RegexParser:
             stop_loss = self._extract_stop_loss(original_text)
             take_profit = self._extract_take_profit(original_text)
 
+            entry_price_high = None
+            range_match = FrenchSignalPatterns.ENTRY_RANGE_SUFFIX.match(match.string, match.end())
+            if range_match:
+                bound = Decimal(range_match.group(1))
+                entry_price, entry_price_high = min(entry_price, bound), max(entry_price, bound)
+
             # Create signal object
             signal = ParsedSignal(
                 telegram_message_id=0,  # Will be set by caller

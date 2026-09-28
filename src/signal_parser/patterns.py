@@ -56,6 +56,29 @@ class FrenchSignalPatterns:
         r"TAKE\s+PROFIT\s*:?\s*(\d{4}(?:\.\d{1,2})?)"
     ]
 
+    # Multi-message setup follow-ups (matched against original-case text, IGNORECASE)
+    _LEVEL = r"(?<!\d)(\d{4}(?:[.,]\d{1,2})?)"
+    ENTRY_RANGE_SUFFIX: ClassVar[re.Pattern] = re.compile(
+        r"\s*(?:-|–|/|À|A)\s*(\d{4}(?:\.\d{1,2})?)(?!\d)", re.IGNORECASE
+    )
+    FOLLOWUP_TP: ClassVar[re.Pattern] = re.compile(
+        r"\b(?:TP\d?|TARGET|TAKE\s+PROFIT|OBJECTIFS?|CIBLES?|VIS(?:E|ER|ONS|EZ))\b[^\n]{0,30}?" + _LEVEL,
+        re.IGNORECASE,
+    )
+    FOLLOWUP_SL: ClassVar[re.Pattern] = re.compile(
+        r"\b(?:SL|STOP(?:\s+LOSS)?|INVALIDATION)\b[^\n]{0,100}?" + _LEVEL,
+        re.IGNORECASE,
+    )
+    FOLLOWUP_ENTRY: ClassVar[re.Pattern] = re.compile(
+        r"\b(?:ENTR(?:ER|E|ÉE|EE|ONS|EZ)|RENTR(?:ER|E|ONS))\b[^\n]{0,20}?" + _LEVEL,
+        re.IGNORECASE,
+    )
+    SETUP_CANCEL: ClassVar[re.Pattern] = re.compile(
+        r"\b(?:ANNUL\w*|CANCEL\w*|OUBLI\w*|LAISSE[SZ]?\s+TOMBER|PAS\s+DE\s+TRADE|"
+        r"SETUP\s+(?:INVALID\w*|ANNUL\w*))",
+        re.IGNORECASE,
+    )
+
     @classmethod
     def get_compiled_patterns(cls) -> dict[str, list[re.Pattern]]:
         """Get all compiled regex patterns."""

@@ -103,5 +103,17 @@ class SymbolPolicy:
             return settings.gold_max_price_deviation
         return None
 
+    def get_default_sl_distance(self, symbol: str) -> Decimal | None:
+        """Return fallback SL distance (price units) when a setup never states one."""
+        if self.canonicalize_symbol(symbol) in {"GOLD", "XAUUSD"}:
+            return settings.gold_default_sl_distance
+        return None
+
+    def get_entry_tolerance(self, symbol: str) -> Decimal | None:
+        """Return price tolerance around a setup entry zone."""
+        if self.canonicalize_symbol(symbol) in {"GOLD", "XAUUSD"}:
+            return settings.gold_entry_tolerance
+        return None
+
 
 symbol_policy = SymbolPolicy()

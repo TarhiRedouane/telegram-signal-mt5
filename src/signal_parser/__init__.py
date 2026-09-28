@@ -31,6 +31,7 @@ class ParsedSignal:
     confidence_score: float = 0.0  # 0.95 for regex parser
     parser_type: str = "REGEX"
     status: str = "PENDING"
+    entry_price_high: Decimal | None = None  # upper bound when setup gives a range
 
     def __post_init__(self) -> None:
         """Initialize timestamp if not provided."""

@@ -37,6 +37,15 @@ from src.database import (
 )
 from src.database.models import PositionStatus, SignalStatus
 from src.correlation_engine.correlator import CorrelationEngine, TelegramMessage as CorrelationMessage
+from src.correlation_engine.setup_aggregator import (
+    Followup,
+    PendingSetup,
+    SetupAggregator,
+    extract_followup,
+    looks_like_new_trade,
+)
+from src.signal_parser import ParsedAction
+from decimal import Decimal
 from telethon.utils import get_peer_id
 
 
@@ -68,6 +77,7 @@ class ApplicationManager:
         self._signal_repository = None
         self._position_repository = None
         self._correlation_engine: Optional[CorrelationEngine] = None
+        self._setup_aggregator = SetupAggregator()
 
         # Lightweight runtime telemetry for dashboard updates
         self._messages_today = 0
@@ -241,6 +251,11 @@ class ApplicationManager:
             f"message_id={metadata.get('telegram_message_id')} text='{preview}'"
         )
 
+        pending_setup = self._setup_aggregator.get(int(metadata.get("telegram_chat_id", 0)))
+        if pending_setup is not None and not looks_like_new_trade(raw_text):
+            await self._handle_setup_followup(pending_setup, raw_text)
+            return
+
         started_at = asyncio.get_running_loop().time()
         if self._correlation_engine is not None:
             timestamp = metadata.get("timestamp") or datetime.now(UTC)
@@ -288,7 +303,13 @@ class ApplicationManager:
 
             if await self._validate_live_price(parsed_signal):
                 self._parsed_signals_today += 1
-                await self._handle_parsed_signal(parsed_signal)
+                if (
+                    parsed_signal.parsed_action in (ParsedAction.BUY, ParsedAction.SELL)
+                    and (parsed_signal.stop_loss is None or parsed_signal.take_profit is None)
+                ):
+                    self._start_setup(parsed_signal)
+                else:
+                    await self._handle_parsed_signal(parsed_signal)
             else:
                 self.logger.info(
                     f"Signal rejected - live price check failed for chat={metadata.get('telegram_chat_id')} "
@@ -406,35 +427,157 @@ class ApplicationManager:
                 )
                 return
 
-            self.position_manager = self.position_manager or PositionManager(self.mt5_connection_manager)
-            update_result = await self.position_manager.modify_position_levels(
-                ticket=position.mt5_ticket,
-                new_sl=float(new_sl) if new_sl is not None else None,
-                new_tp=float(new_tp) if new_tp is not None else None,
-            )
-            if not update_result.success:
-                self.logger.warning(
-                    f"Failed to apply correlated levels to ticket {position.mt5_ticket}: "
-                    f"{update_result.error_message}"
-                )
-                return
-
-            position_update = {}
-            if new_sl is not None:
-                position_update["current_sl"] = float(new_sl)
-            if new_tp is not None:
-                position_update["current_tp"] = float(new_tp)
-            await self._position_repository.update_position_mt5_data(position.id, position_update)
-            self.logger.info(
-                f"Applied correlated levels to ticket {position.mt5_ticket}: "
-                f"SL={new_sl}, TP={new_tp}, confidence={analysis.confidence:.2f}"
-            )
+            if await self._apply_position_levels(position, new_sl, new_tp):
+                self.logger.info(f"Correlated update confidence={analysis.confidence:.2f}")
         except Exception as exc:
             self.logger.error(
                 f"Failed to process correlated follow-up "
                 f"{metadata.get('telegram_message_id')}: {exc}",
                 exc_info=True,
             )
+
+    async def _apply_position_levels(self, position, new_sl, new_tp) -> bool:
+        """Send SL/TP change to MT5 and persist it on the position record."""
+        if self.mt5_connection_manager is None:
+            self.logger.warning(f"Cannot modify ticket {position.mt5_ticket}: MT5 not connected")
+            return False
+        self.position_manager = self.position_manager or PositionManager(self.mt5_connection_manager)
+        update_result = await self.position_manager.modify_position_levels(
+            ticket=position.mt5_ticket,
+            new_sl=float(new_sl) if new_sl is not None else None,
+            new_tp=float(new_tp) if new_tp is not None else None,
+        )
+        if not update_result.success:
+            self.logger.warning(
+                f"Failed to apply levels to ticket {position.mt5_ticket}: "
+                f"{update_result.error_message}"
+            )
+            return False
+
+        position_update = {}
+        if new_sl is not None:
+            position_update["current_sl"] = float(new_sl)
+        if new_tp is not None:
+            position_update["current_tp"] = float(new_tp)
+        if self._position_repository is not None:
+            await self._position_repository.update_position_mt5_data(position.id, position_update)
+        self.logger.info(f"Applied levels to ticket {position.mt5_ticket}: SL={new_sl}, TP={new_tp}")
+        return True
+
+    def _start_setup(self, parsed_signal) -> None:
+        """Buffer an incomplete BUY/SELL setup and watch price until it can fire."""
+        setup = self._setup_aggregator.start(parsed_signal, datetime.now(UTC))
+        self.logger.info(
+            f"Setup started chat={setup.chat_id} message_id={setup.message_id}: "
+            f"{setup.action.value} {setup.symbol} {setup.low}-{setup.high} SL={setup.sl} TP={setup.tp}"
+        )
+        self._component_tasks[f"setup_{setup.chat_id}"] = asyncio.create_task(self._watch_setup(setup))
+
+    async def _handle_setup_followup(self, setup: PendingSetup, raw_text: str) -> None:
+        """Fold a follow-up message into the chat's pending (or just-filled) setup."""
+        followup = extract_followup(raw_text)
+        if followup.empty and self.llm_parser is not None:
+            followup = await self._llm_setup_followup(setup, raw_text)
+
+        if followup.cancel:
+            if setup.position is None:
+                self._setup_aggregator.drop(setup, "cancelled by author")
+            else:
+                self.logger.warning(
+                    f"Cancel message after fill on ticket {setup.position.mt5_ticket}; "
+                    "position left open, manage manually"
+                )
+            return
+
+        changed = setup.apply(followup, raw_text, datetime.now(UTC))
+        if not changed:
+            return
+        self.logger.info(
+            f"Setup updated chat={setup.chat_id} {changed}: "
+            f"{setup.low}-{setup.high} SL={setup.sl} TP={setup.tp}"
+        )
+        if setup.position is not None and ("sl" in changed or "tp" in changed):
+            await self._apply_position_levels(
+                setup.position,
+                setup.sl if "sl" in changed else None,
+                setup.tp if "tp" in changed else None,
+            )
+
+    async def _llm_setup_followup(self, setup: PendingSetup, raw_text: str) -> Followup:
+        """LLM fallback for follow-ups regex could not classify (odd cancel/level phrasing)."""
+        context = (
+            f"Setup en attente: {setup.action.value} {setup.symbol} entrée {setup.low}-{setup.high}, "
+            f"SL {setup.sl}, TP {setup.tp}. Le message suivant est une suite de ce setup."
+        )
+        try:
+            parsed = await self.llm_parser.parse_with_llm(raw_text, context=context)
+        except Exception as e:
+            self.logger.warning(f"LLM setup follow-up parse failed: {e}")
+            return Followup()
+        if parsed is None:
+            return Followup()
+        if parsed.parsed_action == ParsedAction.CLOSE:
+            return Followup(cancel=True)
+        return Followup(
+            sl=parsed.stop_loss if isinstance(parsed.stop_loss, Decimal) else None,
+            tp=parsed.take_profit if isinstance(parsed.take_profit, Decimal) else None,
+        )
+
+    async def _watch_setup(self, setup: PendingSetup) -> None:
+        """Poll live price until the setup fires, expires, or is replaced/cancelled."""
+        try:
+            while self._setup_aggregator.get(setup.chat_id) is setup:
+                if setup.is_expired(datetime.now(UTC), settings.setup_idle_timeout_seconds):
+                    reason = "idle timeout after fill" if setup.position else "expired before entry"
+                    self._setup_aggregator.drop(setup, reason)
+                    return
+                if setup.position is None and self.mt5_connection_manager is not None:
+                    price = await self.mt5_connection_manager.get_current_price(setup.symbol)
+                    if price is not None:
+                        await self._maybe_fire_setup(setup, Decimal(str(price)))
+                await asyncio.sleep(settings.setup_price_poll_seconds)
+        except asyncio.CancelledError:
+            raise
+        except Exception as exc:
+            self.logger.error(f"Setup watcher failed for chat {setup.chat_id}: {exc}", exc_info=True)
+            self._setup_aggregator.drop(setup, "watcher error")
+
+    async def _maybe_fire_setup(self, setup: PendingSetup, price: Decimal) -> None:
+        """Fire when SL+TP known (same live check as single-message signals) or price in zone."""
+        if setup.is_complete:
+            signal = setup.to_signal(entry=setup.low, sl=setup.sl, tp=setup.tp)
+            if not await self._validate_live_price(signal):
+                self._setup_aggregator.drop(setup, "live price check failed")
+                return
+        else:
+            tolerance = symbol_policy.get_entry_tolerance(setup.symbol)
+            if tolerance is None or not setup.in_entry_zone(price, tolerance):
+                return
+            levels = setup.fire_levels(price)
+            if levels is None:
+                self._setup_aggregator.drop(setup, f"invalidated at price {price}")
+                return
+            signal = setup.to_signal(entry=price, sl=levels[0], tp=levels[1])
+            if setup.sl is None:
+                self.logger.info(f"Setup firing with default SL {levels[0]} (none received)")
+
+        await self._handle_parsed_signal(signal)
+        position = (
+            await self._correlation_engine.get_position_by_message_id(setup.message_id)
+            if self._correlation_engine is not None
+            else None
+        )
+        if position is None:
+            self._setup_aggregator.drop(setup, "order not filled")
+            return
+        setup.position = position
+        setup.last_update = datetime.now(UTC)
+
+        # Levels that arrived while the order was in flight
+        late_sl = setup.sl if setup.sl is not None and setup.sl != signal.stop_loss else None
+        late_tp = setup.tp if setup.tp is not None and setup.tp != signal.take_profit else None
+        if late_sl is not None or late_tp is not None:
+            await self._apply_position_levels(position, late_sl, late_tp)
 
     async def _validate_live_price(self, parsed_signal) -> bool:
         """Reject signals that can't be confirmed against a live MT5 market price."""

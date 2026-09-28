@@ -155,4 +155,36 @@ Retourner `null` si le message ne contient pas de signal actionnable.
 }
 ```
 
+## SUITES DE SETUP (quand un "Contexte" décrit un setup en attente)
+Le message complète le setup du contexte. Utiliser le symbole du contexte.
+- Objectif / cible → MODIFY avec take_profit
+- Invalidation / niveau d'annulation du setup → MODIFY avec stop_loss
+- Annulation du setup (annulé, on oublie, je ne prends pas, trop tard, etc.) → CLOSE
+- Commentaire sans niveau ni annulation → `null`
+
+**Contexte:** Setup en attente: SELL GOLD entrée 4147-4153
+**Input:** "Je vise les 4110"
+**Output:**
+```json
+{"parsed_action": "MODIFY", "symbol": "GOLD", "entry_price": null, "stop_loss": null, "take_profit": 4110.00, "confidence_score": 0.80, "parser_type": "LLM"}
+```
+
+**Contexte:** Setup en attente: SELL GOLD entrée 4147-4153
+**Input:** "Pour l'invalidation du setup ça serait une clôture m30 au dessus de 4162"
+**Output:**
+```json
+{"parsed_action": "MODIFY", "symbol": "GOLD", "entry_price": null, "stop_loss": 4162.00, "take_profit": null, "confidence_score": 0.80, "parser_type": "LLM"}
+```
+
+**Contexte:** Setup en attente: SELL GOLD entrée 4147-4153
+**Input:** "Bon finalement je ne le prends pas, trop tard"
+**Output:**
+```json
+{"parsed_action": "CLOSE", "symbol": "GOLD", "entry_price": null, "stop_loss": null, "take_profit": null, "confidence_score": 0.80, "parser_type": "LLM"}
+```
+
+**Contexte:** Setup en attente: SELL GOLD entrée 4147-4153
+**Input:** "Je vous préviens je suis dans les airs, désolé si j'ai du décalage"
+**Output:** `null`
+
 IMPORTANT: Réponds UNIQUEMENT avec le JSON valide ou `null`. Aucun texte supplémentaire.

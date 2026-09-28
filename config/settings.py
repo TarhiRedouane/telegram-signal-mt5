@@ -59,6 +59,13 @@ class Settings:
         self.gold_price_min: Decimal = Decimal(os.getenv("GOLD_PRICE_MIN", "2000"))
         self.gold_price_max: Decimal = Decimal(os.getenv("GOLD_PRICE_MAX", "10000"))
         self.gold_max_price_deviation: Decimal = Decimal(os.getenv("GOLD_MAX_PRICE_DEVIATION", "100"))
+        # Price units: 10.0 = 100 pips at 0.10/pip
+        self.gold_default_sl_distance: Decimal = Decimal(os.getenv("GOLD_DEFAULT_SL_DISTANCE", "10.0"))
+        self.gold_entry_tolerance: Decimal = Decimal(os.getenv("GOLD_ENTRY_TOLERANCE", "1.0"))
+
+        # Multi-message setup aggregation
+        self.setup_idle_timeout_seconds: int = int(os.getenv("SETUP_IDLE_TIMEOUT_SECONDS", "300"))
+        self.setup_price_poll_seconds: int = int(os.getenv("SETUP_PRICE_POLL_SECONDS", "5"))
 
         # Application Settings
         self.dev_mode: bool = os.getenv("DEV_MODE", "false").lower() == "true"
