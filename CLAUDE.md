@@ -10,63 +10,134 @@ Standard cycle: `archon:manage_task(action="get", ...)` → research via `archon
 
 ## Project overview
 
-Python 3.12 automation system that monitors Telegram channels for trading signals (primarily GOLD/XAUUSD, French text), parses them (regex first, gpt-5-mini LLM fallback), correlates follow-up messages (break-even/close/modify) back to the original signal, and executes/manages trades on MetaTrader 5. Entry points: `main.py` (long-running app) and `cli.py` (start/status/stop).
+Python 3.12 async automation: Telegram → signal parsing (regex fast-path, LLM fallback) → correlation engine (reply-chain + time-window) → risk manager (break-even/close/modify) → MT5 executor. Monitors GOLD/XAUUSD in French. Entry points: `main.py` (async event loop) and `cli.py` (start/stop/status).
 
-Design docs are the source of truth for architecture decisions — read before making structural changes:
-- `docs/architecture/high-level-architecture.md`, `components.md`, `core-workflows.md`
-- `docs/architecture/coding-standards.md`, `test-strategy-and-standards.md`
-- `docs/prd/*` for feature intent/epics
+Design docs are the source of truth:
+- `docs/architecture/high-level-architecture.md`, `components.md`, `core-workflows.md`, `execution-sequence-method-level.md`
+- `docs/architecture/coding-standards.md`, `database-schema.md`, `error-handling-strategy.md`
+- `docs/prd/*` for features
+
+## Modules
+
+**src/telegram_client/** — Telethon-based Telegram integration
+- `client.py` — TelegramClient async wrapper
+- `auth_manager.py` — phone login, session storage
+- `message_handler.py` — receive & queue Telegram messages
+- `rate_limiter.py` — human delay emulation (anti-ban)
+- `session_manager.py` — .session file lifecycle
+- `errors.py` — Telegram-specific exceptions
+
+**src/signal_parser/** — Regex-first hybrid parsing
+- `regex_parser.py` — fast-path pattern matching (ENTRY/BREAK EVEN/CLOSE)
+- `llm_parser.py` — GPT-4o fallback (unparseable signals)
+- `context_analyzer.py` — extract symbol, price, direction from raw text
+- `patterns.py` — regex definitions (French/English templates)
+- `symbol_policy.py` — symbol whitelist & normalization
+
+**src/correlation_engine/** — Link follow-ups to original signals
+- `correlator.py` — orchestrates reply_tracer + time_matcher
+- `reply_tracer.py` — walk reply chain (Telegram native)
+- `time_matcher.py` — fallback: find signal by time window + symbol
+
+**src/risk_manager/** — Trade lifecycle (BE/close/modify)
+- `break_even.py` — move SL to entry
+- `close_processor.py` — close position, remove from tracking
+- `position_modifier.py` — adjust TP/SL
+- `context_processor.py` — enrich signal with market context
+
+**src/mt5_executor/** — MetaTrader 5 integration
+- `connection.py` — MT5ConnectionManager (login, pool, health)
+- `position_manager.py` — open/close/modify orders
+- `symbol_specs.py` — fetch pip size, contract size, margin
+
+**src/database/** — SQLAlchemy + aiosqlite
+- `repository.py` — repository pattern (signals, positions, trades)
+- `models.py` — SQLAlchemy ORM (Signal, Position, Trade, BreakEven)
+- `cache.py` — LLM response cache (avoid duplicate API calls)
+- `migrations/` — Alembic scripts
+
+**src/monitoring/** — Health & observability
+- `health_checker.py` — circuit breaker status, connectivity checks
+- `metrics_collector.py` — trade count, error rate, latency
+- `console_dashboard.py` — real-time TUI (Telegram updates, positions)
+- `alert_manager.py` — Telegram alerts on critical events
+
+**src/utils/**
+- `circuit_breaker.py` — decorator for OpenAI/MT5 calls
+- `currency_config.py` — pip sizes, lot sizes, margin by symbol
 
 ## Commands
 
 ```bash
 # Run
-python main.py
-python cli.py start|status|stop
+python main.py                          # async event loop: monitor → parse → correlate → execute
+python cli.py start|stop|status         # lifecycle mgmt (fork subprocess, track PID)
 
 # Setup (one-time)
-python scripts/setup_session.py         # creates Telegram session (interactive phone verify)
-python scripts/test_mt5_connection.py   # verify MT5 login/server
-python scripts/migrate_database.py      # run DB migrations
+python scripts/migrate_database.py      # Alembic: create schema
+python scripts/benchmark_db.py          # perf test
 
 # Tests
-pytest                                  # full suite
-pytest tests/unit/                      # unit only
-pytest tests/integration/               # integration only
-pytest tests/unit/test_regex_parser.py::test_name  # single test
-pytest --cov=src                        # with coverage
+pytest                                  # full suite (37 tests)
+pytest tests/unit/                      # unit only (~25 tests)
+pytest tests/integration/               # integration only (~8 tests)
+pytest tests/unit/test_correlator.py::test_name  # single test
+pytest --cov=src                        # coverage report
 
-# Lint/format/type-check (run all three before considering work done)
+# Lint/format/type-check (run all three before commit)
 black src/ tests/
 ruff check src/ tests/
 mypy src/
 ```
 
-pytest is configured with `--strict-markers --strict-config -W error` (see `pytest.ini`) — unregistered markers or unexpected warnings fail the run. Markers available: `unit`, `integration`, `slow`, `external`.
+pytest configured: `--strict-markers --strict-config -W error`. Markers: `unit`, `integration`, `slow`, `external`.
 
 ## Architecture
 
-Event-driven async pipeline (asyncio throughout, no threads for I/O):
+Event-driven async pipeline (asyncio, no threads). Data flow:
 
 ```
-Telegram groups --(Telethon MTProto)--> telegram_client
-    --> signal_parser (regex_parser first; llm_parser/gpt-5-mini fallback on failure)
-    --> correlation_engine (reply_tracer: reply-chain lookup; time_matcher: time-window fallback)
-        links follow-up messages (BREAK EVEN / CLOSE / modify) to an existing position
-    --> risk_manager (break_even, close_processor, position_modifier, context_processor)
-    --> mt5_executor (connection, position_manager, symbol_specs) --> MetaTrader5 terminal
-    <-> database (repository pattern over SQLAlchemy + aiosqlite; cache.py caches LLM responses)
-    <-> monitoring (health_checker, metrics_collector, console_dashboard, alert_manager)
+┌─ Telegram groups (MTProto)
+│    ↓ MessageHandler queues raw messages
+│    ↓ RegexParser fast-path → 90% signals parsed instantly
+│    ├─ (unparseable → LLMParser:GPT-4o, circuit_breaker protected)
+│    ↓ ContextAnalyzer normalizes: symbol, price, direction, type
+│    ↓ CorrelationEngine links replies to originals
+│    │  ├─ reply_tracer: Telegram native reply chain
+│    │  └─ time_matcher: fallback by timestamp + symbol
+│    ↓ RiskManager: actions (BE/CLOSE/MODIFY)
+│    │  ├─ BreakEven: update SL
+│    │  ├─ CloseProcessor: liquidate
+│    │  └─ PositionModifier: TP/SL adjustments
+│    ↓ MT5Executor: live orders
+│    │  └─ circuit_breaker on all calls
+│    ↓ Repository: Signal/Position/Trade records
+│    ↓ MetaTrader 5 terminal
+│
+├─ Database: SQLAlchemy + aiosqlite
+│  └─ cache.py: LLM dedup (avoid repeated OpenAI calls)
+│
+├─ Monitoring (async tasks, parallel to main loop)
+│  ├─ HealthChecker: circuit breaker state
+│  ├─ MetricsCollector: error rate, latency, trade count
+│  └─ ConsoleDashboard: live TUI
+│
+└─ AlertManager: critical events → Telegram DMs
 ```
 
-Key architectural rules (see `docs/architecture/coding-standards.md` for the full list):
-- **Repository pattern only** for DB access — no direct SQLAlchemy queries outside `src/database/repository.py`.
-- **Circuit breaker required** on all external API calls (OpenAI, MT5) — use the decorator in `src/utils/decorators.py` / `src/utils/circuit_breaker.py`.
-- **Hybrid parsing**: regex is the fast path; LLM (`src/signal_parser/llm_parser.py`) is fallback-only, to control OpenAI cost/latency.
-- **Message correlation** is reply-chain first, time-window second — this is how "BREAK EVEN"-style updates get matched to the right open position in multi-trade scenarios.
-- **Telegram rate limiting**: all Telegram calls go through `rate_limiter.human_delay()` to mimic human behavior and avoid detection/bans.
-- **Prices** must be normalized to broker pip size (`normalize_price()`) before any MT5 call.
-- Treat Telegram and MT5 integration code as high-risk external boundaries — prefer narrow, observable changes over broad rewrites there.
-- Never log secrets/API keys; hash Telegram usernames if logged. Never commit `.env` or `.session` files.
+**Key rules** (see `docs/architecture/coding-standards.md`):
+- **Repository pattern only** — `src/database/repository.py` is the sole DB access point.
+- **Circuit breaker required** on OpenAI + MT5 calls — `src/utils/circuit_breaker.py` decorator.
+- **Regex first** — LLM is fallback only. Cost control.
+- **Correlation priority** — reply-chain lookup before time-window fallback.
+- **Telegram rate limit** — all calls via `rate_limiter.human_delay()` (anti-ban).
+- **Price normalization** — `normalize_price()` to pip size before MT5.
+- **High-risk code** — Telegram + MT5 integration: narrow, observable changes only. No broad refactors.
+- **Secrets** — never log API keys; hash usernames. Never commit `.env`, `.session`.
 
-Config lives in `config/` (`settings.py` via pydantic-settings, `logging_config.py`, `prompts/*.txt` for LLM prompts). Logs rotate into `logs/app.log`, `logs/error.log`, `logs/trades.log`.
+**Recent work** (commits: `correlator to test later`, `working order execution`, `fix duplicate signals and open order mt5`):
+- Position tracking: open order detection, duplicate signal filtering
+- Correlator refactor: improved reply-chain traversal
+- Pending: comprehensive correlator testing
+
+**Config:** `config/settings.py` (pydantic), `logging_config.py`, `openai_config.py`, `prompts/*.txt`. Logs: `logs/app.log`, `logs/error.log`, `logs/trades.log`.
