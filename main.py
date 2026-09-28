@@ -372,24 +372,34 @@ class ApplicationManager:
             return
 
         try:
+            signal_record = await self._signal_repository.find_by_message_id(
+                parsed_signal.telegram_message_id
+            )
+            if signal_record is None:
+                self.logger.warning("Signal record missing before MT5 execution")
+                return
+
+            claimed = await self._signal_repository.claim_signal_for_execution(signal_record.id)
+            if not claimed:
+                self.logger.info(
+                    f"MT5 execution skipped for signal {signal_record.id}: "
+                    "already claimed or processed"
+                )
+                return
+
             self.position_manager = self.position_manager or PositionManager(self.mt5_connection_manager)
             volume = 0.01
             order_result = await self.position_manager.open_market_order(parsed_signal, volume=volume)
 
             if not order_result.success:
                 await self._signal_repository.update_signal_status(
-                    signal_id=(await self._signal_repository.find_by_message_id(parsed_signal.telegram_message_id)).id,
+                    signal_id=signal_record.id,
                     status=SignalStatus.REJECTED,
                     rejection_reason=order_result.error_message or "MT5 order rejected"
                 )
                 self.logger.warning(
                     f"MT5 order rejected for {parsed_signal.symbol}: {order_result.error_message}"
                 )
-                return
-
-            signal_record = await self._signal_repository.find_by_message_id(parsed_signal.telegram_message_id)
-            if signal_record is None:
-                self.logger.warning("Signal record missing before MT5 position creation")
                 return
 
             if self._position_repository is not None:

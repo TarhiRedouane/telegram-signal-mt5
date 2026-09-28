@@ -75,10 +75,7 @@ class PositionManager:
                 )
 
             action = getattr(signal, "parsed_action", None)
-            if isinstance(action, str):
-                action_name = action.upper()
-            else:
-                action_name = str(action).upper() if action is not None else ""
+            action_name = str(getattr(action, "value", action) or "").upper()
 
             if action_name not in {"BUY", "SELL"}:
                 return MT5Result(
@@ -114,13 +111,26 @@ class PositionManager:
                         error_message="MT5 connection not available"
                     )
 
-                tick = mt5.symbol_info_tick(symbol)
+                build_candidates = getattr(self.connection_manager, "_build_price_lookup_candidates", None)
+                resolve_symbol = getattr(self.connection_manager, "_resolve_broker_symbol_name", None)
+                candidates = build_candidates(symbol) if callable(build_candidates) else [symbol]
+                tick = None
+                for candidate in candidates:
+                    broker_symbol = resolve_symbol(candidate) if callable(resolve_symbol) else candidate
+                    symbol_select = getattr(mt5, "symbol_select", None)
+                    if callable(symbol_select):
+                        symbol_select(broker_symbol, True)
+                    tick = mt5.symbol_info_tick(broker_symbol)
+                    if tick is not None:
+                        symbol = broker_symbol
+                        break
+
                 if tick is None:
                     return MT5Result(
                         success=False,
                         ticket=None,
                         operation="open_market_order",
-                        error_message=f"Unable to get market tick for symbol {symbol}"
+                        error_message=f"Unable to get market tick for broker symbol candidates {candidates}"
                     )
 
                 order_type = mt5.ORDER_TYPE_BUY if action_name == "BUY" else mt5.ORDER_TYPE_SELL

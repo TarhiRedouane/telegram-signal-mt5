@@ -18,7 +18,7 @@ from typing import (
     TypeVar,
 )
 
-from sqlalchemy import and_, asc, delete, desc, func, select, text
+from sqlalchemy import and_, asc, delete, desc, func, or_, select, text, update
 from sqlalchemy.exc import IntegrityError, SQLAlchemyError
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 from sqlalchemy.orm import selectinload
@@ -382,6 +382,36 @@ class SignalRepository(BaseRepository[Signal]):
         except Exception as e:
             logger.error(f"Failed to update signal status: {e}")
             raise
+
+    async def claim_signal_for_execution(self, signal_id: int) -> bool:
+        """Atomically claim a pending signal before submitting an MT5 order.
+
+        The one legacy rejection caused by enum stringification is retryable because
+        that validation failure occurs before any order is sent to MT5.
+        """
+        try:
+            retryable_legacy_rejection = and_(
+                Signal.status == SignalStatus.REJECTED,
+                Signal.rejection_reason.like("Unsupported action for MT5 order:%"),
+            )
+            stmt = (
+                update(Signal)
+                .where(
+                    Signal.id == signal_id,
+                    or_(Signal.status == SignalStatus.PENDING, retryable_legacy_rejection),
+                )
+                .values(status=SignalStatus.VALIDATED, rejection_reason=None)
+            )
+            async with self.db_manager.get_transaction() as session:
+                result = await session.execute(stmt)
+                claimed = result.rowcount == 1
+
+            if claimed:
+                logger.info("Claimed signal %s for MT5 execution", signal_id)
+            return claimed
+        except SQLAlchemyError as e:
+            logger.error("Database error claiming signal %s for execution: %s", signal_id, e)
+            raise RepositoryError(f"Database error claiming signal for execution: {e}")
 
     async def get_signals_with_positions(self) -> list[Signal]:
         """Get signals with their associated positions."""
