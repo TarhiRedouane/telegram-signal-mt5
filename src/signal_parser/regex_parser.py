@@ -174,7 +174,8 @@ class RegexParser:
                 take_profit=take_profit,
                 confidence_score=0.95,  # High confidence for regex matches
                 parser_type="REGEX",
-                status="PENDING"
+                status="PENDING",
+                entry_price_high=entry_price_high,
             )
 
             return signal

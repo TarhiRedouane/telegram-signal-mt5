@@ -35,10 +35,14 @@ class Followup:
     sl: Decimal | None = None
     tp: Decimal | None = None
     entry: Decimal | None = None
+    now: bool = False
 
     @property
     def empty(self) -> bool:
-        return not self.cancel and self.sl is None and self.tp is None and self.entry is None
+        return (
+            not self.cancel and not self.now
+            and self.sl is None and self.tp is None and self.entry is None
+        )
 
 
 def extract_followup(text: str) -> Followup:
@@ -54,6 +58,10 @@ def extract_followup(text: str) -> Followup:
         match = pattern.search(text)
         if match:
             setattr(result, attr, _to_decimal(match.group(1)))
+    if result.tp is not None and FrenchSignalPatterns.FOLLOWUP_EXTRA_TP.search(text):
+        logger.info(f"Ignoring extra take-profit {result.tp}; MT5 position keeps TP1")
+        result.tp = None
+    result.now = bool(FrenchSignalPatterns.FOLLOWUP_NOW.search(text))
     return result
 
 
@@ -73,6 +81,7 @@ class PendingSetup:
     raw_texts: list[str] = field(default_factory=list)
     last_update: datetime = field(default_factory=datetime.now)
     position: Any = None
+    fire_now: bool = False
 
     @property
     def is_complete(self) -> bool:
@@ -90,6 +99,9 @@ class PendingSetup:
         if followup.entry is not None:
             self.low = self.high = followup.entry
             changed.append("entry")
+        if followup.now and not self.fire_now:
+            self.fire_now = True
+            changed.append("now")
         sl_ref = self.high if self.action == ParsedAction.SELL else self.low
         tp_ref = self.low if self.action == ParsedAction.SELL else self.high
         if followup.sl is not None:

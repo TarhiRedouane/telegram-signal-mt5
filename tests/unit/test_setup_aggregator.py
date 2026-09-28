@@ -74,6 +74,18 @@ def test_example_sequence_aggregates_entry_sl_tp():
     assert len(setup.raw_texts) == 4  # setup + TP + SL + entry; noise not recorded
 
 
+def test_live_log_sequence_sell_now_then_levels():
+    signal = _parse("sell gold 4151-4152")
+    assert (signal.entry_price, signal.entry_price_high) == (Decimal("4151"), Decimal("4152"))
+
+    _, setup = _run(["sell gold 4151-4152", "you can sell now 4144", "sl 4150", "TP 4135", "TP 2 : 4128"])
+    assert setup.fire_now
+    assert (setup.low, setup.high) == (Decimal("4144"), Decimal("4144"))
+    assert setup.sl == Decimal("4150")
+    assert setup.tp == Decimal("4135")  # TP2 does not replace TP1
+    assert setup.fire_levels(Decimal("4146.65")) == (Decimal("4150"), Decimal("4135"))
+
+
 def test_noise_does_not_reset_idle_timer():
     agg = SetupAggregator()
     setup = agg.start(_parse(EXAMPLE[0]), NOW)

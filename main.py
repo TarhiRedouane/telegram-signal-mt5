@@ -518,9 +518,11 @@ class ApplicationManager:
             return Followup()
         if parsed.parsed_action == ParsedAction.CLOSE:
             return Followup(cancel=True)
+        same_side = parsed.parsed_action == setup.action and parsed.entry_price > 0
         return Followup(
             sl=parsed.stop_loss if isinstance(parsed.stop_loss, Decimal) else None,
             tp=parsed.take_profit if isinstance(parsed.take_profit, Decimal) else None,
+            entry=parsed.entry_price if same_side else None,
         )
 
     async def _watch_setup(self, setup: PendingSetup) -> None:
@@ -551,7 +553,8 @@ class ApplicationManager:
                 return
         else:
             tolerance = symbol_policy.get_entry_tolerance(setup.symbol)
-            if tolerance is None or not setup.in_entry_zone(price, tolerance):
+            in_zone = tolerance is not None and setup.in_entry_zone(price, tolerance)
+            if not (in_zone or setup.fire_now):
                 return
             levels = setup.fire_levels(price)
             if levels is None:

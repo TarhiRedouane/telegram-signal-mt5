@@ -70,9 +70,12 @@ class FrenchSignalPatterns:
         re.IGNORECASE,
     )
     FOLLOWUP_ENTRY: ClassVar[re.Pattern] = re.compile(
-        r"\b(?:ENTR(?:ER|E|ÉE|EE|ONS|EZ)|RENTR(?:ER|E|ONS))\b[^\n]{0,20}?" + _LEVEL,
+        r"\b(?:ENTR(?:ER|E|ÉE|EE|ONS|EZ)|RENTR(?:ER|E|ONS)|SELL|BUY|VEND\w*|ACH[EÈ]T\w*)\b[^\n]{0,20}?"
+        + _LEVEL,
         re.IGNORECASE,
     )
+    FOLLOWUP_NOW: ClassVar[re.Pattern] = re.compile(r"\b(?:NOW|MAINTENANT)\b", re.IGNORECASE)
+    FOLLOWUP_EXTRA_TP: ClassVar[re.Pattern] = re.compile(r"\bTP\s*[2-9](?!\d)", re.IGNORECASE)
     SETUP_CANCEL: ClassVar[re.Pattern] = re.compile(
         r"\b(?:ANNUL\w*|CANCEL\w*|OUBLI\w*|LAISSE[SZ]?\s+TOMBER|PAS\s+DE\s+TRADE|"
         r"SETUP\s+(?:INVALID\w*|ANNUL\w*))",
