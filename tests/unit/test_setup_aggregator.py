@@ -171,3 +171,41 @@ async def test_main_routes_complete_signal_to_instant_path_and_incomplete_to_set
     await app._on_telegram_message({**meta, "telegram_message_id": 2, "raw_text": EXAMPLE[0]})
     app._start_setup.assert_called_once()
     assert app._handle_parsed_signal.await_count == 1
+
+
+LIVE_1418 = """📉** SELL  →  4197 - 4200**
+
+**🎯 TP  4190 | 4173 | 4153| 4125 **
+
+**❌**** __SL / INVALIDATION  4203 - 2017 __**
+
+Le corps confirme le mouvement"""
+
+
+def test_component_parse_keeps_range_and_invalidation_sl():
+    signal = RegexParser().parse(LIVE_1418)
+    assert (signal.entry_price, signal.entry_price_high) == (Decimal("4197"), Decimal("4200"))
+    assert (signal.stop_loss, signal.take_profit) == (Decimal("4203"), Decimal("4190"))
+
+
+def test_space_separated_range():
+    signal = _parse("SELL GOLD 4197 4200 !")
+    assert (signal.entry_price, signal.entry_price_high) == (Decimal("4197"), Decimal("4200"))
+    assert _parse("sell gold 4149\nSL 4165\nTP 4115").entry_price_high is None
+
+
+def test_live_edit_sequence_restatement_keeps_zone_and_edit_note_is_ignored():
+    from src.correlation_engine.setup_aggregator import Followup
+
+    # #1416 edited to "SELL GOLD 4197 4200 !" starts the setup
+    _, setup = _run(["SELL GOLD 4197 4200 !"])
+    # #1418 restates the zone with levels: range kept, SL/TP collected
+    followup = extract_followup(LIVE_1418)
+    assert (followup.entry, followup.entry_high) == (Decimal("4197"), Decimal("4200"))
+    assert setup.apply(followup, LIVE_1418, NOW) == ["entry", "sl", "tp"]
+    assert (setup.low, setup.high, setup.sl, setup.tp) == (
+        Decimal("4197"), Decimal("4200"), Decimal("4203"), Decimal("4190")
+    )
+    # "J'ai modifier 205 !" is a note about the edit; an LLM reading SL=205 must not move the SL
+    assert setup.apply(Followup(sl=Decimal("205")), "J'ai modifier 205 !", NOW) == []
+    assert setup.sl == Decimal("4203")

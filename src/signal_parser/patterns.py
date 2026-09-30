@@ -46,7 +46,8 @@ class FrenchSignalPatterns:
     SL_PATTERNS: ClassVar[list[str]] = [
         r"SL\s*:?\s*(\d{4}(?:\.\d{1,2})?)",
         r"STOP\s*:?\s*(\d{4}(?:\.\d{1,2})?)",
-        r"STOP\s+LOSS\s*:?\s*(\d{4}(?:\.\d{1,2})?)"
+        r"STOP\s+LOSS\s*:?\s*(\d{4}(?:\.\d{1,2})?)",
+        r"INVALIDATION[^\n]{0,100}?(?<!\d)(\d{4}(?:\.\d{1,2})?)",  # "SL / INVALIDATION 4203"
     ]
 
     # Take profit patterns
@@ -59,7 +60,7 @@ class FrenchSignalPatterns:
     # Multi-message setup follow-ups (matched against original-case text, IGNORECASE)
     _LEVEL = r"(?<!\d)(\d{4}(?:[.,]\d{1,2})?)"
     ENTRY_RANGE_SUFFIX: ClassVar[re.Pattern] = re.compile(
-        r"\s*(?:-|–|/|À|A)\s*(\d{4}(?:\.\d{1,2})?)(?!\d)", re.IGNORECASE
+        r"(?:\s*(?:-|–|/|À|A)\s*|[ \t]+)(\d{4}(?:\.\d{1,2})?)(?!\d)", re.IGNORECASE
     )
     FOLLOWUP_TP: ClassVar[re.Pattern] = re.compile(
         r"\b(?:TP\d?|TARGET|TAKE\s+PROFIT|OBJECTIFS?|CIBLES?|VIS(?:E|ER|ONS|EZ))\b[^\n]{0,30}?" + _LEVEL,

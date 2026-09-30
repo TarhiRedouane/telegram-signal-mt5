@@ -197,6 +197,10 @@ class ApplicationManager:
                 self.message_handler.handle_new_message,
                 self._telegram_event_filter
             )
+            self.telegram_client.client.add_event_handler(
+                self.message_handler.handle_new_message,
+                self.message_handler.create_edit_event_handler(group_entities),
+            )
 
             # Fallback path: poll connected groups so we still ingest messages
             # when Telegram push events are delayed or missed.
@@ -232,7 +236,7 @@ class ApplicationManager:
         """Parse incoming Telegram messages and push actionable signals to dashboard."""
         message_key = (
             f"{metadata.get('telegram_chat_id', 0)}_"
-            f"{metadata.get('telegram_message_id', 0)}"
+            f"{metadata.get('telegram_message_id', 0)}_{metadata.get('edit_date')}"
         )
         if message_key in self._seen_message_keys:
             return
@@ -247,12 +251,31 @@ class ApplicationManager:
 
         raw_text = metadata.get("raw_text", "")
         preview = raw_text.replace("\n", " ").replace("\r", " ")[:120]
+        edited = metadata.get("edit_date") is not None
         self.logger.info(
-            f"Message received chat={metadata.get('telegram_chat_id')} "
+            f"Message {'edited' if edited else 'received'} chat={metadata.get('telegram_chat_id')} "
             f"message_id={metadata.get('telegram_message_id')} text='{preview}'"
         )
 
         pending_setup = self._setup_aggregator.get(int(metadata.get("telegram_chat_id", 0)))
+        if (
+            edited
+            and pending_setup is not None
+            and pending_setup.message_id == int(metadata.get("telegram_message_id", 0))
+        ):
+            await self._handle_setup_edit(pending_setup, raw_text)
+            return
+        if (
+            edited
+            and self._signal_repository is not None
+            and await self._signal_repository.find_by_message_id(int(metadata.get("telegram_message_id", 0)))
+        ):
+            # ponytail: edits of executed signals are not applied to their positions yet
+            self.logger.warning(
+                f"Edit of already-processed signal message_id={metadata.get('telegram_message_id')} "
+                "ignored; adjust the position manually if levels changed"
+            )
+            return
         if pending_setup is not None and not looks_like_new_trade(raw_text):
             await self._handle_setup_followup(pending_setup, raw_text)
             return
@@ -496,11 +519,27 @@ class ApplicationManager:
         else:
             self._setup_aggregator.drop(setup, reason)
 
-    async def _handle_setup_followup(self, setup: PendingSetup, raw_text: str) -> None:
+    async def _handle_setup_edit(self, setup: PendingSetup, raw_text: str) -> None:
+        """Author edited the setup message itself: re-read its range/SL/TP instead of treating it as chatter."""
+        signal = self.regex_parser.parse(raw_text) if self.regex_parser else None
+        if signal is None or signal.parsed_action != setup.action or signal.symbol != setup.symbol:
+            self.logger.info(f"Setup message edit in chat {setup.chat_id} ignored (not the same trade)")
+            return
+        if not setup.positions:
+            setup.low, setup.high = signal.entry_price, signal.entry_price_high or signal.entry_price
+        self.logger.info(f"Setup message edited chat={setup.chat_id}: zone {setup.low}-{setup.high}")
+        await self._handle_setup_followup(
+            setup, raw_text, Followup(sl=signal.stop_loss, tp=signal.take_profit)
+        )
+
+    async def _handle_setup_followup(
+        self, setup: PendingSetup, raw_text: str, followup: Followup | None = None
+    ) -> None:
         """Fold a follow-up message into the chat's pending (or already-filled) setup."""
-        followup = extract_followup(raw_text)
-        if followup.empty and self.llm_parser is not None:
-            followup = await self._llm_setup_followup(setup, raw_text)
+        if followup is None:
+            followup = extract_followup(raw_text)
+            if followup.empty and self.llm_parser is not None:
+                followup = await self._llm_setup_followup(setup, raw_text)
 
         if followup.cancel:
             self._disarm_or_drop(setup, "cancelled by author")
@@ -510,11 +549,14 @@ class ApplicationManager:
             return
 
         if not setup.armed:
-            # After a fill only an explicit "sell/buy ... now|price" opens another entry
-            if has_action_word(raw_text) and (followup.now or followup.entry is not None):
+            # After a fill only an explicit "sell/buy now" or a new price opens another entry;
+            # restating the filled zone ("SELL → 4197 - 4200" + levels) only updates SL/TP.
+            tolerance = symbol_policy.get_entry_tolerance(setup.symbol) or Decimal(0)
+            new_price = followup.entry is not None and not setup.in_entry_zone(followup.entry, tolerance)
+            if has_action_word(raw_text) and (followup.now or new_price):
                 setup.armed = True
             else:
-                followup.now, followup.entry = False, None
+                followup.now, followup.entry, followup.entry_high = False, None, None
 
         changed = setup.apply(followup, raw_text, datetime.now(UTC))
         if not changed:
@@ -838,6 +880,7 @@ class ApplicationManager:
                             'chat_title': getattr(entity, 'title', str(entity_id)),
                             'is_forwarded': getattr(message, 'forward', None) is not None,
                             'message_type': 'text',
+                            'edit_date': getattr(message, 'edit_date', None),
                         }
 
                         await self._on_telegram_message(metadata)

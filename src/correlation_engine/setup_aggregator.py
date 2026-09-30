@@ -41,6 +41,7 @@ class Followup:
     sl: Decimal | None = None
     tp: Decimal | None = None
     entry: Decimal | None = None
+    entry_high: Decimal | None = None  # "SELL → 4197 - 4200" restates a zone, not a single price
     now: bool = False
 
     @property
@@ -64,6 +65,10 @@ def extract_followup(text: str) -> Followup:
         match = pattern.search(text)
         if match:
             setattr(result, attr, _to_decimal(match.group(1)))
+            if attr == "entry":
+                bound = FrenchSignalPatterns.ENTRY_RANGE_SUFFIX.match(text, match.end())
+                if bound:
+                    result.entry_high = _to_decimal(bound.group(1))
     if result.tp is not None and FrenchSignalPatterns.FOLLOWUP_EXTRA_TP.search(text):
         logger.info(f"Ignoring extra take-profit {result.tp}; MT5 position keeps TP1")
         result.tp = None
@@ -123,7 +128,8 @@ class PendingSetup:
         """Apply extracted levels with direction sanity; return names of changed fields."""
         changed: list[str] = []
         if followup.entry is not None:
-            self.low = self.high = followup.entry
+            bound = followup.entry_high or followup.entry
+            self.low, self.high = min(followup.entry, bound), max(followup.entry, bound)
             changed.append("entry")
         if followup.now and not self.fire_now:
             self.fire_now = True

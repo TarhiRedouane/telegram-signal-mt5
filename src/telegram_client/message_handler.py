@@ -57,8 +57,10 @@ class MessageHandler:
             # Extract message metadata
             metadata = await self._extract_message_metadata(message, event)
 
-            # Prevent duplicate processing
-            message_key = f"{metadata['telegram_chat_id']}_{metadata['telegram_message_id']}"
+            # Prevent duplicate processing (an edit gets a new key so its new text is processed)
+            message_key = (
+                f"{metadata['telegram_chat_id']}_{metadata['telegram_message_id']}_{metadata['edit_date']}"
+            )
             if message_key in self._processed_messages:
                 return
 
@@ -121,7 +123,8 @@ class MessageHandler:
                 'reply_to_message_id': message.reply_to.reply_to_msg_id if message.reply_to else None,
                 'chat_title': chat_title,
                 'is_forwarded': message.forward is not None,
-                'message_type': 'text'
+                'message_type': 'text',
+                'edit_date': message.edit_date,
             }
 
             return metadata
@@ -138,7 +141,8 @@ class MessageHandler:
                 'reply_to_message_id': None,
                 'chat_title': 'unknown',
                 'is_forwarded': False,
-                'message_type': 'text'
+                'message_type': 'text',
+                'edit_date': getattr(message, 'edit_date', None),
             }
 
     async def _get_sender_info(self, message: Message) -> str:
@@ -189,6 +193,10 @@ class MessageHandler:
         except Exception as e:
             self.logger.error(f"Error creating event handler: {e}")
             raise
+
+    def create_edit_event_handler(self, group_entities: list[Any]) -> Any:
+        """Edits in the same chats: authors fix prices/SL after posting."""
+        return events.MessageEdited(chats=group_entities)
 
     def _log_message_for_monitoring(self, metadata: dict[str, Any]) -> None:
         """

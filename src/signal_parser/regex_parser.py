@@ -154,11 +154,7 @@ class RegexParser:
             stop_loss = self._extract_stop_loss(original_text)
             take_profit = self._extract_take_profit(original_text)
 
-            entry_price_high = None
-            range_match = FrenchSignalPatterns.ENTRY_RANGE_SUFFIX.match(match.string, match.end())
-            if range_match:
-                bound = Decimal(range_match.group(1))
-                entry_price, entry_price_high = min(entry_price, bound), max(entry_price, bound)
+            entry_price, entry_price_high = self._entry_range(match, entry_price)
 
             # Create signal object
             signal = ParsedSignal(
@@ -216,11 +212,13 @@ class RegexParser:
 
             # Extract price
             entry_price = None
+            entry_price_high = None
             for pattern in self.patterns['prices']:
                 match = pattern.search(cleaned_text)
                 if match:
                     try:
                         entry_price = Decimal(match.group(1) if match.groups() else match.group(0))
+                        entry_price, entry_price_high = self._entry_range(match, entry_price)
                         break
                     except (ValueError, TypeError, decimal.InvalidOperation):
                         continue
@@ -246,7 +244,8 @@ class RegexParser:
                 take_profit=take_profit,
                 confidence_score=0.90,  # Slightly lower confidence for component parsing
                 parser_type="REGEX",
-                status="PENDING"
+                status="PENDING",
+                entry_price_high=entry_price_high,
             )
 
             # Validate before returning
@@ -282,6 +281,15 @@ class RegexParser:
             self.logger.error(f"Error in component parsing: {e}")
 
         return None
+
+    @staticmethod
+    def _entry_range(match: re.Match, entry_price: Decimal) -> tuple[Decimal, Decimal | None]:
+        """Entry zone "4197 - 4200" right after the matched price -> (low, high); else (entry, None)."""
+        range_match = FrenchSignalPatterns.ENTRY_RANGE_SUFFIX.match(match.string, match.end())
+        if not range_match:
+            return entry_price, None
+        bound = Decimal(range_match.group(1))
+        return min(entry_price, bound), max(entry_price, bound)
 
     def _parse_action(self, action_text: str) -> ParsedAction | None:
         """Parse action from text."""
