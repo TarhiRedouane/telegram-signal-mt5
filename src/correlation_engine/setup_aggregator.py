@@ -13,7 +13,9 @@ from src.signal_parser.symbol_policy import symbol_policy
 
 logger = logging.getLogger(__name__)
 
-_ACTION_WORD = re.compile(r"\b(?:buy|sell|achat|vente|long|short|achete|vends?)\b", re.IGNORECASE)
+_ACTION_WORD = re.compile(
+    r"\b(?:buy|sell|achat|vente|long|short|ach[eè]te[sz]?|vend[sz]?)\b", re.IGNORECASE
+)
 _PRICE = re.compile(r"(?<!\d)\d{4}(?:[.,]\d{1,2})?(?!\d)")
 
 
@@ -21,11 +23,15 @@ def _to_decimal(text: str) -> Decimal:
     return Decimal(text.replace(",", "."))
 
 
+def has_action_word(text: str) -> bool:
+    return bool(_ACTION_WORD.search(text))
+
+
 def looks_like_new_trade(text: str) -> bool:
     """Action word + enabled symbol alias + price, all as whole words."""
     aliases = "|".join(re.escape(a) for a in symbol_policy.get_enabled_aliases())
     has_symbol = re.search(rf"(?<![\w/])(?:{aliases})(?![\w/])", text, re.IGNORECASE)
-    return bool(_ACTION_WORD.search(text) and has_symbol and _PRICE.search(text))
+    return bool(has_action_word(text) and has_symbol and _PRICE.search(text))
 
 
 @dataclass
@@ -67,7 +73,7 @@ def extract_followup(text: str) -> Followup:
 
 @dataclass
 class PendingSetup:
-    """Setup collected across messages; `position` is set once the order is filled."""
+    """Setup collected across messages; each fill (initial + re-entries) lands in `positions`."""
     chat_id: int
     message_id: int
     sender: str
@@ -80,12 +86,32 @@ class PendingSetup:
     tp: Decimal | None = None
     raw_texts: list[str] = field(default_factory=list)
     last_update: datetime = field(default_factory=datetime.now)
-    position: Any = None
+    positions: list[Any] = field(default_factory=list)
+    armed: bool = True  # waiting to open an order for the current entry
     fire_now: bool = False
 
     @property
     def is_complete(self) -> bool:
         return self.sl is not None and self.tp is not None
+
+    def rearm(self, signal: ParsedSignal, now: datetime) -> list[str]:
+        """Same-side signal in the same setup: new entry, keep collected SL/TP unless restated."""
+        self.message_id = signal.telegram_message_id
+        self.timestamp = signal.timestamp or now
+        self.low = signal.entry_price
+        self.high = signal.entry_price_high or signal.entry_price
+        self.raw_texts.append(signal.raw_text)
+        self.fire_now = bool(FrenchSignalPatterns.FOLLOWUP_NOW.search(signal.raw_text))
+        self.armed = True
+        self.last_update = now
+        changed = ["entry"]
+        if signal.stop_loss is not None and signal.stop_loss != self.sl:
+            self.sl = signal.stop_loss
+            changed.append("sl")
+        if signal.take_profit is not None and signal.take_profit != self.tp:
+            self.tp = signal.take_profit
+            changed.append("tp")
+        return changed
 
     def _sl_ok(self, sl: Decimal, reference: Decimal) -> bool:
         return sl > reference if self.action == ParsedAction.SELL else sl < reference
@@ -104,13 +130,13 @@ class PendingSetup:
             changed.append("now")
         sl_ref = self.high if self.action == ParsedAction.SELL else self.low
         tp_ref = self.low if self.action == ParsedAction.SELL else self.high
-        if followup.sl is not None:
+        if followup.sl is not None and followup.sl != self.sl:
             if self._sl_ok(followup.sl, sl_ref):
                 self.sl = followup.sl
                 changed.append("sl")
             else:
                 logger.warning(f"Ignoring wrong-side SL {followup.sl} for {self.action.value} setup")
-        if followup.tp is not None:
+        if followup.tp is not None and followup.tp != self.tp:
             if self._tp_ok(followup.tp, tp_ref):
                 self.tp = followup.tp
                 changed.append("tp")
@@ -166,9 +192,17 @@ class SetupAggregator:
     def __init__(self) -> None:
         self._setups: dict[int, PendingSetup] = {}
 
-    def start(self, signal: ParsedSignal, now: datetime) -> PendingSetup:
-        if signal.telegram_chat_id in self._setups:
-            logger.info(f"Replacing pending setup in chat {signal.telegram_chat_id}")
+    def start(self, signal: ParsedSignal, now: datetime) -> tuple[PendingSetup, list[str] | None]:
+        """Return (setup, None) for a new setup, or (setup, changed) when re-arming a live one."""
+        existing = self._setups.get(signal.telegram_chat_id)
+        if (
+            existing is not None
+            and existing.action == signal.parsed_action
+            and existing.symbol == signal.symbol
+        ):
+            return existing, existing.rearm(signal, now)
+        if existing is not None:
+            logger.info(f"Replacing setup in chat {signal.telegram_chat_id} (different side/symbol)")
         setup = PendingSetup(
             chat_id=signal.telegram_chat_id,
             message_id=signal.telegram_message_id,
@@ -182,9 +216,10 @@ class SetupAggregator:
             tp=signal.take_profit,
             raw_texts=[signal.raw_text],
             last_update=now,
+            fire_now=bool(FrenchSignalPatterns.FOLLOWUP_NOW.search(signal.raw_text)),
         )
         self._setups[setup.chat_id] = setup
-        return setup
+        return setup, None
 
     def get(self, chat_id: int) -> PendingSetup | None:
         return self._setups.get(chat_id)
@@ -194,5 +229,5 @@ class SetupAggregator:
             del self._setups[setup.chat_id]
             logger.info(
                 f"Setup dropped chat={setup.chat_id} message_id={setup.message_id} "
-                f"filled={setup.position is not None}: {reason}"
+                f"positions={len(setup.positions)}: {reason}"
             )

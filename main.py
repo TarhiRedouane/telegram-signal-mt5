@@ -42,6 +42,7 @@ from src.correlation_engine.setup_aggregator import (
     PendingSetup,
     SetupAggregator,
     extract_followup,
+    has_action_word,
     looks_like_new_trade,
 )
 from src.signal_parser import ParsedAction
@@ -466,28 +467,54 @@ class ApplicationManager:
 
     def _start_setup(self, parsed_signal) -> None:
         """Buffer an incomplete BUY/SELL setup and watch price until it can fire."""
-        setup = self._setup_aggregator.start(parsed_signal, datetime.now(UTC))
+        setup, rearm_changes = self._setup_aggregator.start(parsed_signal, datetime.now(UTC))
+        state = "started" if rearm_changes is None else f"re-armed (positions={len(setup.positions)})"
         self.logger.info(
-            f"Setup started chat={setup.chat_id} message_id={setup.message_id}: "
-            f"{setup.action.value} {setup.symbol} {setup.low}-{setup.high} SL={setup.sl} TP={setup.tp}"
+            f"Setup {state} chat={setup.chat_id} message_id={setup.message_id}: "
+            f"{setup.action.value} {setup.symbol} {setup.low}-{setup.high} SL={setup.sl} TP={setup.tp} "
+            f"now={setup.fire_now}"
         )
-        self._component_tasks[f"setup_{setup.chat_id}"] = asyncio.create_task(self._watch_setup(setup))
+        if rearm_changes is None:
+            self._component_tasks[f"setup_{setup.chat_id}"] = asyncio.create_task(self._watch_setup(setup))
+        elif "sl" in rearm_changes or "tp" in rearm_changes:
+            asyncio.create_task(self._apply_setup_levels(setup, rearm_changes))
+
+    async def _apply_setup_levels(self, setup: PendingSetup, changed: list[str]) -> None:
+        """Push changed SL/TP to every position opened by this setup."""
+        for position in setup.positions:
+            await self._apply_position_levels(
+                position,
+                setup.sl if "sl" in changed else None,
+                setup.tp if "tp" in changed else None,
+            )
+
+    def _disarm_or_drop(self, setup: PendingSetup, reason: str) -> None:
+        """Stop trying to open the current entry; keep the setup if it already owns positions."""
+        if setup.positions:
+            setup.armed = setup.fire_now = False
+            self.logger.info(f"Setup entry abandoned chat={setup.chat_id}: {reason}")
+        else:
+            self._setup_aggregator.drop(setup, reason)
 
     async def _handle_setup_followup(self, setup: PendingSetup, raw_text: str) -> None:
-        """Fold a follow-up message into the chat's pending (or just-filled) setup."""
+        """Fold a follow-up message into the chat's pending (or already-filled) setup."""
         followup = extract_followup(raw_text)
         if followup.empty and self.llm_parser is not None:
             followup = await self._llm_setup_followup(setup, raw_text)
 
         if followup.cancel:
-            if setup.position is None:
-                self._setup_aggregator.drop(setup, "cancelled by author")
-            else:
-                self.logger.warning(
-                    f"Cancel message after fill on ticket {setup.position.mt5_ticket}; "
-                    "position left open, manage manually"
-                )
+            self._disarm_or_drop(setup, "cancelled by author")
+            if setup.positions:
+                tickets = [p.mt5_ticket for p in setup.positions]
+                self.logger.warning(f"Cancel after fill; tickets {tickets} left open, manage manually")
             return
+
+        if not setup.armed:
+            # After a fill only an explicit "sell/buy ... now|price" opens another entry
+            if has_action_word(raw_text) and (followup.now or followup.entry is not None):
+                setup.armed = True
+            else:
+                followup.now, followup.entry = False, None
 
         changed = setup.apply(followup, raw_text, datetime.now(UTC))
         if not changed:
@@ -496,12 +523,8 @@ class ApplicationManager:
             f"Setup updated chat={setup.chat_id} {changed}: "
             f"{setup.low}-{setup.high} SL={setup.sl} TP={setup.tp}"
         )
-        if setup.position is not None and ("sl" in changed or "tp" in changed):
-            await self._apply_position_levels(
-                setup.position,
-                setup.sl if "sl" in changed else None,
-                setup.tp if "tp" in changed else None,
-            )
+        if "sl" in changed or "tp" in changed:
+            await self._apply_setup_levels(setup, changed)
 
     async def _llm_setup_followup(self, setup: PendingSetup, raw_text: str) -> Followup:
         """LLM fallback for follow-ups regex could not classify (odd cancel/level phrasing)."""
@@ -530,10 +553,10 @@ class ApplicationManager:
         try:
             while self._setup_aggregator.get(setup.chat_id) is setup:
                 if setup.is_expired(datetime.now(UTC), settings.setup_idle_timeout_seconds):
-                    reason = "idle timeout after fill" if setup.position else "expired before entry"
+                    reason = "idle timeout after fill" if setup.positions else "expired before entry"
                     self._setup_aggregator.drop(setup, reason)
                     return
-                if setup.position is None and self.mt5_connection_manager is not None:
+                if setup.armed and self.mt5_connection_manager is not None:
                     price = await self.mt5_connection_manager.get_current_price(setup.symbol)
                     if price is not None:
                         await self._maybe_fire_setup(setup, Decimal(str(price)))
@@ -549,7 +572,7 @@ class ApplicationManager:
         if setup.is_complete:
             signal = setup.to_signal(entry=setup.low, sl=setup.sl, tp=setup.tp)
             if not await self._validate_live_price(signal):
-                self._setup_aggregator.drop(setup, "live price check failed")
+                self._disarm_or_drop(setup, "live price check failed")
                 return
         else:
             tolerance = symbol_policy.get_entry_tolerance(setup.symbol)
@@ -558,7 +581,7 @@ class ApplicationManager:
                 return
             levels = setup.fire_levels(price)
             if levels is None:
-                self._setup_aggregator.drop(setup, f"invalidated at price {price}")
+                self._disarm_or_drop(setup, f"invalidated at price {price}")
                 return
             signal = setup.to_signal(entry=price, sl=levels[0], tp=levels[1])
             if setup.sl is None:
@@ -570,11 +593,16 @@ class ApplicationManager:
             if self._correlation_engine is not None
             else None
         )
-        if position is None:
-            self._setup_aggregator.drop(setup, "order not filled")
+        if position is None or any(p.id == position.id for p in setup.positions):
+            self._disarm_or_drop(setup, "order not filled")
             return
-        setup.position = position
+        setup.positions.append(position)
+        setup.armed = setup.fire_now = False
         setup.last_update = datetime.now(UTC)
+        self.logger.info(
+            f"Setup filled chat={setup.chat_id} ticket={position.mt5_ticket} "
+            f"positions={len(setup.positions)}"
+        )
 
         # Levels that arrived while the order was in flight
         late_sl = setup.sl if setup.sl is not None and setup.sl != signal.stop_loss else None

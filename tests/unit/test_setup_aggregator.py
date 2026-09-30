@@ -38,7 +38,7 @@ def _parse(text: str, chat_id: int = 1, message_id: int = 100):
 
 def _run(messages: list[str]):
     agg = SetupAggregator()
-    setup = agg.start(_parse(messages[0]), NOW)
+    setup, _ = agg.start(_parse(messages[0]), NOW)
     for i, text in enumerate(messages[1:], start=1):
         assert not looks_like_new_trade(text), text
         setup.apply(extract_followup(text), text, NOW + timedelta(seconds=20 * i))
@@ -86,9 +86,39 @@ def test_live_log_sequence_sell_now_then_levels():
     assert setup.fire_levels(Decimal("4146.65")) == (Decimal("4150"), Decimal("4135"))
 
 
+def test_same_side_signal_rearms_setup_and_keeps_positions():
+    agg, setup = _run(["sell gold 4141-4144", "sell now again"])
+    assert setup.fire_now
+    setup.positions.append("pos5")  # watcher fill
+    setup.armed = setup.fire_now = False
+
+    again, changes = agg.start(_parse("sell gold now 4148", message_id=101), NOW)
+    assert again is setup and changes == ["entry"]
+    assert setup.armed and setup.fire_now and setup.message_id == 101
+    assert (setup.low, setup.high) == (Decimal("4148"), Decimal("4148"))
+    setup.positions.append("pos6")
+
+    for text in ["Sl : 4158", "Sl : 4158 for both", "TP : 4128"]:
+        setup.apply(extract_followup(text), text, NOW)
+    assert (setup.sl, setup.tp) == (Decimal("4158"), Decimal("4128"))
+    assert setup.positions == ["pos5", "pos6"]  # main pushes SL/TP to every position
+
+
+def test_opposite_side_signal_replaces_setup():
+    agg = SetupAggregator()
+    first, _ = agg.start(_parse("sell gold 4141-4144"), NOW)
+    second, changes = agg.start(_parse("buy gold 4141"), NOW)
+    assert second is not first and changes is None
+
+
+def test_negated_now_does_not_fire():
+    assert not extract_followup("pas maintenant, on attend").now
+    assert extract_followup("sell now again").now
+
+
 def test_noise_does_not_reset_idle_timer():
     agg = SetupAggregator()
-    setup = agg.start(_parse(EXAMPLE[0]), NOW)
+    setup, _ = agg.start(_parse(EXAMPLE[0]), NOW)
     setup.apply(extract_followup(EXAMPLE[1]), EXAMPLE[1], NOW + timedelta(minutes=4))
     assert setup.is_expired(NOW + timedelta(minutes=5, seconds=1), 300)
 
@@ -123,6 +153,7 @@ def test_new_trade_detection_uses_word_boundaries():
     assert not looks_like_new_trade("alors on vise 4110 longtemps")
 
 
+@pytest.mark.asyncio
 async def test_main_routes_complete_signal_to_instant_path_and_incomplete_to_setup():
     from main import ApplicationManager
 

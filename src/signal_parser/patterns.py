@@ -74,7 +74,7 @@ class FrenchSignalPatterns:
         + _LEVEL,
         re.IGNORECASE,
     )
-    FOLLOWUP_NOW: ClassVar[re.Pattern] = re.compile(r"\b(?:NOW|MAINTENANT)\b", re.IGNORECASE)
+    FOLLOWUP_NOW: ClassVar[re.Pattern] = re.compile(r"(?<!NOT\s)(?<!PAS\s)\b(?:NOW|MAINTENANT)\b", re.IGNORECASE)
     FOLLOWUP_EXTRA_TP: ClassVar[re.Pattern] = re.compile(r"\bTP\s*[2-9](?!\d)", re.IGNORECASE)
     SETUP_CANCEL: ClassVar[re.Pattern] = re.compile(
         r"\b(?:ANNUL\w*|CANCEL\w*|OUBLI\w*|LAISSE[SZ]?\s+TOMBER|PAS\s+DE\s+TRADE|"
