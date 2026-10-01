@@ -316,6 +316,17 @@ class ApplicationManager:
                 parsed_signal = await self.llm_parser.parse_with_llm(raw_text)
             except Exception as e:
                 self.logger.warning(f"LLM fallback parse failed: {e}")
+            # No buy/sell word -> direction unknown; never open a trade on the LLM's guess.
+            if (
+                parsed_signal is not None
+                and parsed_signal.parsed_action in (ParsedAction.BUY, ParsedAction.SELL)
+                and not has_action_word(raw_text)
+            ):
+                self.logger.warning(
+                    f"LLM {parsed_signal.parsed_action.value} discarded, no buy/sell word "
+                    f"chat={metadata.get('telegram_chat_id')} message_id={metadata.get('telegram_message_id')}"
+                )
+                parsed_signal = None
 
         latency_ms = int((asyncio.get_running_loop().time() - started_at) * 1000)
 

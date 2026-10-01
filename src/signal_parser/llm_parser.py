@@ -224,7 +224,7 @@ class LLMParser:
                     },
                     {
                         "role": "user",
-                        "content": f"Message à analyser:\n{prompt.split('Message à analyser:')[-1].strip()}"
+                        "content": prompt.removeprefix(self._prompt_template).strip()
                     }
                 ],
                 **model_config
@@ -302,7 +302,7 @@ class LLMParser:
             except (ValueError, KeyError):
                 self.logger.warning(f"Invalid action in LLM response: {signal_data.get('parsed_action')}")
                 return None
-            
+
             # Parse decimal values safely
             entry_price = self._parse_decimal_field(signal_data.get("entry_price"))
             stop_loss = self._parse_decimal_field(signal_data.get("stop_loss"))

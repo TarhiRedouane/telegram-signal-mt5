@@ -209,3 +209,31 @@ def test_live_edit_sequence_restatement_keeps_zone_and_edit_note_is_ignored():
     # "J'ai modifier 205 !" is a note about the edit; an LLM reading SL=205 must not move the SL
     assert setup.apply(Followup(sl=Decimal("205")), "J'ai modifier 205 !", NOW) == []
     assert setup.sl == Decimal("4203")
+
+
+def test_three_step_setup_regex_only_no_llm_needed():
+    from src.correlation_engine.setup_aggregator import has_action_word
+
+    assert RegexParser().parse("sell GOld") is None  # no price: nothing started
+    _, setup = _run(["Sell gold 4100 4105", "je vise les 4050", "invalidation autour 4115"])
+    assert (setup.low, setup.high, setup.tp, setup.sl) == (
+        Decimal("4100"), Decimal("4105"), Decimal("4050"), Decimal("4115")
+    )
+    # follow-ups are fully regex-resolved -> LLM fallback (and its context) never involved
+    assert not extract_followup("je vise les 4050").empty
+    assert not extract_followup("invalidation autour 4115").empty
+    # new-trade LLM guard: no direction word -> no trade; French verbs still count
+    assert not has_action_word("**PE SNIPER 4180,95 GOLD SCALP**")
+    assert not has_action_word("on regarde ça vendredi")
+    assert all(has_action_word(t) for t in ("je vais vendre l'or", "acheter gold", "j'achète", "je vends"))
+
+
+def test_llm_user_message_carries_setup_context():
+    from src.signal_parser.llm_parser import LLMParser
+
+    parser = LLMParser()
+    prompt = parser._prepare_prompt("Je vise les 4050", "Setup en attente: SELL GOLD entrée 4100-4105")
+    user = prompt.removeprefix(parser._prompt_template).strip()
+    assert user.startswith("Contexte:\nSetup en attente: SELL GOLD entrée 4100-4105")
+    assert user.endswith("Message à analyser:\nJe vise les 4050")
+    assert parser._prompt_template not in user

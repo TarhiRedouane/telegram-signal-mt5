@@ -14,7 +14,7 @@ from src.signal_parser.symbol_policy import symbol_policy
 logger = logging.getLogger(__name__)
 
 _ACTION_WORD = re.compile(
-    r"\b(?:buy|sell|achat|vente|long|short|ach[eè]te[sz]?|vend[sz]?)\b", re.IGNORECASE
+    r"\b(?:buy|sell|achat|vente|long|short|ach[eè]t\w*|vend(?!redi)\w*)\b", re.IGNORECASE
 )
 _PRICE = re.compile(r"(?<!\d)\d{4}(?:[.,]\d{1,2})?(?!\d)")
 
