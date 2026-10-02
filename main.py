@@ -9,7 +9,7 @@ import json
 import logging
 import signal
 import sys
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any, Dict, Optional
 
@@ -46,6 +46,8 @@ from src.correlation_engine.setup_aggregator import (
     looks_like_new_trade,
 )
 from src.signal_parser import ParsedAction
+from src.risk_manager.position_sizer import leg_volume
+from src.utils.currency_config import currency_config
 from decimal import Decimal
 from telethon.utils import get_peer_id
 
@@ -340,7 +342,11 @@ class ApplicationManager:
                 self._parsed_signals_today += 1
                 if (
                     parsed_signal.parsed_action in (ParsedAction.BUY, ParsedAction.SELL)
-                    and (parsed_signal.stop_loss is None or parsed_signal.take_profit is None)
+                    and (
+                        parsed_signal.stop_loss is None
+                        or parsed_signal.take_profit is None
+                        or len(parsed_signal.take_profits) > 1  # multi-TP -> one leg per TP
+                    )
                 ):
                     self._start_setup(parsed_signal)
                 else:
@@ -505,7 +511,7 @@ class ApplicationManager:
         state = "started" if rearm_changes is None else f"re-armed (positions={len(setup.positions)})"
         self.logger.info(
             f"Setup {state} chat={setup.chat_id} message_id={setup.message_id}: "
-            f"{setup.action.value} {setup.symbol} {setup.low}-{setup.high} SL={setup.sl} TP={setup.tp} "
+            f"{setup.action.value} {setup.symbol} {setup.low}-{setup.high} SL={setup.sl} TPs={setup.tps} "
             f"now={setup.fire_now}"
         )
         if rearm_changes is None:
@@ -514,13 +520,14 @@ class ApplicationManager:
             asyncio.create_task(self._apply_setup_levels(setup, rearm_changes))
 
     async def _apply_setup_levels(self, setup: PendingSetup, changed: list[str]) -> None:
-        """Push changed SL/TP to every position opened by this setup."""
-        for position in setup.positions:
-            await self._apply_position_levels(
-                position,
-                setup.sl if "sl" in changed else None,
-                setup.tp if "tp" in changed else None,
-            )
+        """Push changed SL/TP to every position opened by this setup (TP per leg)."""
+        for index, position in enumerate(setup.positions):
+            sl = setup.sl if "sl" in changed else None
+            if sl is not None and setup.be_done and not setup.locks_profit(sl, Decimal(str(position.open_price))):
+                sl = None  # after break-even only a profit-locking SL may replace it
+            tp = setup.leg_tp(index) if "tp" in changed else None
+            if sl is not None or tp is not None:
+                await self._apply_position_levels(position, sl, tp)
 
     def _disarm_or_drop(self, setup: PendingSetup, reason: str) -> None:
         """Stop trying to open the current entry; keep the setup if it already owns positions."""
@@ -540,7 +547,7 @@ class ApplicationManager:
             setup.low, setup.high = signal.entry_price, signal.entry_price_high or signal.entry_price
         self.logger.info(f"Setup message edited chat={setup.chat_id}: zone {setup.low}-{setup.high}")
         await self._handle_setup_followup(
-            setup, raw_text, Followup(sl=signal.stop_loss, tp=signal.take_profit)
+            setup, raw_text, Followup(sl=signal.stop_loss, tps=list(signal.take_profits))
         )
 
     async def _handle_setup_followup(
@@ -565,7 +572,7 @@ class ApplicationManager:
             tolerance = symbol_policy.get_entry_tolerance(setup.symbol) or Decimal(0)
             new_price = followup.entry is not None and not setup.in_entry_zone(followup.entry, tolerance)
             if has_action_word(raw_text) and (followup.now or new_price):
-                setup.armed = True
+                setup.reopen()
             else:
                 followup.now, followup.entry, followup.entry_high = False, None, None
 
@@ -574,7 +581,7 @@ class ApplicationManager:
             return
         self.logger.info(
             f"Setup updated chat={setup.chat_id} {changed}: "
-            f"{setup.low}-{setup.high} SL={setup.sl} TP={setup.tp}"
+            f"{setup.low}-{setup.high} SL={setup.sl} TPs={setup.tps}"
         )
         if "sl" in changed or "tp" in changed:
             await self._apply_setup_levels(setup, changed)
@@ -583,7 +590,7 @@ class ApplicationManager:
         """LLM fallback for follow-ups regex could not classify (odd cancel/level phrasing)."""
         context = (
             f"Setup en attente: {setup.action.value} {setup.symbol} entrée {setup.low}-{setup.high}, "
-            f"SL {setup.sl}, TP {setup.tp}. Le message suivant est une suite de ce setup."
+            f"SL {setup.sl}, TPs {setup.tps}. Le message suivant est une suite de ce setup."
         )
         try:
             parsed = await self.llm_parser.parse_with_llm(raw_text, context=context)
@@ -597,7 +604,7 @@ class ApplicationManager:
         same_side = parsed.parsed_action == setup.action and parsed.entry_price > 0
         return Followup(
             sl=parsed.stop_loss if isinstance(parsed.stop_loss, Decimal) else None,
-            tp=parsed.take_profit if isinstance(parsed.take_profit, Decimal) else None,
+            final_tp=parsed.take_profit if isinstance(parsed.take_profit, Decimal) else None,
             entry=parsed.entry_price if same_side else None,
         )
 
@@ -605,10 +612,22 @@ class ApplicationManager:
         """Poll live price until the setup fires, expires, or is replaced/cancelled."""
         try:
             while self._setup_aggregator.get(setup.chat_id) is setup:
-                if setup.is_expired(datetime.now(UTC), settings.setup_idle_timeout_seconds):
-                    reason = "idle timeout after fill" if setup.positions else "expired before entry"
-                    self._setup_aggregator.drop(setup, reason)
+                now = datetime.now(UTC)
+                all_closed = bool(setup.positions) and await self._track_setup_legs(setup)
+                if setup.first_fill_at and now - setup.first_fill_at > timedelta(
+                    seconds=settings.setup_max_lifetime_seconds
+                ):
+                    self._setup_aggregator.drop(setup, "max lifetime reached")
                     return
+                if setup.is_expired(now, settings.setup_idle_timeout_seconds):
+                    if not setup.positions:
+                        self._setup_aggregator.drop(setup, "expired before entry")
+                        return
+                    if setup.be_done or all_closed or len(setup.positions) <= 1:
+                        self._setup_aggregator.drop(setup, "idle timeout after fill")
+                        return
+                    # Keep watching open legs for TP1 -> break-even; stop waiting for unfilled legs.
+                    setup.armed = setup.fire_now = False
                 if setup.armed and self.mt5_connection_manager is not None:
                     price = await self.mt5_connection_manager.get_current_price(setup.symbol)
                     if price is not None:
@@ -621,47 +640,117 @@ class ApplicationManager:
             self._setup_aggregator.drop(setup, "watcher error")
 
     async def _maybe_fire_setup(self, setup: PendingSetup, price: Decimal) -> None:
-        """Fire when SL+TP known (same live check as single-message signals) or price in zone."""
-        if setup.is_complete:
-            signal = setup.to_signal(entry=setup.low, sl=setup.sl, tp=setup.tp)
+        """Open every leg that is due at `price` (single entry -> all legs in the same tick)."""
+        while setup.armed and await self._fire_next_leg(setup, price):
+            pass
+
+    async def _fire_next_leg(self, setup: PendingSetup, price: Decimal) -> bool:
+        """Leg 0: SL+TP known (same live check as single-message signals) or price in zone.
+        Next legs: price reached their ladder level. Returns True when a leg was opened."""
+        k = setup.next_leg()
+        if k is None:
+            setup.armed = setup.fire_now = False
+            return False
+        index = len(setup.positions)
+        if k == 0 and setup.is_complete:
+            signal = setup.to_signal(entry=setup.low, sl=setup.sl, tp=setup.leg_tp(index))
             if not await self._validate_live_price(signal):
                 self._disarm_or_drop(setup, "live price check failed")
-                return
+                return False
+            signal.entry_price = price
         else:
             tolerance = symbol_policy.get_entry_tolerance(setup.symbol)
-            in_zone = tolerance is not None and setup.in_entry_zone(price, tolerance)
-            if not (in_zone or setup.fire_now):
-                return
-            levels = setup.fire_levels(price)
+            if k == 0:
+                due = tolerance is not None and setup.in_entry_zone(price, tolerance)
+            else:
+                due = tolerance is not None and setup.leg_reached(k, price, tolerance)
+            if not (due or setup.fire_now):
+                return False
+            levels = setup.fire_levels(price, index)
             if levels is None:
                 self._disarm_or_drop(setup, f"invalidated at price {price}")
-                return
+                return False
             signal = setup.to_signal(entry=price, sl=levels[0], tp=levels[1])
             if setup.sl is None:
                 self.logger.info(f"Setup firing with default SL {levels[0]} (none received)")
 
-        await self._handle_parsed_signal(signal)
-        position = (
-            await self._correlation_engine.get_position_by_message_id(setup.message_id)
-            if self._correlation_engine is not None
-            else None
+        legs = len(setup.legs())
+        volume = await self._order_volume(signal, legs)
+        position = await self._handle_parsed_signal(
+            signal, volume=volume, allow_reuse=bool(setup.positions)
         )
-        if position is None or any(p.id == position.id for p in setup.positions):
+        if position is None:
             self._disarm_or_drop(setup, "order not filled")
-            return
+            return False
+        if k == 0:
+            setup.planned_legs = legs
         setup.positions.append(position)
-        setup.armed = setup.fire_now = False
-        setup.last_update = datetime.now(UTC)
+        now = datetime.now(UTC)
+        setup.first_fill_at = setup.first_fill_at or now
+        setup.last_update = now
+        if setup.next_leg() is None:
+            setup.armed = setup.fire_now = False
         self.logger.info(
-            f"Setup filled chat={setup.chat_id} ticket={position.mt5_ticket} "
-            f"positions={len(setup.positions)}"
+            f"Setup leg {k + 1}/{legs} filled chat={setup.chat_id} ticket={position.mt5_ticket} "
+            f"volume={volume} SL={signal.stop_loss} TP={signal.take_profit} positions={len(setup.positions)}"
         )
 
         # Levels that arrived while the order was in flight
+        leg_tp = setup.leg_tp(index)
         late_sl = setup.sl if setup.sl is not None and setup.sl != signal.stop_loss else None
-        late_tp = setup.tp if setup.tp is not None and setup.tp != signal.take_profit else None
+        late_tp = leg_tp if leg_tp is not None and leg_tp != signal.take_profit else None
         if late_sl is not None or late_tp is not None:
             await self._apply_position_levels(position, late_sl, late_tp)
+        return True
+
+    async def _track_setup_legs(self, setup: PendingSetup) -> bool:
+        """TP1 hit -> SL to break-even on open legs + stop unfilled legs. Returns True if all legs closed."""
+        if self.position_manager is None:
+            return False
+        reasons = []
+        for position in setup.positions:
+            try:
+                reasons.append(await self.position_manager.get_close_reason(position.mt5_ticket))
+            except Exception as exc:
+                self.logger.warning(f"Close-reason check failed for ticket {position.mt5_ticket}: {exc}")
+                reasons.append(None)
+        if all(reason is not None for reason in reasons):
+            return True
+        if not setup.be_done and reasons[0] == "tp":
+            setup.be_done = True
+            setup.armed = setup.fire_now = False
+            for position, reason in zip(setup.positions, reasons):
+                if reason is None:
+                    await self._apply_position_levels(position, Decimal(str(position.open_price)), None)
+            self.logger.info(f"TP1 hit chat={setup.chat_id}: open legs moved to break-even, unfilled legs cancelled")
+        return False
+
+    async def _order_volume(self, signal, legs: int = 1) -> float:
+        """Risk-based lots per leg; falls back to the default lot when inputs are unavailable."""
+        fallback = currency_config.default_lot_size
+        if signal.stop_loss is None or self.mt5_connection_manager is None:
+            return fallback
+        self.position_manager = self.position_manager or PositionManager(self.mt5_connection_manager)
+        try:
+            inputs = await self.position_manager.get_sizing_inputs(signal.symbol)
+        except Exception as exc:
+            self.logger.warning(f"Lot sizing inputs unavailable: {exc}")
+            inputs = None
+        if inputs is None:
+            self.logger.warning(f"Lot sizing fell back to {fallback} for {signal.symbol}")
+            return fallback
+        volume = leg_volume(
+            balance=inputs["balance"],
+            risk_percent=settings.risk_percent,
+            sl_distance=abs(signal.entry_price - signal.stop_loss),
+            tick_size=inputs["tick_size"],
+            tick_value=inputs["tick_value"],
+            volume_min=inputs["volume_min"],
+            volume_step=inputs["volume_step"],
+            volume_max=inputs["volume_max"],
+            legs=legs,
+        )
+        return float(volume)
 
     async def _validate_live_price(self, parsed_signal) -> bool:
         """Reject signals that can't be confirmed against a live MT5 market price."""
@@ -710,8 +799,10 @@ class ApplicationManager:
 
         return True
 
-    async def _handle_parsed_signal(self, parsed_signal) -> None:
-        """Persist a successfully parsed signal and update the dashboard."""
+    async def _handle_parsed_signal(
+        self, parsed_signal, volume: float | None = None, allow_reuse: bool = False
+    ):
+        """Persist a parsed signal, execute it, and return the opened Position (or None)."""
         if self._database_ready and self._signal_repository is not None:
             try:
                 await self._signal_repository.save_signal({
@@ -741,18 +832,22 @@ class ApplicationManager:
                 timestamp=parsed_signal.timestamp,
             )
 
-        await self._execute_signal_on_mt5(parsed_signal)
+        position = await self._execute_signal_on_mt5(parsed_signal, volume, allow_reuse)
 
         self.logger.info(
             f"Signal detected from chat {parsed_signal.telegram_chat_id}: "
             f"{parsed_signal.parsed_action.value} {parsed_signal.symbol} @ {parsed_signal.entry_price}"
         )
+        return position
 
-    async def _execute_signal_on_mt5(self, parsed_signal) -> None:
-        """Execute BUY/SELL signals on MT5 and persist an open position record."""
+    async def _execute_signal_on_mt5(
+        self, parsed_signal, volume: float | None = None, allow_reuse: bool = False
+    ):
+        """Execute BUY/SELL on MT5 and persist the position. `allow_reuse`: extra leg of a signal
+        this setup already executed (its claim is taken), so open another order on the same signal row."""
         if self.mt5_connection_manager is None:
             self.logger.info("MT5 execution skipped: connection manager not ready")
-            return
+            return None
 
         action_name = getattr(parsed_signal.parsed_action, "value", str(parsed_signal.parsed_action)).upper()
         if action_name not in {"BUY", "SELL"}:
@@ -774,30 +869,35 @@ class ApplicationManager:
                 return
 
             claimed = await self._signal_repository.claim_signal_for_execution(signal_record.id)
-            if not claimed:
+            status = getattr(signal_record.status, "value", signal_record.status)
+            extra_leg = not claimed and allow_reuse and status == SignalStatus.EXECUTED.value
+            if not claimed and not extra_leg:
                 self.logger.info(
                     f"MT5 execution skipped for signal {signal_record.id}: "
                     "already claimed or processed"
                 )
-                return
+                return None
 
             self.position_manager = self.position_manager or PositionManager(self.mt5_connection_manager)
-            volume = 0.01
+            if volume is None:
+                volume = await self._order_volume(parsed_signal)
             order_result = await self.position_manager.open_market_order(parsed_signal, volume=volume)
 
             if not order_result.success:
-                await self._signal_repository.update_signal_status(
-                    signal_id=signal_record.id,
-                    status=SignalStatus.REJECTED,
-                    rejection_reason=order_result.error_message or "MT5 order rejected"
-                )
+                if not extra_leg:
+                    await self._signal_repository.update_signal_status(
+                        signal_id=signal_record.id,
+                        status=SignalStatus.REJECTED,
+                        rejection_reason=order_result.error_message or "MT5 order rejected"
+                    )
                 self.logger.warning(
                     f"MT5 order rejected for {parsed_signal.symbol}: {order_result.error_message}"
                 )
-                return
+                return None
 
+            position = None
             if self._position_repository is not None:
-                await self._position_repository.create(
+                position = await self._position_repository.create(
                     signal_id=signal_record.id,
                     mt5_ticket=order_result.ticket,
                     open_time=datetime.now(UTC),
@@ -809,16 +909,19 @@ class ApplicationManager:
                     last_sync=datetime.now(UTC),
                 )
 
-            await self._signal_repository.update_signal_status(
-                signal_id=signal_record.id,
-                status=SignalStatus.EXECUTED,
-            )
+            if not extra_leg:
+                await self._signal_repository.update_signal_status(
+                    signal_id=signal_record.id,
+                    status=SignalStatus.EXECUTED,
+                )
 
             self.logger.info(
-                f"MT5 execution successful: {signal_record.id} -> ticket {order_result.ticket}"
+                f"MT5 execution successful: {signal_record.id} -> ticket {order_result.ticket} volume={volume}"
             )
+            return position
         except Exception as exc:
             self.logger.error(f"Failed to execute signal on MT5: {exc}", exc_info=True)
+            return None
 
     async def _poll_telegram_groups(self) -> None:
         """Fallback polling loop to ingest channel messages when push events are not received."""

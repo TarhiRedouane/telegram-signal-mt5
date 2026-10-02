@@ -10,6 +10,7 @@ import asyncio
 import logging
 from dataclasses import dataclass
 from datetime import datetime
+from decimal import Decimal
 from typing import Any
 
 try:
@@ -59,6 +60,54 @@ class PositionManager:
         """
         self.connection_manager = connection_manager or get_connection_manager()
         self.logger = logging.getLogger(__name__)
+
+    @circuit_breaker(failure_threshold=3, recovery_timeout=30)
+    async def get_sizing_inputs(self, symbol: str) -> dict[str, Decimal] | None:
+        """Account balance + broker tick/volume specs for risk-based lot sizing."""
+        if mt5 is None:
+            return None
+        async with self.connection_manager.get_connection() as connection:
+            if not connection.connected:
+                return None
+            account = mt5.account_info()
+            if account is None:
+                return None
+            build_candidates = getattr(self.connection_manager, "_build_price_lookup_candidates", None)
+            resolve_symbol = getattr(self.connection_manager, "_resolve_broker_symbol_name", None)
+            symbol = symbol.upper()
+            for candidate in build_candidates(symbol) if callable(build_candidates) else [symbol]:
+                info = mt5.symbol_info(resolve_symbol(candidate) if callable(resolve_symbol) else candidate)
+                if info is not None:
+                    return {
+                        name: Decimal(str(value))
+                        for name, value in (
+                            ("balance", account.balance),
+                            ("tick_size", info.trade_tick_size),
+                            ("tick_value", info.trade_tick_value),
+                            ("volume_min", info.volume_min),
+                            ("volume_step", info.volume_step),
+                            ("volume_max", info.volume_max),
+                        )
+                    }
+        return None
+
+    @circuit_breaker(failure_threshold=3, recovery_timeout=30)
+    async def get_close_reason(self, ticket: int) -> str | None:
+        """None while the position is open (or history not yet available); else "tp", "sl" or "other"."""
+        if mt5 is None:
+            return None
+        async with self.connection_manager.get_connection() as connection:
+            if not connection.connected or mt5.positions_get(ticket=ticket):
+                return None
+            exits = [d for d in (mt5.history_deals_get(position=ticket) or ()) if d.entry == mt5.DEAL_ENTRY_OUT]
+            if not exits:
+                return None
+            reasons = {d.reason for d in exits}
+            if mt5.DEAL_REASON_TP in reasons:
+                return "tp"
+            if mt5.DEAL_REASON_SL in reasons:
+                return "sl"
+            return "other"
 
     @circuit_breaker(failure_threshold=3, recovery_timeout=30)
     @retry_on_failure(max_attempts=3, delay=1.0, backoff=2.0)

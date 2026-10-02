@@ -1,6 +1,6 @@
 """Signal parser module for regex and LLM-based signal parsing."""
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import datetime
 from decimal import Decimal
 from enum import Enum
@@ -32,6 +32,7 @@ class ParsedSignal:
     parser_type: str = "REGEX"
     status: str = "PENDING"
     entry_price_high: Decimal | None = None  # upper bound when setup gives a range
+    take_profits: list[Decimal] = field(default_factory=list)  # TP1..TPn; take_profit == TP1
 
     def __post_init__(self) -> None:
         """Initialize timestamp if not provided."""

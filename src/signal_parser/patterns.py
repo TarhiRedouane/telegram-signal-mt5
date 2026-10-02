@@ -1,9 +1,26 @@
 """Regex patterns for French trading signal parsing."""
 
 import re
+from decimal import Decimal
 from typing import ClassVar
 
 from .symbol_policy import symbol_policy
+
+
+def tp_levels(text: str) -> tuple[list[Decimal], dict[int, Decimal]]:
+    """TP lines -> (unnumbered levels in order, {0-based index: level} for "TP1"/"TP 2 :" lines)."""
+    plain: list[Decimal] = []
+    slots: dict[int, Decimal] = {}
+    for line in FrenchSignalPatterns.TP_LINE.finditer(text):
+        levels = [Decimal(m.group(1).replace(",", ".")) for m in FrenchSignalPatterns.TP_LEVEL.finditer(line.group(2))]
+        if not levels:
+            continue
+        if line.group(1):
+            for offset, level in enumerate(levels):
+                slots[int(line.group(1)) - 1 + offset] = level
+        else:
+            plain.extend(levels)
+    return plain, slots
 
 
 class FrenchSignalPatterns:
@@ -52,7 +69,7 @@ class FrenchSignalPatterns:
 
     # Take profit patterns
     TP_PATTERNS: ClassVar[list[str]] = [
-        r"TP\s*:?\s*(\d{4}(?:\.\d{1,2})?)",
+        r"TP\s*(?:[1-9](?!\d)\s*)?:?\s*(\d{4}(?:\.\d{1,2})?)",  # "TP 4115", "TP1 4115", "TP 2 : 4128"
         r"TARGET\s*:?\s*(\d{4}(?:\.\d{1,2})?)",
         r"TAKE\s+PROFIT\s*:?\s*(\d{4}(?:\.\d{1,2})?)"
     ]
@@ -62,8 +79,17 @@ class FrenchSignalPatterns:
     ENTRY_RANGE_SUFFIX: ClassVar[re.Pattern] = re.compile(
         r"(?:\s*(?:-|–|/|À|A)\s*|[ \t]+)(\d{4}(?:\.\d{1,2})?)(?!\d)", re.IGNORECASE
     )
-    FOLLOWUP_TP: ClassVar[re.Pattern] = re.compile(
-        r"\b(?:TP\d?|TARGET|TAKE\s+PROFIT|OBJECTIFS?|CIBLES?|VIS(?:E|ER|ONS|EZ))\b[^\n]{0,30}?" + _LEVEL,
+    # One TP line: optional index ("TP2 : 4128") + every level up to an SL/entry keyword
+    # ("TP 4190 | 4173 | 4153| 4125").
+    TP_LINE: ClassVar[re.Pattern] = re.compile(
+        r"\b(?:TP|TARGETS?|TAKE\s+PROFITS?)(?:\s*([1-9])(?![\d.,]))?"
+        r"([^\n]*?)(?=\b(?:SL|STOP|INVALIDATION|ENTR\w*)\b|$)",
+        re.IGNORECASE | re.MULTILINE,
+    )
+    TP_LEVEL: ClassVar[re.Pattern] = re.compile(_LEVEL)
+    # "Je vise les 4050" / "objectif 4050": the final target
+    FOLLOWUP_FINAL_TP: ClassVar[re.Pattern] = re.compile(
+        r"\b(?:OBJECTIFS?|CIBLES?|VIS(?:E|ER|ONS|EZ))\b[^\n]{0,30}?" + _LEVEL,
         re.IGNORECASE,
     )
     FOLLOWUP_SL: ClassVar[re.Pattern] = re.compile(
@@ -76,7 +102,6 @@ class FrenchSignalPatterns:
         re.IGNORECASE,
     )
     FOLLOWUP_NOW: ClassVar[re.Pattern] = re.compile(r"(?<!NOT\s)(?<!PAS\s)\b(?:NOW|MAINTENANT)\b", re.IGNORECASE)
-    FOLLOWUP_EXTRA_TP: ClassVar[re.Pattern] = re.compile(r"\bTP\s*[2-9](?!\d)", re.IGNORECASE)
     SETUP_CANCEL: ClassVar[re.Pattern] = re.compile(
         r"\b(?:ANNUL\w*|CANCEL\w*|OUBLI\w*|LAISSE[SZ]?\s+TOMBER|PAS\s+DE\s+TRADE|"
         r"SETUP\s+(?:INVALID\w*|ANNUL\w*))",

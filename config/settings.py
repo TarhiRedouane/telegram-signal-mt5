@@ -66,6 +66,11 @@ class Settings:
         # Multi-message setup aggregation
         self.setup_idle_timeout_seconds: int = int(os.getenv("SETUP_IDLE_TIMEOUT_SECONDS", "300"))
         self.setup_price_poll_seconds: int = int(os.getenv("SETUP_PRICE_POLL_SECONDS", "5"))
+        self.setup_max_legs: int = int(os.getenv("SETUP_MAX_LEGS", "4"))
+        self.setup_max_lifetime_seconds: int = int(os.getenv("SETUP_MAX_LIFETIME_SECONDS", "86400"))
+
+        # Risk-based lot sizing: % of balance risked per signal, split across legs
+        self.risk_percent: Decimal = Decimal(os.getenv("RISK_PERCENT", "3.0"))
 
         # Application Settings
         self.dev_mode: bool = os.getenv("DEV_MODE", "false").lower() == "true"

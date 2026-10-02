@@ -7,8 +7,9 @@ from datetime import datetime, timedelta
 from decimal import Decimal
 from typing import Any
 
+from config.settings import settings
 from src.signal_parser import ParsedAction, ParsedSignal
-from src.signal_parser.patterns import FrenchSignalPatterns
+from src.signal_parser.patterns import FrenchSignalPatterns, tp_levels
 from src.signal_parser.symbol_policy import symbol_policy
 
 logger = logging.getLogger(__name__)
@@ -39,7 +40,9 @@ class Followup:
     """Levels/intents extracted from one follow-up message."""
     cancel: bool = False
     sl: Decimal | None = None
-    tp: Decimal | None = None
+    tps: list[Decimal] = field(default_factory=list)  # "TP a | b | c": replaces the TP list
+    tp_slots: dict[int, Decimal] = field(default_factory=dict)  # "TP2 : 4128" -> {1: 4128}
+    final_tp: Decimal | None = None  # "je vise les 4050": last target
     entry: Decimal | None = None
     entry_high: Decimal | None = None  # "SELL → 4197 - 4200" restates a zone, not a single price
     now: bool = False
@@ -47,19 +50,20 @@ class Followup:
     @property
     def empty(self) -> bool:
         return (
-            not self.cancel and not self.now
-            and self.sl is None and self.tp is None and self.entry is None
+            not self.cancel and not self.now and self.sl is None and self.entry is None
+            and not self.tps and not self.tp_slots and self.final_tp is None
         )
 
 
 def extract_followup(text: str) -> Followup:
-    """Regex-only extraction of cancel / SL / TP / entry from a follow-up message."""
+    """Regex-only extraction of cancel / SL / TPs / entry from a follow-up message."""
     if FrenchSignalPatterns.SETUP_CANCEL.search(text):
         return Followup(cancel=True)
     result = Followup()
+    result.tps, result.tp_slots = tp_levels(text)
     for attr, pattern in (
         ("sl", FrenchSignalPatterns.FOLLOWUP_SL),
-        ("tp", FrenchSignalPatterns.FOLLOWUP_TP),
+        ("final_tp", FrenchSignalPatterns.FOLLOWUP_FINAL_TP),
         ("entry", FrenchSignalPatterns.FOLLOWUP_ENTRY),
     ):
         match = pattern.search(text)
@@ -69,11 +73,14 @@ def extract_followup(text: str) -> Followup:
                 bound = FrenchSignalPatterns.ENTRY_RANGE_SUFFIX.match(text, match.end())
                 if bound:
                     result.entry_high = _to_decimal(bound.group(1))
-    if result.tp is not None and FrenchSignalPatterns.FOLLOWUP_EXTRA_TP.search(text):
-        logger.info(f"Ignoring extra take-profit {result.tp}; MT5 position keeps TP1")
-        result.tp = None
     result.now = bool(FrenchSignalPatterns.FOLLOWUP_NOW.search(text))
     return result
+
+
+def _signal_tps(signal: ParsedSignal) -> list[Decimal]:
+    if signal.take_profits:
+        return list(signal.take_profits)
+    return [signal.take_profit] if signal.take_profit is not None else []
 
 
 @dataclass
@@ -88,16 +95,32 @@ class PendingSetup:
     low: Decimal
     high: Decimal
     sl: Decimal | None = None
-    tp: Decimal | None = None
+    tps: list[Decimal] = field(default_factory=list)  # nearest first; leg i closes at tps[i]
     raw_texts: list[str] = field(default_factory=list)
     last_update: datetime = field(default_factory=datetime.now)
     positions: list[Any] = field(default_factory=list)
-    armed: bool = True  # waiting to open an order for the current entry
+    armed: bool = True  # waiting to open legs for the current entry
     fire_now: bool = False
+    ladder: bool = True  # False after a re-entry: one more order, no new ladder
+    leg_base: int = 0  # positions opened before the current entry
+    planned_legs: int | None = None  # frozen at first fill so later TPs can't add risk
+    be_done: bool = False
+    first_fill_at: datetime | None = None
+
+    @property
+    def tp(self) -> Decimal | None:
+        return self.tps[0] if self.tps else None
 
     @property
     def is_complete(self) -> bool:
-        return self.sl is not None and self.tp is not None
+        return self.sl is not None and bool(self.tps)
+
+    def reopen(self) -> None:
+        """New entry after fills: a single extra order, not a new ladder."""
+        self.armed = True
+        self.ladder = False
+        self.leg_base = len(self.positions)
+        self.planned_legs = None
 
     def rearm(self, signal: ParsedSignal, now: datetime) -> list[str]:
         """Same-side signal in the same setup: new entry, keep collected SL/TP unless restated."""
@@ -107,19 +130,52 @@ class PendingSetup:
         self.high = signal.entry_price_high or signal.entry_price
         self.raw_texts.append(signal.raw_text)
         self.fire_now = bool(FrenchSignalPatterns.FOLLOWUP_NOW.search(signal.raw_text))
+        if self.positions:
+            self.reopen()
         self.armed = True
         self.last_update = now
         changed = ["entry"]
         if signal.stop_loss is not None and signal.stop_loss != self.sl:
             self.sl = signal.stop_loss
             changed.append("sl")
-        if signal.take_profit is not None and signal.take_profit != self.tp:
-            self.tp = signal.take_profit
+        tps = _signal_tps(signal)
+        if tps and tps != self.tps:
+            self.tps = tps
             changed.append("tp")
         return changed
 
+    def legs(self) -> list[Decimal]:
+        """Entry price per leg: one per TP (max setup_max_legs), spread across the zone from first touch."""
+        if not self.ladder:
+            n = 1
+        else:
+            n = self.planned_legs or max(1, min(len(self.tps), settings.setup_max_legs))
+        if n == 1 or self.low == self.high:
+            first = self.low if self.action == ParsedAction.SELL else self.high
+            return [first] * n
+        step = (self.high - self.low) / (n - 1)
+        levels = [self.low + step * i for i in range(n)]
+        return levels if self.action == ParsedAction.SELL else levels[::-1]
+
+    def next_leg(self) -> int | None:
+        """Index (within the current entry) of the next leg to open, None when all are open."""
+        k = len(self.positions) - self.leg_base
+        return k if k < len(self.legs()) else None
+
+    def leg_reached(self, k: int, price: Decimal, tolerance: Decimal) -> bool:
+        level = self.legs()[k]
+        return price >= level - tolerance if self.action == ParsedAction.SELL else price <= level + tolerance
+
+    def leg_tp(self, index: int) -> Decimal | None:
+        """TP for the position at `index` in `positions` (scale-out: worst entry -> TP1)."""
+        return self.tps[min(index, len(self.tps) - 1)] if self.tps else None
+
     def _sl_ok(self, sl: Decimal, reference: Decimal) -> bool:
         return sl > reference if self.action == ParsedAction.SELL else sl < reference
+
+    def locks_profit(self, sl: Decimal, entry: Decimal) -> bool:
+        """SL at or beyond break-even for a position opened at `entry`."""
+        return not self._sl_ok(sl, entry)
 
     def _tp_ok(self, tp: Decimal, reference: Decimal) -> bool:
         return tp < reference if self.action == ParsedAction.SELL else tp > reference
@@ -142,16 +198,32 @@ class PendingSetup:
                 changed.append("sl")
             else:
                 logger.warning(f"Ignoring wrong-side SL {followup.sl} for {self.action.value} setup")
-        if followup.tp is not None and followup.tp != self.tp:
-            if self._tp_ok(followup.tp, tp_ref):
-                self.tp = followup.tp
-                changed.append("tp")
-            else:
-                logger.warning(f"Ignoring wrong-side TP {followup.tp} for {self.action.value} setup")
+        tps = self._merge_tps(followup)
+        valid = [tp for tp in tps if self._tp_ok(tp, tp_ref)]
+        if len(valid) < len(tps):
+            logger.warning(f"Ignoring wrong-side TPs {sorted(set(tps) - set(valid))} for {self.action.value} setup")
+        valid = sorted(set(valid), reverse=self.action == ParsedAction.SELL)
+        if valid and valid != self.tps:
+            self.tps = valid
+            changed.append("tp")
         if changed:
             self.raw_texts.append(text)
             self.last_update = now
         return changed
+
+    def _merge_tps(self, followup: Followup) -> list[Decimal]:
+        """Explicit list replaces; "TP2 : x" sets one slot; "je vise x" makes x the final target."""
+        tps = list(followup.tps) if followup.tps else list(self.tps)
+        for index, level in sorted(followup.tp_slots.items()):
+            if index < len(tps):
+                tps[index] = level
+            else:
+                tps.append(level)
+        final = followup.final_tp
+        if final is not None and final not in tps:
+            closer = (lambda tp: tp > final) if self.action == ParsedAction.SELL else (lambda tp: tp < final)
+            tps = [tp for tp in tps if closer(tp)] + [final]
+        return tps
 
     def in_entry_zone(self, price: Decimal, tolerance: Decimal) -> bool:
         return self.low - tolerance <= price <= self.high + tolerance
@@ -176,8 +248,8 @@ class PendingSetup:
             status="PENDING",
         )
 
-    def fire_levels(self, price: Decimal) -> tuple[Decimal | None, Decimal | None] | None:
-        """SL/TP to send at `price`; None if the setup is already invalidated at this price."""
+    def fire_levels(self, price: Decimal, index: int = 0) -> tuple[Decimal | None, Decimal | None] | None:
+        """SL/TP for the position at `index` opened at `price`; None if already invalidated there."""
         sl = self.sl
         if sl is None:
             distance = symbol_policy.get_default_sl_distance(self.symbol)
@@ -186,8 +258,8 @@ class PendingSetup:
             sl = price + distance if self.action == ParsedAction.SELL else price - distance
         if not self._sl_ok(sl, price):
             return None
-        tp = self.tp if self.tp is not None and self._tp_ok(self.tp, price) else None
-        return sl, tp
+        tp = self.leg_tp(index)
+        return sl, tp if tp is not None and self._tp_ok(tp, price) else None
 
 
 class SetupAggregator:
@@ -219,7 +291,7 @@ class SetupAggregator:
             low=signal.entry_price,
             high=signal.entry_price_high or signal.entry_price,
             sl=signal.stop_loss,
-            tp=signal.take_profit,
+            tps=_signal_tps(signal),
             raw_texts=[signal.raw_text],
             last_update=now,
             fire_now=bool(FrenchSignalPatterns.FOLLOWUP_NOW.search(signal.raw_text)),

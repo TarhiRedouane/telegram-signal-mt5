@@ -237,3 +237,102 @@ def test_llm_user_message_carries_setup_context():
     assert user.startswith("Contexte:\nSetup en attente: SELL GOLD entrée 4100-4105")
     assert user.endswith("Message à analyser:\nJe vise les 4050")
     assert parser._prompt_template not in user
+
+
+@pytest.mark.parametrize(
+    ("text", "expected"),
+    [
+        ("SELL GOLD 4149\nSL 4165\nTP 4115 | 4100 | 4080", ["4115", "4100", "4080"]),
+        ("SELL GOLD 4149\nSL 4165\nTP1 4115\nTP2 4100\nTP3 4080", ["4115", "4100", "4080"]),
+        ("SELL GOLD 4149\nSL 4165\nTP1: 4115\nTP2: 4100", ["4115", "4100"]),
+        ("SELL GOLD 4149\nSL 4165\nTP 4115\nTP 4100", ["4115", "4100"]),
+        ("SELL GOLD 4149 TP 4115 SL 4165", ["4115"]),  # SL on the same line is not a TP
+        ("sell gold 4149\nSL 4165\nTP 4115", ["4115"]),
+    ],
+)
+def test_main_parse_collects_all_tps(text, expected):
+    signal = _parse(text)
+    assert signal.take_profits == [Decimal(t) for t in expected]
+    assert signal.take_profit == Decimal(expected[0])
+
+
+def test_followup_tp_list_slots_and_final_target():
+    _, setup = _run(["SELL GOLD 4190 4195", "TP1 4180\nTP2 4170"])
+    assert setup.tps == [Decimal("4180"), Decimal("4170")]
+    setup.apply(extract_followup("TP 3 : 4160"), "TP 3 : 4160", NOW)
+    assert setup.tps == [Decimal("4180"), Decimal("4170"), Decimal("4160")]
+    setup.apply(extract_followup("je vise les 4150"), "je vise les 4150", NOW)
+    assert setup.tps[-1] == Decimal("4150") and len(setup.tps) == 4
+    setup.apply(extract_followup("je vise les 4175"), "je vise les 4175", NOW)  # nearer final target
+    assert setup.tps == [Decimal("4180"), Decimal("4175")]
+
+
+def test_ladder_legs_spacing_and_scale_out_tps():
+    _, setup = _run(["SELL GOLD 4190 4195", "TP 4180 | 4170 | 4160"])
+    assert setup.legs() == [Decimal("4190"), Decimal("4192.5"), Decimal("4195")]
+    assert [setup.leg_tp(i) for i in range(3)] == [Decimal("4180"), Decimal("4170"), Decimal("4160")]
+    assert not setup.leg_reached(1, Decimal("4191"), Decimal("1"))
+    assert setup.leg_reached(1, Decimal("4191.5"), Decimal("1"))
+
+    _, many = _run(["SELL GOLD 4190 4196", "TP 4180 | 4170 | 4160 | 4150 | 4140"])
+    assert len(many.legs()) == 4  # capped at 4 legs
+
+    _, buy = _run(["BUY GOLD 4190 4195", "TP 4200 | 4210 | 4220"])
+    assert buy.legs() == [Decimal("4195"), Decimal("4192.5"), Decimal("4190")]
+
+    _, single = _run(["SELL GOLD 4190", "TP 4180 | 4170"])
+    assert single.legs() == [Decimal("4190"), Decimal("4190")]
+
+    _, no_tp = _run(["SELL GOLD 4190 4195"])
+    assert len(no_tp.legs()) == 1
+
+
+def test_leg_count_frozen_after_first_fill_and_reentry_is_single_order():
+    _, setup = _run(["SELL GOLD 4190 4195"])
+    setup.positions.append("leg1")
+    setup.planned_legs = len(setup.legs())  # main freezes at first fill
+    setup.apply(extract_followup("TP 4180 | 4170 | 4160"), "TP 4180 | 4170 | 4160", NOW)
+    assert len(setup.legs()) == 1 and setup.next_leg() is None  # later TPs don't add risk
+    setup.reopen()
+    assert setup.next_leg() == 0 and len(setup.legs()) == 1
+
+
+def test_break_even_guard_only_accepts_profit_locking_sl():
+    _, setup = _run(["SELL GOLD 4190 4195"])
+    assert setup.locks_profit(Decimal("4185"), Decimal("4190"))
+    assert setup.locks_profit(Decimal("4190"), Decimal("4190"))
+    assert not setup.locks_profit(Decimal("4200"), Decimal("4190"))
+
+
+@pytest.mark.asyncio
+async def test_main_ladder_fills_legs_progressively_then_tp1_moves_rest_to_break_even():
+    from types import SimpleNamespace
+
+    from main import ApplicationManager
+
+    app = ApplicationManager()
+    app._validate_live_price = AsyncMock(return_value=True)
+    app._order_volume = AsyncMock(return_value=0.1)
+    app._apply_position_levels = AsyncMock()
+    opened = []
+
+    async def fake_open(signal, volume=None, allow_reuse=False):
+        opened.append((signal.entry_price, signal.stop_loss, signal.take_profit, allow_reuse))
+        return SimpleNamespace(mt5_ticket=len(opened), open_price=float(signal.entry_price))
+
+    app._handle_parsed_signal = fake_open
+    _, setup = _run(["SELL GOLD 4190 4195\nSL 4200\nTP 4180 | 4170 | 4160"])
+
+    await app._maybe_fire_setup(setup, Decimal("4190.3"))  # leg 1 (complete -> live check)
+    await app._maybe_fire_setup(setup, Decimal("4191"))    # leg 2 level 4192.5 not reached
+    assert len(opened) == 1
+    await app._maybe_fire_setup(setup, Decimal("4195.2"))  # jump: legs 2 and 3 due together
+    assert [o[2] for o in opened] == [Decimal("4180"), Decimal("4170"), Decimal("4160")]
+    assert [o[3] for o in opened] == [False, True, True]  # extra legs reuse the executed signal
+    assert not setup.armed and setup.planned_legs == 3
+
+    app.position_manager = SimpleNamespace(get_close_reason=AsyncMock(side_effect=["tp", None, None]))
+    assert await app._track_setup_legs(setup) is False
+    assert setup.be_done
+    be_calls = [c.args for c in app._apply_position_levels.await_args_list]
+    assert be_calls == [(setup.positions[1], Decimal("4195.2"), None), (setup.positions[2], Decimal("4195.2"), None)]

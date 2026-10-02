@@ -13,7 +13,7 @@ from config.logging_config import (
 )
 
 from . import ParsedAction, ParsedSignal, ValidationResult
-from .patterns import FrenchSignalPatterns
+from .patterns import FrenchSignalPatterns, tp_levels
 from .symbol_policy import symbol_policy
 
 
@@ -155,6 +155,8 @@ class RegexParser:
             take_profit = self._extract_take_profit(original_text)
 
             entry_price, entry_price_high = self._entry_range(match, entry_price)
+            take_profits = self._extract_take_profits(original_text, parsed_action, entry_price, take_profit)
+            take_profit = take_profits[0] if take_profits else take_profit
 
             # Create signal object
             signal = ParsedSignal(
@@ -172,6 +174,7 @@ class RegexParser:
                 parser_type="REGEX",
                 status="PENDING",
                 entry_price_high=entry_price_high,
+                take_profits=take_profits,
             )
 
             return signal
@@ -229,6 +232,8 @@ class RegexParser:
             # Extract SL/TP
             stop_loss = self._extract_stop_loss(original_text)
             take_profit = self._extract_take_profit(original_text)
+            take_profits = self._extract_take_profits(original_text, action, entry_price, take_profit)
+            take_profit = take_profits[0] if take_profits else take_profit
 
             # Create signal
             signal = ParsedSignal(
@@ -246,6 +251,7 @@ class RegexParser:
                 parser_type="REGEX",
                 status="PENDING",
                 entry_price_high=entry_price_high,
+                take_profits=take_profits,
             )
 
             # Validate before returning
@@ -335,6 +341,17 @@ class RegexParser:
                 except (ValueError, TypeError, decimal.InvalidOperation):
                     continue
         return None
+
+    @staticmethod
+    def _extract_take_profits(
+        text: str, action: ParsedAction, entry_price: Decimal, first: Decimal | None
+    ) -> list[Decimal]:
+        """All TPs on the right side of entry, nearest first (TP1..TPn)."""
+        plain, slots = tp_levels(text)
+        levels = ([first] if first is not None else []) + plain + [slots[i] for i in sorted(slots)]
+        sell = action == ParsedAction.SELL
+        valid = {tp for tp in levels if (tp < entry_price if sell else tp > entry_price)}
+        return sorted(valid, reverse=sell)
 
     def _validate_signal(self, signal: ParsedSignal) -> ValidationResult:
         """Validate parsed signal according to symbol policy and trading specs."""
