@@ -8,6 +8,7 @@ from decimal import Decimal
 from typing import Any
 
 from config.settings import settings
+from src.correlation_engine.rejection_detector import RejectionState
 from src.signal_parser import ParsedAction, ParsedSignal
 from src.signal_parser.patterns import FrenchSignalPatterns, tp_levels
 from src.signal_parser.symbol_policy import symbol_policy
@@ -75,6 +76,55 @@ def extract_followup(text: str) -> Followup:
                     result.entry_high = _to_decimal(bound.group(1))
     result.now = bool(FrenchSignalPatterns.FOLLOWUP_NOW.search(text))
     return result
+
+
+@dataclass
+class ZoneEntry:
+    action: ParsedAction
+    low: Decimal
+    high: Decimal
+    state: RejectionState
+
+
+@dataclass
+class ZoneWatch:
+    """Zone hint ("BUY ZONE 4174–4178"): trade only after a confirmed rejection in a zone."""
+    chat_id: int
+    message_id: int
+    sender: str
+    timestamp: datetime
+    symbol: str
+    zones: list[ZoneEntry]  # first = main zone, next = reinforcement zones
+    targets: list[Decimal]
+    created: datetime
+    raw_text: str = ""
+    fills: int = 0  # zones that already led to an order
+
+
+def _zone_symbol(text: str) -> str:
+    """Symbol named in the text, else the policy default (zone posts often omit it)."""
+    for alias in sorted(symbol_policy.get_enabled_aliases(), key=len, reverse=True):
+        if re.search(rf"(?<![\w/]){re.escape(alias)}(?![\w/])", text, re.IGNORECASE):
+            return symbol_policy.canonicalize_symbol(alias) or symbol_policy.get_default_symbol()
+    return symbol_policy.get_default_symbol()
+
+
+def extract_zone_hint(text: str) -> tuple[str, list[tuple[ParsedAction, Decimal, Decimal]], list[Decimal]] | None:
+    """(symbol, [(action, low, high)...], reaction targets) for a zone post, else None."""
+    zones = []
+    for match in FrenchSignalPatterns.ZONE_HINT.finditer(text):
+        word = (match.group(1) or match.group(2)).upper()
+        action = ParsedAction.BUY if word in ("BUY", "ACHAT") else ParsedAction.SELL
+        a, b = _to_decimal(match.group(3)), _to_decimal(match.group(4))
+        zones.append((action, min(a, b), max(a, b)))
+    if not zones:
+        return None
+    symbol = _zone_symbol(text)
+    targets: list[Decimal] = []
+    for line in FrenchSignalPatterns.ZONE_TARGET_LINE.finditer(text):
+        if not FrenchSignalPatterns.ZONE_HINT.search(line.group(0)):
+            targets += [_to_decimal(m) for m in _PRICE.findall(line.group(0))]
+    return symbol, zones, targets
 
 
 def _signal_tps(signal: ParsedSignal) -> list[Decimal]:
@@ -269,6 +319,24 @@ class SetupAggregator:
 
     def __init__(self) -> None:
         self._setups: dict[int, PendingSetup] = {}
+        self._zones: dict[int, ZoneWatch] = {}
+
+    def adopt(self, setup: PendingSetup) -> None:
+        """Register a setup built elsewhere (confirmed zone rejection) as the chat's setup."""
+        self._setups[setup.chat_id] = setup
+
+    def start_zone(self, watch: ZoneWatch) -> None:
+        if watch.chat_id in self._zones:
+            logger.info(f"Replacing zone watch in chat {watch.chat_id}")
+        self._zones[watch.chat_id] = watch
+
+    def get_zone(self, chat_id: int) -> ZoneWatch | None:
+        return self._zones.get(chat_id)
+
+    def drop_zone(self, watch: ZoneWatch, reason: str) -> None:
+        if self._zones.get(watch.chat_id) is watch:
+            del self._zones[watch.chat_id]
+            logger.info(f"Zone watch dropped chat={watch.chat_id} message_id={watch.message_id}: {reason}")
 
     def start(self, signal: ParsedSignal, now: datetime) -> tuple[PendingSetup, list[str] | None]:
         """Return (setup, None) for a new setup, or (setup, changed) when re-arming a live one."""

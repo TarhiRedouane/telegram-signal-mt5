@@ -37,11 +37,21 @@ from src.database import (
 )
 from src.database.models import PositionStatus, SignalStatus
 from src.correlation_engine.correlator import CorrelationEngine, TelegramMessage as CorrelationMessage
+from src.correlation_engine.rejection_detector import (
+    Candle,
+    Phase,
+    RejectionParams,
+    RejectionState,
+    advance,
+)
 from src.correlation_engine.setup_aggregator import (
     Followup,
     PendingSetup,
     SetupAggregator,
+    ZoneEntry,
+    ZoneWatch,
     extract_followup,
+    extract_zone_hint,
     has_action_word,
     looks_like_new_trade,
 )
@@ -259,7 +269,17 @@ class ApplicationManager:
             f"message_id={metadata.get('telegram_message_id')} text='{preview}'"
         )
 
-        pending_setup = self._setup_aggregator.get(int(metadata.get("telegram_chat_id", 0)))
+        chat_id = int(metadata.get("telegram_chat_id", 0))
+        zone_hint = extract_zone_hint(raw_text)
+        if zone_hint is not None:
+            # "BUY ZONE 4174–4178": no order now, wait for a confirmed rejection in the zone
+            self._start_zone_watch(metadata, *zone_hint)
+            return
+        zone_watch = self._setup_aggregator.get_zone(chat_id)
+        if zone_watch is not None and extract_followup(raw_text).cancel:
+            self._setup_aggregator.drop_zone(zone_watch, "cancelled by author")
+
+        pending_setup = self._setup_aggregator.get(chat_id)
         if (
             edited
             and pending_setup is not None
@@ -508,6 +528,9 @@ class ApplicationManager:
     def _start_setup(self, parsed_signal) -> None:
         """Buffer an incomplete BUY/SELL setup and watch price until it can fire."""
         setup, rearm_changes = self._setup_aggregator.start(parsed_signal, datetime.now(UTC))
+        zone_watch = self._setup_aggregator.get_zone(setup.chat_id)
+        if zone_watch is not None and any(zone.action != setup.action for zone in zone_watch.zones):
+            self._setup_aggregator.drop_zone(zone_watch, f"opposite {setup.action.value} signal")
         state = "started" if rearm_changes is None else f"re-armed (positions={len(setup.positions)})"
         self.logger.info(
             f"Setup {state} chat={setup.chat_id} message_id={setup.message_id}: "
@@ -518,6 +541,132 @@ class ApplicationManager:
             self._component_tasks[f"setup_{setup.chat_id}"] = asyncio.create_task(self._watch_setup(setup))
         elif "sl" in rearm_changes or "tp" in rearm_changes:
             asyncio.create_task(self._apply_setup_levels(setup, rearm_changes))
+
+    def _start_zone_watch(self, metadata: Dict[str, Any], symbol: str, zones: list, targets: list) -> None:
+        """Track zone hints until a rejection is confirmed on candles (see rejection_detector)."""
+        if symbol_policy.get_rejection_params(symbol) is None:
+            self.logger.warning(f"Zone hint ignored: no rejection params for {symbol}")
+            return
+        watch = ZoneWatch(
+            chat_id=int(metadata.get("telegram_chat_id", 0)),
+            message_id=int(metadata.get("telegram_message_id", 0)),
+            sender=str(metadata.get("sender", "unknown")),
+            timestamp=metadata.get("timestamp") or datetime.now(UTC),
+            symbol=symbol,
+            zones=[
+                ZoneEntry(action, low, high, RejectionState(sell=action == ParsedAction.SELL, low=low, high=high))
+                for action, low, high in zones
+            ],
+            targets=targets,
+            created=datetime.now(UTC),
+            raw_text=metadata.get("raw_text", ""),
+        )
+        self._setup_aggregator.start_zone(watch)
+        self.logger.info(
+            f"Zone watch started chat={watch.chat_id} message_id={watch.message_id} {symbol}: "
+            f"{[f'{z.action.value} {z.low}-{z.high}' for z in watch.zones]} targets={targets}"
+        )
+        self._component_tasks[f"zone_{watch.chat_id}"] = asyncio.create_task(self._watch_zone(watch))
+
+    async def _watch_zone(self, watch: ZoneWatch) -> None:
+        """Feed closed M1/M3 candles to each zone's rejection detector; trade on confirmation."""
+        max_sweep, sl_buffer = symbol_policy.get_rejection_params(watch.symbol)
+        params = RejectionParams(
+            max_sweep=max_sweep,
+            reclaim_candles=settings.rejection_reclaim_candles,
+            confirm_candles=settings.rejection_confirm_candles,
+        )
+        deadline = watch.created + timedelta(hours=settings.zone_watch_hours)
+        try:
+            while self._setup_aggregator.get_zone(watch.chat_id) is watch:
+                if datetime.now(UTC) > deadline:
+                    self._setup_aggregator.drop_zone(watch, "expired")
+                    return
+                if all(zone.state.done for zone in watch.zones):
+                    self._setup_aggregator.drop_zone(watch, "all zones resolved")
+                    return
+                if self.mt5_connection_manager is not None:
+                    m1 = await self.mt5_connection_manager.get_closed_rates(watch.symbol, 1, 30)
+                    m3 = await self.mt5_connection_manager.get_closed_rates(watch.symbol, 3, 30)
+                    if m1 and m3:
+                        await self._advance_zones(
+                            watch, [Candle(*r) for r in m1], [Candle(*r) for r in m3], params, sl_buffer
+                        )
+                await asyncio.sleep(settings.setup_price_poll_seconds)
+        except asyncio.CancelledError:
+            raise
+        except Exception as exc:
+            self.logger.error(f"Zone watcher failed for chat {watch.chat_id}: {exc}", exc_info=True)
+            self._setup_aggregator.drop_zone(watch, "watcher error")
+
+    async def _advance_zones(
+        self, watch: ZoneWatch, m1: list, m3: list, params: RejectionParams, sl_buffer: Decimal
+    ) -> None:
+        for index, zone in enumerate(watch.zones):
+            if zone.state.done:
+                continue
+            before = zone.state.phase
+            advance(zone.state, m1, m3, params)
+            if zone.state.phase == before:
+                continue
+            self.logger.info(
+                f"Zone {zone.action.value} {zone.low}-{zone.high} chat={watch.chat_id}: "
+                f"{before.value} -> {zone.state.phase.value} extreme={zone.state.extreme} {zone.state.reason}"
+            )
+            if zone.state.phase == Phase.CONFIRMED:
+                await self._on_zone_confirmed(watch, index, zone, sl_buffer)
+
+    async def _on_zone_confirmed(self, watch: ZoneWatch, index: int, zone: ZoneEntry, sl_buffer: Decimal) -> None:
+        """Rejection confirmed: market order with SL beyond the sweep and the post's reaction levels as TPs."""
+        sell = zone.action == ParsedAction.SELL
+        sl = zone.state.extreme + sl_buffer if sell else zone.state.extreme - sl_buffer
+        tps = sorted({t for t in watch.targets if (t < zone.low if sell else t > zone.high)}, reverse=sell)
+        now = datetime.now(UTC)
+        existing = self._setup_aggregator.get(watch.chat_id)
+        if (
+            existing is not None
+            and existing.positions
+            and existing.action == zone.action
+            and existing.symbol == watch.symbol
+        ):
+            # Reinforcement zone on a live trade: one more order; SL widened to cover both entries
+            existing.reopen()
+            existing.low, existing.high, existing.fire_now, existing.last_update = zone.low, zone.high, True, now
+            wider = sl if existing.sl is None else (max(existing.sl, sl) if sell else min(existing.sl, sl))
+            self.logger.info(f"Zone {zone.low}-{zone.high} confirmed: reinforcement, SL {existing.sl} -> {wider}")
+            if wider != existing.sl:
+                existing.sl = wider
+                await self._apply_setup_levels(existing, ["sl"])
+            watch.fills += 1
+            return
+
+        # ponytail: signals.telegram_message_id is unique; a later zone of the same post gets a
+        # synthetic negative id. Give positions their own key if this ever needs reply lookups.
+        message_id = watch.message_id if watch.fills == 0 else -(watch.message_id * 10 + index)
+        setup = PendingSetup(
+            chat_id=watch.chat_id,
+            message_id=message_id,
+            sender=watch.sender,
+            timestamp=watch.timestamp,
+            action=zone.action,
+            symbol=watch.symbol,
+            low=zone.low,
+            high=zone.high,
+            sl=sl,
+            tps=tps,
+            raw_texts=[watch.raw_text],
+            last_update=now,
+            fire_now=True,
+        )
+        if existing is not None:
+            self.logger.info(f"Zone confirmation replaces setup message_id={existing.message_id}")
+        self._setup_aggregator.adopt(setup)
+        watch.fills += 1
+        self.logger.info(
+            f"Zone {zone.action.value} {zone.low}-{zone.high} confirmed chat={watch.chat_id}: "
+            f"sweep {zone.state.extreme} SL={sl} TPs={tps} -> executing"
+        )
+        self._component_tasks[f"setup_{setup.chat_id}"] = asyncio.create_task(self._watch_setup(setup))
 
     async def _apply_setup_levels(self, setup: PendingSetup, changed: list[str]) -> None:
         """Push changed SL/TP to every position opened by this setup (TP per leg)."""

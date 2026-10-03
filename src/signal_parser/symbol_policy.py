@@ -33,6 +33,10 @@ class SymbolPolicy:
                 alias_map[alias.upper()] = canonical
         self._alias_to_canonical = alias_map
 
+    def get_default_symbol(self) -> str:
+        """Symbol assumed when a post names none (phase-1 profile: all enabled symbols are gold)."""
+        return next(iter(self._CANONICAL_ALIASES))
+
     def get_enabled_aliases(self) -> list[str]:
         """Return all symbol aliases accepted by the current execution profile."""
         return list(self._alias_to_canonical.keys())
@@ -113,6 +117,12 @@ class SymbolPolicy:
         """Return price tolerance around a setup entry zone."""
         if self.canonicalize_symbol(symbol) in {"GOLD", "XAUUSD"}:
             return settings.gold_entry_tolerance
+        return None
+
+    def get_rejection_params(self, symbol: str) -> tuple[Decimal, Decimal] | None:
+        """(max sweep beyond zone edge, SL buffer beyond sweep extreme) for zone-rejection entries."""
+        if self.canonicalize_symbol(symbol) in {"GOLD", "XAUUSD"}:
+            return settings.gold_max_sweep, settings.gold_sl_buffer
         return None
 
 

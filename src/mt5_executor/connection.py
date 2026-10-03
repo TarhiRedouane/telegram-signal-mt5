@@ -934,6 +934,32 @@ class MT5ConnectionManager:
             self.logger.warning(f"Failed to get current price for {symbol}: {e}")
             return None
 
+    @circuit_breaker(failure_threshold=3, recovery_timeout=30)
+    async def get_closed_rates(
+        self, symbol: str, minutes: int, count: int
+    ) -> list[tuple[int, Decimal, Decimal, Decimal, Decimal, int]] | None:
+        """Last `count` CLOSED candles (time, open, high, low, close, tick_volume), oldest first.
+        Times are broker server epochs. `minutes` is 1 or 3."""
+        if mt5 is None:
+            return None
+        timeframe = {1: mt5.TIMEFRAME_M1, 3: mt5.TIMEFRAME_M3}[minutes]
+        async with self.get_connection() as connection:
+            if not connection.connected:
+                return None
+            for candidate in self._build_price_lookup_candidates(symbol):
+                rates = mt5.copy_rates_from_pos(self._resolve_broker_symbol_name(candidate), timeframe, 0, count + 1)
+                if rates is None or len(rates) == 0:
+                    continue
+                return [
+                    (
+                        int(r["time"]),
+                        *(Decimal(str(r[k])) for k in ("open", "high", "low", "close")),
+                        int(r["tick_volume"]),
+                    )
+                    for r in rates[:-1]  # last bar is still forming
+                ]
+        return None
+
     async def detect_mt5_terminal_status(self) -> dict[str, Any]:
         """
         Detect MT5 terminal status and provide guidance if not running.

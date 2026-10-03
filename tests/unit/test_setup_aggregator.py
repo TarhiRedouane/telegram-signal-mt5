@@ -336,3 +336,70 @@ async def test_main_ladder_fills_legs_progressively_then_tp1_moves_rest_to_break
     assert setup.be_done
     be_calls = [c.args for c in app._apply_position_levels.await_args_list]
     assert be_calls == [(setup.positions[1], Decimal("4195.2"), None), (setup.positions[2], Decimal("4195.2"), None)]
+
+
+ZONE_POST = """Première BUY ZONE autour de 4174–4178
+
+➡️ Deuxième BUY ZONE autour de 4158–4162 pour un potentiel renfort si le marché vient la chercher
+
+🏓 Au-dessus on garde 4188 → 4195 → 4219 comme zones de réaction / objectifs potentiels
+
+Pas de renfort automatique on attend la réaction du prix dans la zone💙"""
+
+
+def test_zone_post_parsed_and_normal_signals_are_not_zones():
+    from src.correlation_engine.setup_aggregator import extract_zone_hint
+
+    symbol, zones, targets = extract_zone_hint(ZONE_POST)
+    assert symbol == "GOLD"
+    assert zones == [
+        (ParsedAction.BUY, Decimal("4174"), Decimal("4178")),
+        (ParsedAction.BUY, Decimal("4158"), Decimal("4162")),
+    ]
+    assert targets == [Decimal("4188"), Decimal("4195"), Decimal("4219")]
+    for text in ["BUY GOLD 4174", "sell gold 4149\nSL 4165\nTP 4115", "SELL GOLD 4190 4195", "on est dans la zone 4174"]:
+        assert extract_zone_hint(text) is None
+
+
+@pytest.mark.asyncio
+async def test_main_routes_zone_post_to_watch_and_regular_signals_unchanged():
+    from main import ApplicationManager
+
+    app = ApplicationManager()
+    app.regex_parser = RegexParser()
+    app._validate_live_price = AsyncMock(return_value=True)
+    app._handle_parsed_signal = AsyncMock()
+    app._start_setup = MagicMock()
+    app._start_zone_watch = MagicMock()
+
+    meta = {"telegram_chat_id": 1, "sender": "s", "timestamp": NOW}
+    await app._on_telegram_message({**meta, "telegram_message_id": 1, "raw_text": ZONE_POST})
+    app._start_zone_watch.assert_called_once()
+    app._handle_parsed_signal.assert_not_awaited()
+    app._start_setup.assert_not_called()
+
+    await app._on_telegram_message({**meta, "telegram_message_id": 2, "raw_text": "sell gold 4149\nSL 4165\nTP 4115"})
+    app._handle_parsed_signal.assert_awaited_once()  # instant path, as before
+    await app._on_telegram_message({**meta, "telegram_message_id": 3, "raw_text": "SELL GOLD 4190 4195"})
+    app._start_setup.assert_called_once()  # setup path, as before
+    assert app._start_zone_watch.call_count == 1
+
+
+@pytest.mark.asyncio
+async def test_confirmed_zone_becomes_complete_setup_with_sweep_sl_and_post_targets():
+    from main import ApplicationManager
+    from src.correlation_engine.rejection_detector import Phase, RejectionState
+    from src.correlation_engine.setup_aggregator import ZoneEntry, ZoneWatch
+
+    app = ApplicationManager()
+    app._watch_setup = AsyncMock()
+    state = RejectionState(sell=False, low=Decimal("4174"), high=Decimal("4178"),
+                           phase=Phase.CONFIRMED, extreme=Decimal("4172.2"))
+    zone = ZoneEntry(ParsedAction.BUY, Decimal("4174"), Decimal("4178"), state)
+    watch = ZoneWatch(1, 7, "s", NOW, "GOLD", [zone], [Decimal("4219"), Decimal("4188"), Decimal("4170")], NOW)
+    await app._on_zone_confirmed(watch, 0, zone, Decimal("0.5"))
+    setup = app._setup_aggregator.get(1)
+    assert setup.action == ParsedAction.BUY and setup.message_id == 7 and setup.fire_now
+    assert setup.sl == Decimal("4171.7")
+    assert setup.tps == [Decimal("4188"), Decimal("4219")]  # wrong-side 4170 dropped, nearest first
+    assert setup.is_complete and watch.fills == 1

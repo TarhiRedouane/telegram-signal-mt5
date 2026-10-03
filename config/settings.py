@@ -62,6 +62,15 @@ class Settings:
         # Price units: 10.0 = 100 pips at 0.10/pip
         self.gold_default_sl_distance: Decimal = Decimal(os.getenv("GOLD_DEFAULT_SL_DISTANCE", "10.0"))
         self.gold_entry_tolerance: Decimal = Decimal(os.getenv("GOLD_ENTRY_TOLERANCE", "1.0"))
+        # Zone rejection: deepest sweep beyond the zone edge still counted as liquidity grab,
+        # and SL buffer beyond the sweep extreme (price units)
+        self.gold_max_sweep: Decimal = Decimal(os.getenv("GOLD_MAX_SWEEP", "3.0"))
+        self.gold_sl_buffer: Decimal = Decimal(os.getenv("GOLD_SL_BUFFER", "0.5"))
+
+        # Zone hints ("BUY ZONE 4174-4178"): trade only after a confirmed rejection on candles
+        self.rejection_reclaim_candles: int = int(os.getenv("REJECTION_RECLAIM_CANDLES", "3"))  # M1
+        self.rejection_confirm_candles: int = int(os.getenv("REJECTION_CONFIRM_CANDLES", "3"))  # M3
+        self.zone_watch_hours: int = int(os.getenv("ZONE_WATCH_HOURS", "8"))
 
         # Multi-message setup aggregation
         self.setup_idle_timeout_seconds: int = int(os.getenv("SETUP_IDLE_TIMEOUT_SECONDS", "300"))

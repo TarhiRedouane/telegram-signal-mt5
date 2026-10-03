@@ -101,6 +101,17 @@ class FrenchSignalPatterns:
         + _LEVEL,
         re.IGNORECASE,
     )
+    # Zone hint, not an order: "BUY ZONE autour de 4174–4178", "zone d'achat 4174-4178"
+    ZONE_HINT: ClassVar[re.Pattern] = re.compile(
+        r"\b(?:(BUY|SELL|ACHAT|VENTE)\s+ZONES?|ZONES?\s+(?:D['’]\s*|DE\s+)(ACHAT|VENTE))\b"
+        r"[^\n\d]{0,40}?" + _LEVEL + r"\s*(?:-|–|—|/|À|A)\s*" + _LEVEL,
+        re.IGNORECASE,
+    )
+    # "on garde 4188 → 4195 → 4219 comme zones de réaction / objectifs"
+    ZONE_TARGET_LINE: ClassVar[re.Pattern] = re.compile(
+        r"^(?=[^\n]*(?:→|->|\bOBJECTIFS?\b|\bR[ÉE]ACTION\b|\bCIBLES?\b|\bTARGETS?\b|\bTP\d?\b))[^\n]*$",
+        re.IGNORECASE | re.MULTILINE,
+    )
     FOLLOWUP_NOW: ClassVar[re.Pattern] = re.compile(r"(?<!NOT\s)(?<!PAS\s)\b(?:NOW|MAINTENANT)\b", re.IGNORECASE)
     SETUP_CANCEL: ClassVar[re.Pattern] = re.compile(
         r"\b(?:ANNUL\w*|CANCEL\w*|OUBLI\w*|LAISSE[SZ]?\s+TOMBER|PAS\s+DE\s+TRADE|"
