@@ -882,8 +882,8 @@ class MT5ConnectionManager:
         Returns:
             Mid price as Decimal, or None if unavailable
         """
-        self.logger.info(f"Getting current price for symbol: {symbol}")
-        self.logger.info(f"Checking if MT5 module is available for symbol: {symbol}")
+        self.logger.debug(f"Getting current price for symbol: {symbol}")
+        self.logger.debug(f"Checking if MT5 module is available for symbol: {symbol}")
         if mt5 is None:
             self.logger.info(f"MT5 module is not available for symbol: {symbol}")
             return None
@@ -900,7 +900,7 @@ class MT5ConnectionManager:
                     attempted_symbols.append(resolved_candidate)
 
                     if resolved_candidate != candidate:
-                        self.logger.info(
+                        self.logger.debug(
                             f"Resolved broker symbol case/format: '{candidate}' -> '{resolved_candidate}'"
                         )
 
@@ -911,7 +911,7 @@ class MT5ConnectionManager:
                         except Exception:
                             pass
 
-                    self.logger.info(
+                    self.logger.debug(
                         f"Fetching tick data for symbol candidate: {candidate} (resolved: {resolved_candidate})"
                     )
                     tick = mt5.symbol_info_tick(resolved_candidate)
@@ -919,7 +919,7 @@ class MT5ConnectionManager:
                         continue
 
                     if resolved_candidate != symbol:
-                        self.logger.info(
+                        self.logger.debug(
                             f"Resolved symbol '{symbol}' to broker symbol '{resolved_candidate}' for price lookup"
                         )
 

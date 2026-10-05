@@ -1015,7 +1015,7 @@ class ApplicationManager:
         if setup.next_leg() is None or (setup.hold_at is not None and len(setup.positions) >= setup.hold_at):
             setup.armed = setup.fire_now = False
         self.logger.info(
-            f"Setup leg {k + 1}/{legs} filled chat={setup.chat_id} ticket={position.mt5_ticket} "
+            f"Setup leg {k + 1}/{len(setup.legs())} filled chat={setup.chat_id} ticket={position.mt5_ticket} "
             f"volume={volume} SL={signal.stop_loss} TP={signal.take_profit} positions={len(setup.positions)}"
         )
 
