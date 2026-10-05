@@ -403,3 +403,65 @@ async def test_confirmed_zone_becomes_complete_setup_with_sweep_sl_and_post_targ
     assert setup.sl == Decimal("4171.7")
     assert setup.tps == [Decimal("4188"), Decimal("4219")]  # wrong-side 4170 dropped, nearest first
     assert setup.is_complete and watch.fills == 1
+
+
+@pytest.mark.asyncio
+async def test_zone_followups_update_watch_from_live_test_messages():
+    from main import ApplicationManager
+
+    app = ApplicationManager()
+    app.regex_parser = RegexParser()
+    app._watch_zone = AsyncMock()
+    app._validate_live_price = AsyncMock(return_value=True)
+    app._handle_parsed_signal = AsyncMock()
+    app.llm_parser = MagicMock(parse_with_llm=AsyncMock(return_value=None))
+
+    meta = {"telegram_chat_id": -1004311007519, "sender": "s", "timestamp": NOW}
+    await app._on_telegram_message({**meta, "telegram_message_id": 57, "raw_text": "gold buy zone 4124-4128"})
+    watch = app._setup_aggregator.get_zone(-1004311007519)
+    assert watch is not None and watch.targets == []
+
+    await app._on_telegram_message({**meta, "telegram_message_id": 58, "raw_text": "targets are 4145, 4160 ,4176"})
+    assert watch.targets == [Decimal("4145"), Decimal("4160"), Decimal("4176")]
+    await app._on_telegram_message({**meta, "telegram_message_id": 59, "raw_text": "invalidation 4130"})
+    assert watch.sl is None  # above a BUY zone: wrong side
+    await app._on_telegram_message({**meta, "telegram_message_id": 60, "raw_text": "invalidation sous 4118"})
+    assert watch.sl == Decimal("4118")
+    app.llm_parser.parse_with_llm.assert_not_awaited()
+    app._validate_live_price.assert_not_awaited()
+    app._handle_parsed_signal.assert_not_awaited()
+
+    await app._on_telegram_message({**meta, "telegram_message_id": 61, "raw_text": "on annule la zone"})
+    assert app._setup_aggregator.get_zone(-1004311007519) is None
+
+
+@pytest.mark.asyncio
+async def test_unlinked_modify_is_ignored_without_live_price_check():
+    from main import ApplicationManager
+    from src.signal_parser import ParsedSignal
+
+    app = ApplicationManager()
+    app.regex_parser = RegexParser()
+    app._validate_live_price = AsyncMock(return_value=False)
+    modify = ParsedSignal(parsed_action=ParsedAction.MODIFY, symbol="GOLD", take_profit=Decimal("4145"))
+    app.llm_parser = MagicMock(parse_with_llm=AsyncMock(return_value=modify))
+    await app._on_telegram_message(
+        {"telegram_chat_id": 5, "telegram_message_id": 1, "sender": "s", "timestamp": NOW, "raw_text": "targets are 4145"}
+    )
+    app._validate_live_price.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_confirmed_zone_uses_author_invalidation_as_sl():
+    from main import ApplicationManager
+    from src.correlation_engine.rejection_detector import Phase, RejectionState
+    from src.correlation_engine.setup_aggregator import ZoneEntry, ZoneWatch
+
+    app = ApplicationManager()
+    app._watch_setup = AsyncMock()
+    state = RejectionState(sell=False, low=Decimal("4124"), high=Decimal("4128"),
+                           phase=Phase.CONFIRMED, extreme=Decimal("4122.4"))
+    zone = ZoneEntry(ParsedAction.BUY, Decimal("4124"), Decimal("4128"), state)
+    watch = ZoneWatch(1, 57, "s", NOW, "GOLD", [zone], [Decimal("4145")], NOW, sl=Decimal("4118"))
+    await app._on_zone_confirmed(watch, 0, zone, Decimal("0.5"))
+    assert app._setup_aggregator.get(1).sl == Decimal("4118")

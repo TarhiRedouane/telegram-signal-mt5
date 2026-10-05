@@ -275,11 +275,17 @@ class ApplicationManager:
             # "BUY ZONE 4174–4178": no order now, wait for a confirmed rejection in the zone
             self._start_zone_watch(metadata, *zone_hint)
             return
-        zone_watch = self._setup_aggregator.get_zone(chat_id)
-        if zone_watch is not None and extract_followup(raw_text).cancel:
-            self._setup_aggregator.drop_zone(zone_watch, "cancelled by author")
-
         pending_setup = self._setup_aggregator.get(chat_id)
+        zone_watch = self._setup_aggregator.get_zone(chat_id)
+        if zone_watch is not None and not looks_like_new_trade(raw_text):
+            followup = extract_followup(raw_text)
+            if followup.cancel:
+                self._setup_aggregator.drop_zone(zone_watch, "cancelled by author")
+                if pending_setup is None:
+                    return
+            elif pending_setup is None and self._apply_zone_followup(zone_watch, followup):
+                return
+
         if (
             edited
             and pending_setup is not None
@@ -358,7 +364,13 @@ class ApplicationManager:
             parsed_signal.sender = str(metadata.get("sender", "unknown"))
             parsed_signal.timestamp = metadata.get("timestamp")
 
-            if await self._validate_live_price(parsed_signal):
+            if parsed_signal.parsed_action not in (ParsedAction.BUY, ParsedAction.SELL):
+                # MODIFY/CLOSE reaching here matched no open trade or setup: nothing to act on
+                self.logger.info(
+                    f"{parsed_signal.parsed_action.value} ignored, no open trade or setup linked: "
+                    f"chat={metadata.get('telegram_chat_id')} message_id={metadata.get('telegram_message_id')}"
+                )
+            elif await self._validate_live_price(parsed_signal):
                 self._parsed_signals_today += 1
                 if (
                     parsed_signal.parsed_action in (ParsedAction.BUY, ParsedAction.SELL)
@@ -568,6 +580,17 @@ class ApplicationManager:
         )
         self._component_tasks[f"zone_{watch.chat_id}"] = asyncio.create_task(self._watch_zone(watch))
 
+    def _apply_zone_followup(self, watch: ZoneWatch, followup: Followup) -> bool:
+        """Targets/SL for a zone still waiting for its rejection. True when the message was about levels."""
+        if not (followup.tps or followup.tp_slots or followup.final_tp is not None or followup.sl is not None):
+            return False
+        changed = watch.apply(followup)
+        self.logger.info(
+            f"Zone watch updated chat={watch.chat_id} {changed or 'no change'}: "
+            f"targets={watch.targets} SL={watch.sl}"
+        )
+        return True
+
     async def _watch_zone(self, watch: ZoneWatch) -> None:
         """Feed closed M1/M3 candles to each zone's rejection detector; trade on confirmation."""
         max_sweep, sl_buffer = symbol_policy.get_rejection_params(watch.symbol)
@@ -602,9 +625,23 @@ class ApplicationManager:
     async def _advance_zones(
         self, watch: ZoneWatch, m1: list, m3: list, params: RejectionParams, sl_buffer: Decimal
     ) -> None:
+        last = m1[-1]
+        now = datetime.now(UTC)
+        if watch.last_heartbeat is None or now - watch.last_heartbeat >= timedelta(minutes=10):
+            watch.last_heartbeat = now
+            self.logger.info(
+                f"Zone watch alive chat={watch.chat_id} last M1 close={last.close}: "
+                + "; ".join(f"{z.action.value} {z.low}-{z.high} {z.state.phase.value}" for z in watch.zones)
+            )
         for index, zone in enumerate(watch.zones):
             if zone.state.done:
                 continue
+            if not zone.touched and last.low <= zone.high and last.high >= zone.low:
+                zone.touched = True
+                self.logger.info(
+                    f"Zone {zone.action.value} {zone.low}-{zone.high} touched chat={watch.chat_id}: "
+                    f"M1 {last.low}-{last.high}, watching for sweep/rejection"
+                )
             before = zone.state.phase
             advance(zone.state, m1, m3, params)
             if zone.state.phase == before:
@@ -619,7 +656,10 @@ class ApplicationManager:
     async def _on_zone_confirmed(self, watch: ZoneWatch, index: int, zone: ZoneEntry, sl_buffer: Decimal) -> None:
         """Rejection confirmed: market order with SL beyond the sweep and the post's reaction levels as TPs."""
         sell = zone.action == ParsedAction.SELL
-        sl = zone.state.extreme + sl_buffer if sell else zone.state.extreme - sl_buffer
+        if watch.sl is not None and zone.sl_ok(watch.sl):
+            sl = watch.sl  # author's invalidation wins over the sweep-based SL
+        else:
+            sl = zone.state.extreme + sl_buffer if sell else zone.state.extreme - sl_buffer
         tps = sorted({t for t in watch.targets if (t < zone.low if sell else t > zone.high)}, reverse=sell)
         now = datetime.now(UTC)
         existing = self._setup_aggregator.get(watch.chat_id)

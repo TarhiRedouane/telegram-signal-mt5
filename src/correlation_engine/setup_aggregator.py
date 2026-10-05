@@ -84,6 +84,10 @@ class ZoneEntry:
     low: Decimal
     high: Decimal
     state: RejectionState
+    touched: bool = False
+
+    def sl_ok(self, sl: Decimal) -> bool:
+        return sl > self.high if self.action == ParsedAction.SELL else sl < self.low
 
 
 @dataclass
@@ -99,6 +103,30 @@ class ZoneWatch:
     created: datetime
     raw_text: str = ""
     fills: int = 0  # zones that already led to an order
+    sl: Decimal | None = None  # author's invalidation; replaces the sweep-based SL when valid
+    last_heartbeat: datetime | None = None
+
+    def apply(self, followup: Followup) -> list[str]:
+        """Targets / SL sent after the zone post ("targets are 4145, 4160", "invalidation 4118")."""
+        changed = []
+        targets = list(followup.tps) if followup.tps else list(self.targets)
+        for index, level in sorted(followup.tp_slots.items()):
+            if index < len(targets):
+                targets[index] = level
+            else:
+                targets.append(level)
+        if followup.final_tp is not None and followup.final_tp not in targets:
+            targets.append(followup.final_tp)
+        if targets != self.targets:
+            self.targets = targets
+            changed.append("targets")
+        if followup.sl is not None and followup.sl != self.sl:
+            if any(zone.sl_ok(followup.sl) for zone in self.zones):
+                self.sl = followup.sl
+                changed.append("sl")
+            else:
+                logger.warning(f"Ignoring wrong-side zone SL {followup.sl}")
+        return changed
 
 
 def _zone_symbol(text: str) -> str:
