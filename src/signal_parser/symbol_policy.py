@@ -119,6 +119,18 @@ class SymbolPolicy:
             return settings.gold_entry_tolerance
         return None
 
+    def get_close_sl_buffer(self, symbol: str) -> Decimal | None:
+        """Protective SL distance beyond a candle-close invalidation level."""
+        if self.canonicalize_symbol(symbol) in {"GOLD", "XAUUSD"}:
+            return settings.gold_close_sl_buffer
+        return None
+
+    def get_zone_now_max_distance(self, symbol: str) -> Decimal | None:
+        """Max price distance from a zone for "buy/sell now" to join that zone's scenario."""
+        if self.canonicalize_symbol(symbol) in {"GOLD", "XAUUSD"}:
+            return settings.gold_zone_now_max_distance
+        return None
+
     def get_rejection_params(self, symbol: str) -> tuple[Decimal, Decimal] | None:
         """(max sweep beyond zone edge, SL buffer beyond sweep extreme) for zone-rejection entries."""
         if self.canonicalize_symbol(symbol) in {"GOLD", "XAUUSD"}:

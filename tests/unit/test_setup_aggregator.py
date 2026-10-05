@@ -69,7 +69,9 @@ def test_example_sequence_aggregates_entry_sl_tp():
     _, setup = _run(EXAMPLE)
     assert setup.action == ParsedAction.SELL
     assert (setup.low, setup.high) == (Decimal("4146"), Decimal("4146"))
-    assert setup.sl == Decimal("4162")
+    # "clôture m30 au dessus de 4162": exit on an M30 close above 4162, protective hard SL 3 beyond
+    assert setup.close_invalidation == (Decimal("4162"), 30)
+    assert setup.sl == Decimal("4165.0")
     assert setup.tp == Decimal("4110")
     assert len(setup.raw_texts) == 4  # setup + TP + SL + entry; noise not recorded
 
@@ -465,3 +467,170 @@ async def test_confirmed_zone_uses_author_invalidation_as_sl():
     watch = ZoneWatch(1, 57, "s", NOW, "GOLD", [zone], [Decimal("4145")], NOW, sl=Decimal("4118"))
     await app._on_zone_confirmed(watch, 0, zone, Decimal("0.5"))
     assert app._setup_aggregator.get(1).sl == Decimal("4118")
+
+
+def _zone_app(price: str):
+    from types import SimpleNamespace
+
+    from main import ApplicationManager
+
+    app = ApplicationManager()
+    app.regex_parser = RegexParser()
+    app._watch_zone = AsyncMock()
+    app._watch_setup = AsyncMock()
+    app._validate_live_price = AsyncMock(return_value=True)
+    app._order_volume = AsyncMock(return_value=0.1)
+    app._apply_position_levels = AsyncMock()
+    app.llm_parser = MagicMock(parse_with_llm=AsyncMock(return_value=None))
+    app.mt5_connection_manager = SimpleNamespace(get_current_price=AsyncMock(return_value=Decimal(price)))
+    opened = []
+
+    async def fake_open(signal, volume=None, allow_reuse=False):
+        opened.append((signal.stop_loss, signal.take_profit, allow_reuse))
+        return SimpleNamespace(mt5_ticket=len(opened), open_price=float(signal.entry_price))
+
+    app._handle_parsed_signal = fake_open
+    return app, opened
+
+
+ZONE_CHAT = -1004311007519
+
+
+async def _send(app, message_id: int, text: str):
+    meta = {"telegram_chat_id": ZONE_CHAT, "sender": "s", "timestamp": NOW}
+    await app._on_telegram_message({**meta, "telegram_message_id": message_id, "raw_text": text})
+
+
+@pytest.mark.asyncio
+async def test_live_sequence_buy_now_takes_one_early_leg_and_zone_confirmation_adds_the_rest():
+    from src.correlation_engine.rejection_detector import Phase
+
+    app, opened = _zone_app("4132.74")
+    await _send(app, 59, "gold buy zone 4124-4130")
+    await _send(app, 60, "targets are 4145, 4160 ,4176")
+    await _send(app, 61, "invalidation 30 mn candle close below 4121")
+    watch = app._setup_aggregator.get_zone(ZONE_CHAT)
+    assert (watch.sl, watch.close_tf) == (Decimal("4121"), 30)
+
+    await _send(app, 62, "gold buy now")
+    setup = app._setup_aggregator.get(ZONE_CHAT)
+    assert watch.linked_setup is setup and app._setup_aggregator.get_zone(ZONE_CHAT) is watch  # zone kept
+    assert setup.planned_legs == 3 and setup.hold_at == 1
+    assert setup.close_invalidation == (Decimal("4121"), 30) and setup.sl == Decimal("4118.0")  # protective
+    await app._maybe_fire_setup(setup, Decimal("4132.74"))
+    assert opened == [(Decimal("4118.0"), Decimal("4145"), False)]  # ONE leg, TP1
+    assert not setup.armed
+
+    await _send(app, 63, "gold buy now")  # second "now" doesn't add another early leg
+    assert app._setup_aggregator.get(ZONE_CHAT) is setup
+
+    zone = watch.zones[0]
+    zone.state.phase, zone.state.extreme = Phase.CONFIRMED, Decimal("4123.1")
+    await app._on_zone_confirmed(watch, 0, zone, Decimal("0.5"))
+    assert setup.armed and setup.hold_at is None
+    await app._maybe_fire_setup(setup, Decimal("4129.5"))
+    assert [o[1] for o in opened] == [Decimal("4145"), Decimal("4160"), Decimal("4176")]
+    assert [o[2] for o in opened] == [False, True, True]
+    assert all(o[0] == Decimal("4118.0") for o in opened)  # author's invalidation kept, not sweep SL
+
+
+@pytest.mark.asyncio
+async def test_buy_now_with_single_target_gives_one_extra_zone_leg():
+    app, _ = _zone_app("4131")
+    await _send(app, 1, "gold buy zone 4124-4130")
+    await _send(app, 2, "TP 4145")
+    await _send(app, 3, "buy now")
+    setup = app._setup_aggregator.get(ZONE_CHAT)
+    assert setup.planned_legs == 2 and setup.tps == [Decimal("4145")]
+    assert setup.sl is None  # no invalidation yet: early leg uses the default SL, sweep SL comes later
+
+
+@pytest.mark.asyncio
+async def test_buy_now_far_from_zone_or_opposite_side_is_not_linked():
+    app, _ = _zone_app("4150")  # 20 above the zone, max 10
+    await _send(app, 1, "gold buy zone 4124-4130")
+    await _send(app, 2, "gold buy now")
+    assert app._setup_aggregator.get(ZONE_CHAT) is None
+    app.mt5_connection_manager.get_current_price = AsyncMock(return_value=Decimal("4131"))
+    await _send(app, 3, "gold sell now")
+    assert app._setup_aggregator.get(ZONE_CHAT) is None
+    assert app._setup_aggregator.get_zone(ZONE_CHAT).linked_setup is None
+
+
+def test_fixed_invalidation_stays_a_hard_sl():
+    followup = extract_followup("invalidation 4121")
+    assert followup.sl == Decimal("4121") and followup.sl_close_tf is None
+    _, setup = _run(["SELL GOLD 4190 4195", "SL 4200"])
+    assert setup.sl == Decimal("4200") and setup.close_invalidation is None
+
+
+@pytest.mark.asyncio
+async def test_m30_close_beyond_invalidation_closes_all_legs_but_wick_does_not():
+    from types import SimpleNamespace
+
+    from main import ApplicationManager
+
+    app = ApplicationManager()
+    _, setup = _run(["BUY GOLD 4124 4130", "invalidation clôture M30 sous 4121"])
+    assert setup.close_invalidation == (Decimal("4121"), 30)
+    setup.positions = [SimpleNamespace(mt5_ticket=1), SimpleNamespace(mt5_ticket=2)]
+    app._setup_aggregator.adopt(setup)
+    app.position_manager = SimpleNamespace(close_position_full=AsyncMock(return_value=SimpleNamespace(success=True)))
+    bar = lambda t, low, close: (t, Decimal("4125"), Decimal("4126"), Decimal(low), Decimal(close), 10)  # noqa: E731
+    rates = [bar(0, "4123", "4124"), bar(1800, "4122", "4123")]
+    app.mt5_connection_manager = SimpleNamespace(get_closed_rates=AsyncMock(return_value=rates))
+    assert await app._check_close_invalidation(setup) is False  # baseline
+    rates.append(bar(3600, "4119.5", "4122"))  # wick below 4121, close above
+    assert await app._check_close_invalidation(setup) is False
+    rates.append(bar(5400, "4119", "4120.4"))  # close below 4121
+    assert await app._check_close_invalidation(setup) is True
+    assert app.position_manager.close_position_full.await_count == 2
+    assert app._setup_aggregator.get(setup.chat_id) is None
+
+
+@pytest.mark.asyncio
+async def test_blind_first_leg_takes_half_risk_and_late_targets_split_the_rest():
+    from types import SimpleNamespace
+
+    from main import ApplicationManager
+
+    app = ApplicationManager()
+    app._order_volume = AsyncMock(return_value=0.1)
+    app._apply_position_levels = AsyncMock()
+    opened = []
+
+    async def fake_open(signal, volume=None, allow_reuse=False):
+        opened.append(signal.take_profit)
+        return SimpleNamespace(mt5_ticket=len(opened), open_price=float(signal.entry_price))
+
+    app._handle_parsed_signal = fake_open
+    _, setup = _run(["buy gold 4136 4139"])  # live 18:04: no SL, no TP
+
+    await app._maybe_fire_setup(setup, Decimal("4139.85"))
+    await app._maybe_fire_setup(setup, Decimal("4136"))  # no targets yet: no extra leg
+    assert opened == [None] and setup.blind and setup.armed
+
+    setup.apply(extract_followup("targets are 4155 4165 4176 4190"), "targets", NOW)
+    await app._maybe_fire_setup(setup, Decimal("4136"))
+    assert opened == [None, Decimal("4165"), Decimal("4176"), Decimal("4190")]
+    assert [c.args[1] for c in app._order_volume.await_args_list] == [2, 6, 6, 6]  # 1/2 + 3 x 1/6
+    assert setup.planned_legs == 4 and setup.leg_tp(0) == Decimal("4155")
+
+
+@pytest.mark.asyncio
+async def test_complete_four_tp_signal_still_opens_four_equal_legs():
+    from types import SimpleNamespace
+
+    from main import ApplicationManager
+
+    app = ApplicationManager()
+    app._validate_live_price = AsyncMock(return_value=True)
+    app._order_volume = AsyncMock(return_value=0.1)
+    app._apply_position_levels = AsyncMock()
+    app._handle_parsed_signal = AsyncMock(side_effect=lambda *_, **__: SimpleNamespace(mt5_ticket=1, open_price=1.0))
+    _, setup = _run(["BUY GOLD 4136 4139\nSL 4128\nTP 4155 | 4165 | 4176 | 4190"])
+
+    await app._maybe_fire_setup(setup, Decimal("4139"))
+    await app._maybe_fire_setup(setup, Decimal("4136"))
+    assert [c.args[1] for c in app._order_volume.await_args_list] == [4, 4, 4, 4]
+    assert not setup.blind and setup.planned_legs == 4

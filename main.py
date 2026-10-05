@@ -50,12 +50,14 @@ from src.correlation_engine.setup_aggregator import (
     SetupAggregator,
     ZoneEntry,
     ZoneWatch,
+    action_side,
     extract_followup,
     extract_zone_hint,
     has_action_word,
     looks_like_new_trade,
 )
 from src.signal_parser import ParsedAction
+from src.signal_parser.patterns import close_timeframe
 from src.risk_manager.position_sizer import leg_volume
 from src.utils.currency_config import currency_config
 from decimal import Decimal
@@ -277,6 +279,16 @@ class ApplicationManager:
             return
         pending_setup = self._setup_aggregator.get(chat_id)
         zone_watch = self._setup_aggregator.get_zone(chat_id)
+        side = action_side(raw_text)
+        if (
+            zone_watch is not None
+            and side is not None
+            and extract_followup(raw_text).now
+            and any(zone.action == side for zone in zone_watch.zones)
+        ):
+            # "buy now" next to a waiting zone = same scenario: one early leg, the zone keeps the rest
+            await self._zone_now_leg(zone_watch, side)
+            return
         if zone_watch is not None and not looks_like_new_trade(raw_text):
             followup = extract_followup(raw_text)
             if followup.cancel:
@@ -653,16 +665,108 @@ class ApplicationManager:
             if zone.state.phase == Phase.CONFIRMED:
                 await self._on_zone_confirmed(watch, index, zone, sl_buffer)
 
+    def _zone_setup(
+        self, watch: ZoneWatch, zone: ZoneEntry, index: int, sl_level: Decimal | None, close_tf: int | None
+    ) -> PendingSetup:
+        """Setup for a zone of `watch`: post's targets as TPs (nearest first), fires on its watcher's next poll."""
+        sell = zone.action == ParsedAction.SELL
+        tps = sorted({t for t in watch.targets if (t < zone.low if sell else t > zone.high)}, reverse=sell)
+        # ponytail: signals.telegram_message_id is unique; once the post's id is used, later orders of
+        # the same post get a synthetic negative id. Give positions their own key if replies need it.
+        used = watch.fills > 0 or watch.linked_setup is not None
+        setup = PendingSetup(
+            chat_id=watch.chat_id,
+            message_id=-(watch.message_id * 10 + index) if used else watch.message_id,
+            sender=watch.sender,
+            timestamp=watch.timestamp,
+            action=zone.action,
+            symbol=watch.symbol,
+            low=zone.low,
+            high=zone.high,
+            tps=tps,
+            raw_texts=[watch.raw_text],
+            last_update=datetime.now(UTC),
+            fire_now=True,
+        )
+        if sl_level is not None:
+            setup.set_sl(sl_level, close_tf)
+        return setup
+
+    def _author_zone_sl(self, watch: ZoneWatch, zone: ZoneEntry) -> tuple[Decimal | None, int | None]:
+        if watch.sl is not None and zone.sl_ok(watch.sl):
+            return watch.sl, watch.close_tf
+        return None, None
+
+    async def _zone_now_leg(self, watch: ZoneWatch, side: ParsedAction) -> None:
+        """"buy now" close (time + price) to a waiting zone: open ONE leg now; the zone's confirmed
+        rejection opens the remaining legs (one per target, or one more leg with a single target)."""
+        index, zone = next(
+            ((i, z) for i, z in enumerate(watch.zones) if z.action == side and not z.state.done), (None, None)
+        )
+        if zone is None:
+            self.logger.info(f"'{side.value} now' ignored chat={watch.chat_id}: no open {side.value} zone")
+            return
+        if watch.linked_setup is not None and self._setup_aggregator.get(watch.chat_id) is watch.linked_setup:
+            self.logger.info(f"'{side.value} now' ignored chat={watch.chat_id}: early leg already taken")
+            return
+        age = datetime.now(UTC) - watch.created
+        if age > timedelta(minutes=settings.zone_now_window_minutes):
+            self.logger.info(f"'{side.value} now' ignored chat={watch.chat_id}: zone post is {age} old")
+            return
+        price = (
+            await self.mt5_connection_manager.get_current_price(watch.symbol)
+            if self.mt5_connection_manager is not None
+            else None
+        )
+        max_distance = symbol_policy.get_zone_now_max_distance(watch.symbol)
+        if price is None or max_distance is None or watch.distance(zone, Decimal(str(price))) > max_distance:
+            self.logger.info(
+                f"'{side.value} now' ignored chat={watch.chat_id}: price {price} too far from zone "
+                f"{zone.low}-{zone.high} (max {max_distance})"
+            )
+            return
+
+        setup = self._zone_setup(watch, zone, index, *self._author_zone_sl(watch, zone))
+        setup.planned_legs = min(len(setup.tps), settings.setup_max_legs) if len(setup.tps) > 1 else 2
+        setup.hold_at = 1
+        watch.linked_setup = setup
+        existing = self._setup_aggregator.get(watch.chat_id)
+        if existing is not None:
+            self.logger.info(f"Early zone leg replaces setup message_id={existing.message_id}")
+        self._setup_aggregator.adopt(setup)
+        self.logger.info(
+            f"'{side.value} now' joins zone {zone.low}-{zone.high} chat={watch.chat_id}: early leg 1/"
+            f"{setup.planned_legs} at ~{price}, SL={setup.sl or 'default'} TPs={setup.tps}; rest on confirmed rejection"
+        )
+        self._component_tasks[f"setup_{setup.chat_id}"] = asyncio.create_task(self._watch_setup(setup))
+
     async def _on_zone_confirmed(self, watch: ZoneWatch, index: int, zone: ZoneEntry, sl_buffer: Decimal) -> None:
         """Rejection confirmed: market order with SL beyond the sweep and the post's reaction levels as TPs."""
         sell = zone.action == ParsedAction.SELL
-        if watch.sl is not None and zone.sl_ok(watch.sl):
-            sl = watch.sl  # author's invalidation wins over the sweep-based SL
-        else:
-            sl = zone.state.extreme + sl_buffer if sell else zone.state.extreme - sl_buffer
-        tps = sorted({t for t in watch.targets if (t < zone.low if sell else t > zone.high)}, reverse=sell)
+        author_sl, close_tf = self._author_zone_sl(watch, zone)
+        sweep_sl = zone.state.extreme + sl_buffer if sell else zone.state.extreme - sl_buffer
+        sl = author_sl or sweep_sl
         now = datetime.now(UTC)
         existing = self._setup_aggregator.get(watch.chat_id)
+
+        linked = watch.linked_setup
+        if linked is not None and existing is linked:
+            watch.fills += 1
+            if linked.be_done:
+                self.logger.info(f"Zone {zone.low}-{zone.high} confirmed but TP1 already hit: no more legs")
+                return
+            linked.hold_at = None
+            linked.armed = linked.fire_now = True
+            linked.last_update = now
+            if linked.sl is None:  # early leg used the default SL; the sweep now gives a real one
+                linked.set_sl(sweep_sl, None)
+                await self._apply_setup_levels(linked, ["sl"])
+            self.logger.info(
+                f"Zone {zone.action.value} {zone.low}-{zone.high} confirmed chat={watch.chat_id}: "
+                f"sweep {zone.state.extreme}, opening remaining legs (SL={linked.sl} TPs={linked.tps})"
+            )
+            return
+
         if (
             existing is not None
             and existing.positions
@@ -680,31 +784,14 @@ class ApplicationManager:
             watch.fills += 1
             return
 
-        # ponytail: signals.telegram_message_id is unique; a later zone of the same post gets a
-        # synthetic negative id. Give positions their own key if this ever needs reply lookups.
-        message_id = watch.message_id if watch.fills == 0 else -(watch.message_id * 10 + index)
-        setup = PendingSetup(
-            chat_id=watch.chat_id,
-            message_id=message_id,
-            sender=watch.sender,
-            timestamp=watch.timestamp,
-            action=zone.action,
-            symbol=watch.symbol,
-            low=zone.low,
-            high=zone.high,
-            sl=sl,
-            tps=tps,
-            raw_texts=[watch.raw_text],
-            last_update=now,
-            fire_now=True,
-        )
+        setup = self._zone_setup(watch, zone, index, sl, close_tf if author_sl else None)
         if existing is not None:
             self.logger.info(f"Zone confirmation replaces setup message_id={existing.message_id}")
         self._setup_aggregator.adopt(setup)
         watch.fills += 1
         self.logger.info(
             f"Zone {zone.action.value} {zone.low}-{zone.high} confirmed chat={watch.chat_id}: "
-            f"sweep {zone.state.extreme} SL={sl} TPs={tps} -> executing"
+            f"sweep {zone.state.extreme} SL={setup.sl} TPs={setup.tps} -> executing"
         )
         self._component_tasks[f"setup_{setup.chat_id}"] = asyncio.create_task(self._watch_setup(setup))
 
@@ -736,7 +823,11 @@ class ApplicationManager:
             setup.low, setup.high = signal.entry_price, signal.entry_price_high or signal.entry_price
         self.logger.info(f"Setup message edited chat={setup.chat_id}: zone {setup.low}-{setup.high}")
         await self._handle_setup_followup(
-            setup, raw_text, Followup(sl=signal.stop_loss, tps=list(signal.take_profits))
+            setup,
+            raw_text,
+            Followup(
+                sl=signal.stop_loss, tps=list(signal.take_profits), sl_close_tf=close_timeframe(raw_text)
+            ),
         )
 
     async def _handle_setup_followup(
@@ -795,6 +886,7 @@ class ApplicationManager:
             sl=parsed.stop_loss if isinstance(parsed.stop_loss, Decimal) else None,
             final_tp=parsed.take_profit if isinstance(parsed.take_profit, Decimal) else None,
             entry=parsed.entry_price if same_side else None,
+            sl_close_tf=close_timeframe(raw_text),
         )
 
     async def _watch_setup(self, setup: PendingSetup) -> None:
@@ -808,7 +900,11 @@ class ApplicationManager:
                 ):
                     self._setup_aggregator.drop(setup, "max lifetime reached")
                     return
-                if setup.is_expired(now, settings.setup_idle_timeout_seconds):
+                if setup.positions and setup.close_invalidation and await self._check_close_invalidation(setup):
+                    return
+                zone = self._setup_aggregator.get_zone(setup.chat_id)
+                waiting_zone = setup.hold_at is not None and zone is not None and zone.linked_setup is setup
+                if setup.is_expired(now, settings.setup_idle_timeout_seconds) and not waiting_zone:
                     if not setup.positions:
                         self._setup_aggregator.drop(setup, "expired before entry")
                         return
@@ -828,6 +924,39 @@ class ApplicationManager:
             self.logger.error(f"Setup watcher failed for chat {setup.chat_id}: {exc}", exc_info=True)
             self._setup_aggregator.drop(setup, "watcher error")
 
+    async def _check_close_invalidation(self, setup: PendingSetup) -> bool:
+        """Close every leg when a candle of the invalidation timeframe CLOSES beyond the level
+        (wicks don't count; the protective SL covers the gap). True when the setup was closed."""
+        if self.mt5_connection_manager is None or self.position_manager is None:
+            return False
+        level, timeframe = setup.close_invalidation
+        rates = await self.mt5_connection_manager.get_closed_rates(setup.symbol, timeframe, 3)
+        if not rates:
+            return False
+        if setup.close_check_time is None:  # baseline: only candles closing after the fill count
+            setup.close_check_time = rates[-1][0]
+            return False
+        broken = None
+        for candle_time, _open, _high, _low, close, _volume in rates:
+            if candle_time > setup.close_check_time:
+                setup.close_check_time = candle_time
+                if setup.closed_beyond_invalidation(close):
+                    broken = close
+        if broken is None:
+            return False
+        self.logger.warning(
+            f"Invalidation chat={setup.chat_id}: M{timeframe} closed at {broken} beyond {level}, closing legs"
+        )
+        for position in setup.positions:
+            result = await self.position_manager.close_position_full(position.mt5_ticket)
+            if not result.success:
+                self.logger.info(f"Close of ticket {position.mt5_ticket} skipped: {result.error_message}")
+        self._setup_aggregator.drop(setup, f"M{timeframe} close beyond invalidation {level}")
+        zone = self._setup_aggregator.get_zone(setup.chat_id)
+        if zone is not None and zone.linked_setup is setup:
+            self._setup_aggregator.drop_zone(zone, "scenario invalidated")
+        return True
+
     async def _maybe_fire_setup(self, setup: PendingSetup, price: Decimal) -> None:
         """Open every leg that is due at `price` (single entry -> all legs in the same tick)."""
         while setup.armed and await self._fire_next_leg(setup, price):
@@ -841,6 +970,8 @@ class ApplicationManager:
             setup.armed = setup.fire_now = False
             return False
         index = len(setup.positions)
+        if k > 0 and setup.blind and not setup.tps:
+            return False  # extra legs wait for the author's targets
         if k == 0 and setup.is_complete:
             signal = setup.to_signal(entry=setup.low, sl=setup.sl, tp=setup.leg_tp(index))
             if not await self._validate_live_price(signal):
@@ -864,20 +995,24 @@ class ApplicationManager:
                 self.logger.info(f"Setup firing with default SL {levels[0]} (none received)")
 
         legs = len(setup.legs())
-        volume = await self._order_volume(signal, legs)
+        blind = setup.blind or (k == 0 and setup.ladder and not setup.tps and setup.planned_legs is None)
+        # Blind first leg: half the risk; remaining legs share the other half
+        divisor = (2 if k == 0 else 2 * (legs - 1)) if blind else legs
+        volume = await self._order_volume(signal, divisor)
         position = await self._handle_parsed_signal(
             signal, volume=volume, allow_reuse=bool(setup.positions)
         )
         if position is None:
             self._disarm_or_drop(setup, "order not filled")
             return False
-        if k == 0:
+        setup.blind = blind
+        if setup.planned_legs is None and not (blind and k == 0):
             setup.planned_legs = legs
         setup.positions.append(position)
         now = datetime.now(UTC)
         setup.first_fill_at = setup.first_fill_at or now
         setup.last_update = now
-        if setup.next_leg() is None:
+        if setup.next_leg() is None or (setup.hold_at is not None and len(setup.positions) >= setup.hold_at):
             setup.armed = setup.fire_now = False
         self.logger.info(
             f"Setup leg {k + 1}/{legs} filled chat={setup.chat_id} ticket={position.mt5_ticket} "

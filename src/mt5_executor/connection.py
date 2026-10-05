@@ -939,10 +939,13 @@ class MT5ConnectionManager:
         self, symbol: str, minutes: int, count: int
     ) -> list[tuple[int, Decimal, Decimal, Decimal, Decimal, int]] | None:
         """Last `count` CLOSED candles (time, open, high, low, close, tick_volume), oldest first.
-        Times are broker server epochs. `minutes` is 1 or 3."""
+        Times are broker server epochs. `minutes`: 1, 3, 5, 15, 30, 60 or 240."""
         if mt5 is None:
             return None
-        timeframe = {1: mt5.TIMEFRAME_M1, 3: mt5.TIMEFRAME_M3}[minutes]
+        timeframe = {
+            1: mt5.TIMEFRAME_M1, 3: mt5.TIMEFRAME_M3, 5: mt5.TIMEFRAME_M5, 15: mt5.TIMEFRAME_M15,
+            30: mt5.TIMEFRAME_M30, 60: mt5.TIMEFRAME_H1, 240: mt5.TIMEFRAME_H4,
+        }[minutes]
         async with self.get_connection() as connection:
             if not connection.connected:
                 return None

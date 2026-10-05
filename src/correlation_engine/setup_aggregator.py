@@ -10,7 +10,7 @@ from typing import Any
 from config.settings import settings
 from src.correlation_engine.rejection_detector import RejectionState
 from src.signal_parser import ParsedAction, ParsedSignal
-from src.signal_parser.patterns import FrenchSignalPatterns, tp_levels
+from src.signal_parser.patterns import FrenchSignalPatterns, close_timeframe, tp_levels
 from src.signal_parser.symbol_policy import symbol_policy
 
 logger = logging.getLogger(__name__)
@@ -47,6 +47,7 @@ class Followup:
     entry: Decimal | None = None
     entry_high: Decimal | None = None  # "SELL → 4197 - 4200" restates a zone, not a single price
     now: bool = False
+    sl_close_tf: int | None = None  # SL is a candle-close level ("clôture M30 sous X"), not a hard stop
 
     @property
     def empty(self) -> bool:
@@ -75,7 +76,21 @@ def extract_followup(text: str) -> Followup:
                 if bound:
                     result.entry_high = _to_decimal(bound.group(1))
     result.now = bool(FrenchSignalPatterns.FOLLOWUP_NOW.search(text))
+    if result.sl is not None:
+        result.sl_close_tf = close_timeframe(text)
     return result
+
+
+_BUY_WORD = re.compile(r"\b(?:buy|achat|long|ach[eè]t\w*)\b", re.IGNORECASE)
+_SELL_WORD = re.compile(r"\b(?:sell|vente|short|vend(?!redi)\w*)\b", re.IGNORECASE)
+
+
+def action_side(text: str) -> ParsedAction | None:
+    """BUY or SELL when the text names exactly one side."""
+    buy, sell = bool(_BUY_WORD.search(text)), bool(_SELL_WORD.search(text))
+    if buy == sell:
+        return None
+    return ParsedAction.BUY if buy else ParsedAction.SELL
 
 
 @dataclass
@@ -104,7 +119,12 @@ class ZoneWatch:
     raw_text: str = ""
     fills: int = 0  # zones that already led to an order
     sl: Decimal | None = None  # author's invalidation; replaces the sweep-based SL when valid
+    close_tf: int | None = None  # `sl` is a candle-close level on this timeframe (minutes)
     last_heartbeat: datetime | None = None
+    linked_setup: "PendingSetup | None" = None  # early "buy now" leg waiting for this zone
+
+    def distance(self, zone: ZoneEntry, price: Decimal) -> Decimal:
+        return max(zone.low - price, price - zone.high, Decimal(0))
 
     def apply(self, followup: Followup) -> list[str]:
         """Targets / SL sent after the zone post ("targets are 4145, 4160", "invalidation 4118")."""
@@ -120,9 +140,9 @@ class ZoneWatch:
         if targets != self.targets:
             self.targets = targets
             changed.append("targets")
-        if followup.sl is not None and followup.sl != self.sl:
+        if followup.sl is not None and (followup.sl, followup.sl_close_tf) != (self.sl, self.close_tf):
             if any(zone.sl_ok(followup.sl) for zone in self.zones):
-                self.sl = followup.sl
+                self.sl, self.close_tf = followup.sl, followup.sl_close_tf
                 changed.append("sl")
             else:
                 logger.warning(f"Ignoring wrong-side zone SL {followup.sl}")
@@ -182,8 +202,31 @@ class PendingSetup:
     ladder: bool = True  # False after a re-entry: one more order, no new ladder
     leg_base: int = 0  # positions opened before the current entry
     planned_legs: int | None = None  # frozen at first fill so later TPs can't add risk
+    blind: bool = False  # leg 1 fired before any TP: it took half the risk, later TPs split the rest
     be_done: bool = False
     first_fill_at: datetime | None = None
+    hold_at: int | None = None  # stop opening legs at this many positions (early leg waits for its zone)
+    close_invalidation: tuple[Decimal, int] | None = None  # (level, timeframe min): exit on candle close
+    close_check_time: int | None = None  # last candle time checked for close invalidation
+
+    def set_sl(self, level: Decimal, close_tf: int | None) -> bool:
+        """Hard SL at `level`, or for a candle-close invalidation a protective SL beyond it.
+        Returns True when SL or invalidation changed."""
+        invalidation = (level, close_tf) if close_tf else None
+        sl = level
+        if invalidation:
+            buffer = symbol_policy.get_close_sl_buffer(self.symbol) or Decimal(0)
+            sl = level + buffer if self.action == ParsedAction.SELL else level - buffer
+        if (sl, invalidation) == (self.sl, self.close_invalidation):
+            return False
+        self.sl, self.close_invalidation = sl, invalidation
+        return True
+
+    def closed_beyond_invalidation(self, close: Decimal) -> bool:
+        if self.close_invalidation is None:
+            return False
+        level = self.close_invalidation[0]
+        return close > level if self.action == ParsedAction.SELL else close < level
 
     @property
     def tp(self) -> Decimal | None:
@@ -199,6 +242,7 @@ class PendingSetup:
         self.ladder = False
         self.leg_base = len(self.positions)
         self.planned_legs = None
+        self.blind = False
 
     def rearm(self, signal: ParsedSignal, now: datetime) -> list[str]:
         """Same-side signal in the same setup: new entry, keep collected SL/TP unless restated."""
@@ -213,8 +257,7 @@ class PendingSetup:
         self.armed = True
         self.last_update = now
         changed = ["entry"]
-        if signal.stop_loss is not None and signal.stop_loss != self.sl:
-            self.sl = signal.stop_loss
+        if signal.stop_loss is not None and self.set_sl(signal.stop_loss, close_timeframe(signal.raw_text)):
             changed.append("sl")
         tps = _signal_tps(signal)
         if tps and tps != self.tps:
@@ -227,7 +270,7 @@ class PendingSetup:
         if not self.ladder:
             n = 1
         else:
-            n = self.planned_legs or max(1, min(len(self.tps), settings.setup_max_legs))
+            n = self.planned_legs or max(2 if self.blind else 1, min(len(self.tps), settings.setup_max_legs))
         if n == 1 or self.low == self.high:
             first = self.low if self.action == ParsedAction.SELL else self.high
             return [first] * n
@@ -270,10 +313,10 @@ class PendingSetup:
             changed.append("now")
         sl_ref = self.high if self.action == ParsedAction.SELL else self.low
         tp_ref = self.low if self.action == ParsedAction.SELL else self.high
-        if followup.sl is not None and followup.sl != self.sl:
+        if followup.sl is not None:
             if self._sl_ok(followup.sl, sl_ref):
-                self.sl = followup.sl
-                changed.append("sl")
+                if self.set_sl(followup.sl, followup.sl_close_tf):
+                    changed.append("sl")
             else:
                 logger.warning(f"Ignoring wrong-side SL {followup.sl} for {self.action.value} setup")
         tps = self._merge_tps(followup)
@@ -386,12 +429,13 @@ class SetupAggregator:
             symbol=signal.symbol,
             low=signal.entry_price,
             high=signal.entry_price_high or signal.entry_price,
-            sl=signal.stop_loss,
             tps=_signal_tps(signal),
             raw_texts=[signal.raw_text],
             last_update=now,
             fire_now=bool(FrenchSignalPatterns.FOLLOWUP_NOW.search(signal.raw_text)),
         )
+        if signal.stop_loss is not None:
+            setup.set_sl(signal.stop_loss, close_timeframe(signal.raw_text))
         self._setups[setup.chat_id] = setup
         return setup, None
 

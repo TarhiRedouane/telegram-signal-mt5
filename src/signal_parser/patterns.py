@@ -6,6 +6,24 @@ from typing import ClassVar
 
 from .symbol_policy import symbol_policy
 
+_CANDLE_CLOSE = re.compile(r"\b(?:CL[ÔO]TURE|BOUGIE|CANDLE)\b", re.IGNORECASE)
+_TIMEFRAME = re.compile(
+    r"\b(?:M(\d{1,3})|H(\d{1,2})|(\d{1,3})\s*(?:MN|MINS?|MINUTES?)|(\d{1,2})\s*H(?:EURES?)?)\b", re.IGNORECASE
+)
+SUPPORTED_CLOSE_TIMEFRAMES = (1, 3, 5, 15, 30, 60, 240)
+
+
+def close_timeframe(text: str) -> int | None:
+    """Minutes of the candle whose CLOSE invalidates ("clôture M30", "30 mn candle close"), else None."""
+    if not _CANDLE_CLOSE.search(text):
+        return None
+    match = _TIMEFRAME.search(text)
+    if not match:
+        return None
+    minutes_m, hours_h, minutes, hours = match.groups()
+    tf = int(minutes_m or minutes or 0) or int(hours_h or hours or 0) * 60
+    return tf if tf in SUPPORTED_CLOSE_TIMEFRAMES else None
+
 
 def tp_levels(text: str) -> tuple[list[Decimal], dict[int, Decimal]]:
     """TP lines -> (unnumbered levels in order, {0-based index: level} for "TP1"/"TP 2 :" lines)."""

@@ -66,11 +66,18 @@ class Settings:
         # and SL buffer beyond the sweep extreme (price units)
         self.gold_max_sweep: Decimal = Decimal(os.getenv("GOLD_MAX_SWEEP", "3.0"))
         self.gold_sl_buffer: Decimal = Decimal(os.getenv("GOLD_SL_BUFFER", "0.5"))
+        # Candle-close invalidation ("clôture M30 sous 4121"): hard SL this far beyond the level
+        # so wicks don't stop out; the trade is closed on an actual candle close beyond it
+        self.gold_close_sl_buffer: Decimal = Decimal(os.getenv("GOLD_CLOSE_SL_BUFFER", "3.0"))
+        # "buy now" joins a zone scenario only if price is this close to the zone
+        self.gold_zone_now_max_distance: Decimal = Decimal(os.getenv("GOLD_ZONE_NOW_MAX_DISTANCE", "10.0"))
 
         # Zone hints ("BUY ZONE 4174-4178"): trade only after a confirmed rejection on candles
         self.rejection_reclaim_candles: int = int(os.getenv("REJECTION_RECLAIM_CANDLES", "3"))  # M1
         self.rejection_confirm_candles: int = int(os.getenv("REJECTION_CONFIRM_CANDLES", "3"))  # M3
         self.zone_watch_hours: int = int(os.getenv("ZONE_WATCH_HOURS", "8"))
+        # "buy now" within this many minutes of the zone post = same scenario (one early leg)
+        self.zone_now_window_minutes: int = int(os.getenv("ZONE_NOW_WINDOW_MINUTES", "30"))
 
         # Multi-message setup aggregation
         self.setup_idle_timeout_seconds: int = int(os.getenv("SETUP_IDLE_TIMEOUT_SECONDS", "300"))
