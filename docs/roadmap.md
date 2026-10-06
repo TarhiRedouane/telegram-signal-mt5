@@ -32,14 +32,16 @@ Order of work: **1 → 4 → 3 → 6 → 8 → 9**, the rest in any order. Each 
 ## Phase 1: Safety (before any new feature)
 
 ### 1. Risk guard
-- [ ] One check before every order (instant, setup leg, zone, reinforcement).
-- [ ] Max total open risk, e.g. 6 % of balance (sum of each open leg's loss at its SL).
-- [ ] Max open legs, e.g. 6.
-- [ ] Daily loss limit, e.g. 6 %: blocks new entries until the next trading day.
-- [ ] Manual kill switch (env var or file flag) that blocks new entries without stopping the bot.
-- [ ] Rejected order logged with the reason, and alerted (step 4).
+- [x] One check before every order (instant, setup leg, zone, reinforcement).
+- [x] Max total open risk, e.g. 6 % of balance (sum of each open leg's loss at its SL).
+- [x] Max open legs, e.g. 6.
+- [x] Daily loss limit, e.g. 6 %: blocks new entries until the next trading day.
+- [x] Manual kill switch (env var or file flag) that blocks new entries without stopping the bot.
+- [~] Rejected order logged with the reason (done), and alerted (step 4).
 
-Settings: `MAX_OPEN_RISK_PERCENT`, `MAX_OPEN_LEGS`, `DAILY_LOSS_LIMIT_PERCENT`, `TRADING_ENABLED`.
+Settings: `MAX_OPEN_RISK_PERCENT`, `MAX_OPEN_LEGS`, `DAILY_LOSS_LIMIT_PERCENT`, `TRADING_ENABLED`,
+`KILL_SWITCH_FILE` (default `data/STOP_TRADING`: create it to block entries, delete it to resume).
+Code: `src/risk_manager/risk_guard.py`, `PositionManager.get_risk_snapshot`, `main._risk_guard_refusal`.
 Done when: unit test proves an order beyond each limit is refused; regular signals still fire under the limits.
 
 ### 2. Spread filter

@@ -88,6 +88,14 @@ class Settings:
         # Risk-based lot sizing: % of balance risked per signal, split across legs
         self.risk_percent: Decimal = Decimal(os.getenv("RISK_PERCENT", "3.0"))
 
+        # Risk guard: checked before every order (instant, setup leg, zone, reinforcement)
+        self.max_open_risk_percent: Decimal = Decimal(os.getenv("MAX_OPEN_RISK_PERCENT", "6.0"))
+        self.max_open_legs: int = int(os.getenv("MAX_OPEN_LEGS", "6"))
+        self.daily_loss_limit_percent: Decimal = Decimal(os.getenv("DAILY_LOSS_LIMIT_PERCENT", "6.0"))
+        self.trading_enabled: bool = os.getenv("TRADING_ENABLED", "true").lower() == "true"
+        # Kill switch without restart: create this file to block new entries, delete it to resume
+        self.kill_switch_file = Path(os.getenv("KILL_SWITCH_FILE", "data/STOP_TRADING"))
+
         # Application Settings
         self.dev_mode: bool = os.getenv("DEV_MODE", "false").lower() == "true"
         self.log_level: str = os.getenv("LOG_LEVEL", "INFO")

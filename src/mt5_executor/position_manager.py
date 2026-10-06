@@ -9,7 +9,7 @@ Follows coding standards: circuit breaker decorator, structured logging, async c
 import asyncio
 import logging
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import datetime, timedelta
 from decimal import Decimal
 from typing import Any
 
@@ -72,24 +72,79 @@ class PositionManager:
             account = mt5.account_info()
             if account is None:
                 return None
-            build_candidates = getattr(self.connection_manager, "_build_price_lookup_candidates", None)
-            resolve_symbol = getattr(self.connection_manager, "_resolve_broker_symbol_name", None)
-            symbol = symbol.upper()
-            for candidate in build_candidates(symbol) if callable(build_candidates) else [symbol]:
-                info = mt5.symbol_info(resolve_symbol(candidate) if callable(resolve_symbol) else candidate)
-                if info is not None:
-                    return {
-                        name: Decimal(str(value))
-                        for name, value in (
-                            ("balance", account.balance),
-                            ("tick_size", info.trade_tick_size),
-                            ("tick_value", info.trade_tick_value),
-                            ("volume_min", info.volume_min),
-                            ("volume_step", info.volume_step),
-                            ("volume_max", info.volume_max),
-                        )
-                    }
+            info = self._broker_symbol_info(symbol)
+            if info is not None:
+                return {
+                    name: Decimal(str(value))
+                    for name, value in (
+                        ("balance", account.balance),
+                        ("tick_size", info.trade_tick_size),
+                        ("tick_value", info.trade_tick_value),
+                        ("volume_min", info.volume_min),
+                        ("volume_step", info.volume_step),
+                        ("volume_max", info.volume_max),
+                    )
+                }
         return None
+
+    def _broker_symbol_info(self, symbol: str):
+        """mt5.symbol_info for our symbol name, trying the broker's spellings (GOLD -> Gold)."""
+        build_candidates = getattr(self.connection_manager, "_build_price_lookup_candidates", None)
+        resolve_symbol = getattr(self.connection_manager, "_resolve_broker_symbol_name", None)
+        symbol = symbol.upper()
+        for candidate in build_candidates(symbol) if callable(build_candidates) else [symbol]:
+            info = mt5.symbol_info(resolve_symbol(candidate) if callable(resolve_symbol) else candidate)
+            if info is not None:
+                return info
+        return None
+
+    @circuit_breaker(failure_threshold=3, recovery_timeout=30)
+    async def get_risk_snapshot(self, symbol: str) -> dict[str, Any] | None:
+        """Account-wide exposure for the risk guard (all positions on the account, not only ours):
+        open legs, money lost if every SL is hit, today's closed P&L, plus `symbol`'s tick specs."""
+        if mt5 is None:
+            return None
+        async with self.connection_manager.get_connection() as connection:
+            if not connection.connected:
+                return None
+            account = mt5.account_info()
+            info = self._broker_symbol_info(symbol)
+            if account is None or info is None:
+                return None
+            positions = mt5.positions_get() or ()
+            open_risk = Decimal(0)
+            unprotected = 0
+            for p in positions:
+                spec = info if p.symbol == info.name else mt5.symbol_info(p.symbol)
+                if not p.sl or spec is None or not spec.trade_tick_size:
+                    unprotected += 1
+                    continue
+                distance = p.price_open - p.sl if p.type == mt5.POSITION_TYPE_BUY else p.sl - p.price_open
+                # SL at or beyond break-even risks nothing
+                open_risk += max(Decimal(0), Decimal(str(distance))) / Decimal(str(spec.trade_tick_size)) * (
+                    Decimal(str(spec.trade_tick_value)) * Decimal(str(p.volume))
+                )
+            # Server day: deal and tick times share the server clock, so no timezone conversion needed
+            tick = mt5.symbol_info_tick(info.name)
+            now = datetime.now()
+            deals = mt5.history_deals_get(now - timedelta(days=2), now + timedelta(days=1)) or ()
+            day_start = tick.time - tick.time % 86400 if tick is not None else None
+            trades = (mt5.DEAL_TYPE_BUY, mt5.DEAL_TYPE_SELL)
+            realized = sum(
+                (Decimal(str(d.profit + d.commission + d.swap + getattr(d, "fee", 0.0)))
+                 for d in deals if day_start is not None and d.time >= day_start and d.type in trades),
+                Decimal(0),
+            )
+            return {
+                "balance": Decimal(str(account.balance)),
+                "equity": Decimal(str(account.equity)),
+                "open_legs": len(positions),
+                "open_risk": open_risk,
+                "unprotected": unprotected,
+                "realized_today": realized,
+                "tick_size": Decimal(str(info.trade_tick_size)),
+                "tick_value": Decimal(str(info.trade_tick_value)),
+            }
 
     @circuit_breaker(failure_threshold=3, recovery_timeout=30)
     async def get_close_reason(self, ticket: int) -> str | None:

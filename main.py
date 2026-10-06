@@ -58,6 +58,7 @@ from src.correlation_engine.setup_aggregator import (
 )
 from src.signal_parser import ParsedAction
 from src.signal_parser.patterns import close_timeframe
+from src.risk_manager import risk_guard
 from src.risk_manager.position_sizer import leg_volume
 from src.utils.currency_config import currency_config
 from decimal import Decimal
@@ -1049,6 +1050,23 @@ class ApplicationManager:
             self.logger.info(f"TP1 hit chat={setup.chat_id}: open legs moved to break-even, unfilled legs cancelled")
         return False
 
+    async def _risk_guard_refusal(self, signal, volume: float) -> str | None:
+        """Account-wide limits before any order; None = allowed. MT5 unreadable -> refused (fail closed)."""
+        try:
+            snapshot = await self.position_manager.get_risk_snapshot(signal.symbol)
+        except Exception as exc:
+            self.logger.warning(f"Risk snapshot failed for {signal.symbol}: {exc}")
+            snapshot = None
+        new_risk = None
+        if snapshot is not None and signal.stop_loss is not None:
+            new_risk = risk_guard.order_risk(
+                signal.entry_price - signal.stop_loss,
+                Decimal(str(volume)),
+                snapshot["tick_size"],
+                snapshot["tick_value"],
+            )
+        return risk_guard.refusal(snapshot, new_risk, settings)
+
     async def _order_volume(self, signal, legs: int = 1) -> float:
         """Risk-based lots per leg; falls back to the default lot when inputs are unavailable."""
         fallback = currency_config.default_lot_size
@@ -1205,6 +1223,18 @@ class ApplicationManager:
             self.position_manager = self.position_manager or PositionManager(self.mt5_connection_manager)
             if volume is None:
                 volume = await self._order_volume(parsed_signal)
+            refused = await self._risk_guard_refusal(parsed_signal, volume)
+            if refused is not None:
+                if not extra_leg:
+                    await self._signal_repository.update_signal_status(
+                        signal_id=signal_record.id,
+                        status=SignalStatus.REJECTED,
+                        rejection_reason=f"risk guard: {refused}",
+                    )
+                self.logger.warning(
+                    f"Risk guard refused {action_name} {parsed_signal.symbol} volume={volume}: {refused}"
+                )
+                return None
             order_result = await self.position_manager.open_market_order(parsed_signal, volume=volume)
 
             if not order_result.success:
