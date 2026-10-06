@@ -6,9 +6,18 @@ from typing import ClassVar
 
 from .symbol_policy import symbol_policy
 
-_CANDLE_CLOSE = re.compile(r"\b(?:CL[ÔO]TURE|BOUGIE|CANDLE)\b", re.IGNORECASE)
+# Word edges that also hold next to markdown "_" ("__clôture M30__")
+_START, _END = r"(?<![^\W_])", r"(?![^\W_])"
+_CANDLE_CLOSE = re.compile(_START + r"(?:CL[ÔO]TURE|BOUGIE|CANDLE)" + _END, re.IGNORECASE)
 _TIMEFRAME = re.compile(
-    r"\b(?:M(\d{1,3})|H(\d{1,2})|(\d{1,3})\s*(?:MN|MINS?|MINUTES?)|(\d{1,2})\s*H(?:EURES?)?)\b", re.IGNORECASE
+    _START + r"(?:M(\d{1,3})|H(\d{1,2})|(\d{1,3})\s*(?:MN|MINS?|MINUTES?)|(\d{1,2})\s*H(?:EURES?)?)" + _END,
+    re.IGNORECASE,
+)
+# "Clôture dans 5", "clôture M30", "clôture de la bougie": a candle close, not "close the trade"
+_CANDLE_CLOSE_REMARK = re.compile(
+    _START + r"CL[ÔO]TURE" + _END + r"[^\n]{0,20}?(?:"
+    + _START + r"(?:DANS|DNS|D['’]ICI|EN)\s*\d|" + _START + r"[MH]\d|BOUGIE|CANDLE)",
+    re.IGNORECASE,
 )
 SUPPORTED_CLOSE_TIMEFRAMES = (1, 3, 5, 15, 30, 60, 240)
 
@@ -23,6 +32,17 @@ def close_timeframe(text: str) -> int | None:
     minutes_m, hours_h, minutes, hours = match.groups()
     tf = int(minutes_m or minutes or 0) or int(hours_h or hours or 0) * 60
     return tf if tf in SUPPORTED_CLOSE_TIMEFRAMES else None
+
+
+def is_candle_close_remark(text: str) -> bool:
+    return bool(_CANDLE_CLOSE_REMARK.search(text))
+
+
+def sl_far(text: str) -> Decimal | None:
+    """Second level of an SL range ("SL / INVALIDATION 4145 - 4150" -> 4150), else None."""
+    match = FrenchSignalPatterns.FOLLOWUP_SL.search(text)
+    bound = match and FrenchSignalPatterns.ENTRY_RANGE_SUFFIX.match(text, match.end())
+    return Decimal(bound.group(1)) if bound else None
 
 
 def tp_levels(text: str) -> tuple[list[Decimal], dict[int, Decimal]]:
@@ -119,10 +139,11 @@ class FrenchSignalPatterns:
         + _LEVEL,
         re.IGNORECASE,
     )
-    # Zone hint, not an order: "BUY ZONE autour de 4174–4178", "zone d'achat 4174-4178"
+    # Zone hint, not an order: "BUY ZONE autour de 4174–4178", "zone d'achat 4174-4178",
+    # "SELL POTENTIELLE 4129.36" (a possible entry: wait for a confirmed rejection there)
     ZONE_HINT: ClassVar[re.Pattern] = re.compile(
-        r"\b(?:(BUY|SELL|ACHAT|VENTE)\s+ZONES?|ZONES?\s+(?:D['’]\s*|DE\s+)(ACHAT|VENTE))\b"
-        r"[^\n\d]{0,40}?" + _LEVEL + r"\s*(?:-|–|—|/|À|A)\s*" + _LEVEL,
+        r"\b(?:(BUY|SELL|ACHAT|VENTE)\s+(?:ZONES?|POTENTI\w*)|ZONES?\s+(?:D['’]\s*|DE\s+)(ACHAT|VENTE))\b"
+        r"[^\n\d]{0,40}?" + _LEVEL + r"(?:\s*(?:-|–|—|/|À|A)\s*" + _LEVEL + r")?",
         re.IGNORECASE,
     )
     # "on garde 4188 → 4195 → 4219 comme zones de réaction / objectifs"

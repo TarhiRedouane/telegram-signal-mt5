@@ -349,6 +349,14 @@ class RegexParser:
         """All TPs on the right side of entry, nearest first (TP1..TPn)."""
         plain, slots = tp_levels(text)
         levels = ([first] if first is not None else []) + plain + [slots[i] for i in sorted(slots)]
+        # "OBJECTIF 4110 - 4120": final target, the edge price reaches first
+        objective = FrenchSignalPatterns.FOLLOWUP_FINAL_TP.search(text)
+        if objective:
+            edges = [Decimal(objective.group(1).replace(",", "."))]
+            bound = FrenchSignalPatterns.ENTRY_RANGE_SUFFIX.match(text, objective.end())
+            if bound:
+                edges.append(Decimal(bound.group(1)))
+            levels.append(min(edges, key=lambda tp: abs(tp - entry_price)))
         sell = action == ParsedAction.SELL
         valid = {tp for tp in levels if (tp < entry_price if sell else tp > entry_price)}
         return sorted(valid, reverse=sell)

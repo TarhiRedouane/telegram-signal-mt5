@@ -9,6 +9,7 @@ import pytest
 from src.correlation_engine.setup_aggregator import (
     SetupAggregator,
     extract_followup,
+    extract_zone_hint,
     looks_like_new_trade,
 )
 from src.signal_parser import ParsedAction
@@ -634,3 +635,80 @@ async def test_complete_four_tp_signal_still_opens_four_equal_legs():
     await app._maybe_fire_setup(setup, Decimal("4136"))
     assert [c.args[1] for c in app._order_volume.await_args_list] == [4, 4, 4, 4]
     assert not setup.blind and setup.planned_legs == 4
+
+
+SIGNAL_1671 = (
+    "**SELL  GOLD →  4142 - 4145 **\n\n**TP 4137.7 zone prise de profit BE **\n**TP 4133.9 zone prise de profit **\n"
+    "**TP 4124.8 zone prise de profit **\n**TP 4114.4 zone prise de profit **\n\n"
+    "**L’intégralité des TP doivent représenter maximum 5% **\n\n**Objectif journalier retour sur **\n\n"
+    "**❌**** __SL / INVALIDATION  4145 - 4150 __**\n\n**__➡️__****__ Validé uniquement par une clôture M30__**\n\n"
+    "**👀**** Attention aux mèches **"
+)
+SIGNAL_1698 = (
+    "**SELL  GOLD →  4153 - 4156 **\n\n**TP 4148 zone prise de profit BE **\n**TP 4142 zone prise de profit **\n"
+    "**TP 4132.6  zone prise de profit **\n**TP 4114.4 zone prise de profit **\n\n"
+    "**❌**** __SL / INVALIDATION 4158 4168  __****__➡️__****__ Validé uniquement par une clôture M30__**"
+)
+SIGNAL_1719 = (
+    "**🚨**** SELL    XAUUSD**\n\n**📉**** ENTRY  4177 **\n\n**✖️**** SL:4187**\n\n**❌**** TP  4167**\n"
+    "**❌**** TP 4153**\n**❌**** TP 4143**\n**❌**** OBJECTIF 4110 - 4120**"
+)
+
+
+def test_live_sl_range_with_m30_close_checks_near_edge_and_hard_sl_far_edge():
+    _, setup = _run([SIGNAL_1671])
+    assert setup.close_invalidation == (Decimal("4145"), 30) and setup.sl == Decimal("4150")
+    assert setup.tps == [Decimal("4137.7"), Decimal("4133.9"), Decimal("4124.8"), Decimal("4114.4")]
+    _, setup = _run([SIGNAL_1698])
+    assert setup.close_invalidation == (Decimal("4158"), 30) and setup.sl == Decimal("4168")
+
+
+def test_sl_range_without_candle_close_is_a_hard_sl_at_far_edge_and_single_sl_unchanged():
+    _, setup = _run(["SELL GOLD 4142 - 4145\nSL 4147 - 4150\nTP 4130"])
+    assert setup.sl == Decimal("4150") and setup.close_invalidation is None
+    _, setup = _run(["SELL GOLD 4142 - 4145\nSL 4150 - 2017\nTP 4130"])  # typo far edge ignored
+    assert setup.sl == Decimal("4150")
+    _, setup = _run(["BUY GOLD 4120\nSL 4110\nTP 4130 4140"])
+    assert setup.sl == Decimal("4110") and setup.close_invalidation is None
+
+
+def test_objectif_range_becomes_last_tp_nearest_edge():
+    signal = _parse(SIGNAL_1719)
+    assert signal.stop_loss == Decimal("4187")
+    assert signal.take_profits == [Decimal("4167"), Decimal("4153"), Decimal("4143"), Decimal("4120")]
+
+
+def test_potential_sell_is_a_zone_watch_not_an_order():
+    hint = extract_zone_hint("**SELL POTENTIELLE 4129.36 ****🔝**")
+    assert hint is not None
+    _, zones, targets = hint
+    assert zones == [(ParsedAction.SELL, Decimal("4129.36"), Decimal("4129.36"))] and targets == []
+
+
+@pytest.mark.parametrize("text", ["Clôture dns 5", "clôture dans 5 min", "Attendez la clôture M30", "__clôture H1__"])
+def test_candle_close_remarks_are_not_trade_closes(text):
+    from src.signal_parser.patterns import is_candle_close_remark
+
+    assert is_candle_close_remark(text)
+
+
+@pytest.mark.parametrize("text", ["Je clôture", "Clôture de la position", "clôture tout maintenant"])
+def test_real_close_orders_still_close(text):
+    from src.signal_parser.patterns import is_candle_close_remark
+
+    assert not is_candle_close_remark(text)
+
+
+@pytest.mark.asyncio
+async def test_main_complete_signal_with_candle_close_sl_goes_through_setup():
+    from main import ApplicationManager
+
+    app = ApplicationManager()
+    app.regex_parser = RegexParser()
+    app._validate_live_price = AsyncMock(return_value=True)
+    app._handle_parsed_signal = AsyncMock()
+    app._start_setup = MagicMock()
+    meta = {"telegram_chat_id": 1, "telegram_message_id": 5, "sender": "s", "timestamp": NOW}
+    await app._on_telegram_message({**meta, "raw_text": "SELL GOLD 4149\nSL 4165 clôture M30\nTP 4115"})
+    app._start_setup.assert_called_once()
+    app._handle_parsed_signal.assert_not_awaited()

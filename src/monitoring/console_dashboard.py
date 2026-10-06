@@ -501,6 +501,8 @@ Available commands:
                 line = f"{timestamp} [{symbol}] {action} @ {price:.2f}"
                 if ticket and ticket != 'N/A':
                     line += f" → {signal['type']} #{ticket}"
+                elif signal['type'] == "NOT FILLED":
+                    line += " → NOT FILLED"
 
                 # Color code by action type
                 if 'BUY' in action.upper():

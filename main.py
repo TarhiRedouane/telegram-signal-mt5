@@ -57,7 +57,7 @@ from src.correlation_engine.setup_aggregator import (
     looks_like_new_trade,
 )
 from src.signal_parser import ParsedAction
-from src.signal_parser.patterns import close_timeframe
+from src.signal_parser.patterns import close_timeframe, is_candle_close_remark, sl_far
 from src.risk_manager import risk_guard
 from src.risk_manager.position_sizer import leg_volume
 from src.utils.currency_config import currency_config
@@ -368,6 +368,13 @@ class ApplicationManager:
                     f"chat={metadata.get('telegram_chat_id')} message_id={metadata.get('telegram_message_id')}"
                 )
                 parsed_signal = None
+            if (
+                parsed_signal is not None
+                and parsed_signal.parsed_action == ParsedAction.CLOSE
+                and is_candle_close_remark(raw_text)
+            ):
+                self.logger.info(f"LLM CLOSE discarded, candle-close remark not a trade close: {raw_text[:60]!r}")
+                parsed_signal = None
 
         latency_ms = int((asyncio.get_running_loop().time() - started_at) * 1000)
 
@@ -391,6 +398,9 @@ class ApplicationManager:
                         parsed_signal.stop_loss is None
                         or parsed_signal.take_profit is None
                         or len(parsed_signal.take_profits) > 1  # multi-TP -> one leg per TP
+                        # SL range / candle-close invalidation: only the setup tracks both levels
+                        or sl_far(parsed_signal.raw_text) is not None
+                        or close_timeframe(parsed_signal.raw_text) is not None
                     )
                 ):
                     self._start_setup(parsed_signal)
@@ -881,6 +891,8 @@ class ApplicationManager:
         if parsed is None:
             return Followup()
         if parsed.parsed_action == ParsedAction.CLOSE:
+            if is_candle_close_remark(raw_text):  # "clôture dans 5": waiting for a candle, not cancelling
+                return Followup()
             return Followup(cancel=True)
         same_side = parsed.parsed_action == setup.action and parsed.entry_price > 0
         return Followup(
@@ -1165,20 +1177,23 @@ class ApplicationManager:
             except Exception as e:
                 self.logger.warning(f"Failed to persist parsed signal: {e}")
 
+        position = await self._execute_signal_on_mt5(parsed_signal, volume, allow_reuse)
+
         if self.console_dashboard is not None:
+            # Shown after execution so a refused order (MT5, risk guard) doesn't look like a trade
             self.console_dashboard.add_recent_signal(
-                signal_type="NEW",
+                signal_type="NEW" if position is not None else "NOT FILLED",
                 symbol=parsed_signal.symbol,
                 action=parsed_signal.parsed_action.value,
                 price=float(parsed_signal.entry_price),
+                ticket_id=str(position.mt5_ticket) if position is not None else None,
                 timestamp=parsed_signal.timestamp,
             )
-
-        position = await self._execute_signal_on_mt5(parsed_signal, volume, allow_reuse)
 
         self.logger.info(
             f"Signal detected from chat {parsed_signal.telegram_chat_id}: "
             f"{parsed_signal.parsed_action.value} {parsed_signal.symbol} @ {parsed_signal.entry_price}"
+            f"{'' if position is not None else ' (NOT FILLED)'}"
         )
         return position
 
