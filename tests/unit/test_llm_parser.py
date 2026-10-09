@@ -7,6 +7,7 @@ import pytest
 import pytest_asyncio
 import asyncio
 import json
+import logging
 from unittest.mock import Mock, AsyncMock, patch, MagicMock
 from decimal import Decimal
 from datetime import datetime
@@ -184,7 +185,7 @@ class TestLLMParser:
     @pytest.mark.asyncio
     async def test_make_openai_request_success(self, llm_parser, mock_openai_response):
         """Test successful OpenAI API request."""
-        with patch('config.openai_config.openai_client') as mock_client:
+        with patch('src.signal_parser.llm_parser.openai_client') as mock_client:
             mock_client.client.chat.completions.create = AsyncMock(return_value=mock_openai_response)
             mock_client.get_model_config.return_value = {
                 "model": "gpt-5-mini",
@@ -242,6 +243,24 @@ class TestLLMParser:
         result = llm_parser._parse_llm_response(response_data, "test text", "test-id")
         
         assert result is None
+
+    def test_parse_llm_response_null_action_is_quiet(self, llm_parser, caplog):
+        """LLM JSON with parsed_action null means no signal: None, no error log."""
+        response_data = {
+            "content": json.dumps({
+                "parsed_action": None,
+                "symbol": None,
+                "confidence_score": 0.0,
+                "parser_type": "llm",
+            })
+        }
+
+        with caplog.at_level(logging.DEBUG):
+            result = llm_parser._parse_llm_response(response_data, "bonjour", "test-id")
+
+        assert result is None
+        assert not [r for r in caplog.records if r.levelno >= logging.ERROR]
+        assert "upper" not in caplog.text
 
     def test_parse_llm_response_invalid_json(self, llm_parser):
         """Test parsing invalid JSON from LLM."""

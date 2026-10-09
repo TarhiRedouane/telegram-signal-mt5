@@ -296,6 +296,11 @@ class LLMParser:
                 self.logger.warning(f"LLM response missing required fields: {signal_data}")
                 return None
             
+            # Null action means the LLM found no signal in the message
+            if signal_data["parsed_action"] is None:
+                self.logger.info("LLM response has no action: not a signal")
+                return None
+
             # Parse action enum
             try:
                 parsed_action = ParsedAction(signal_data["parsed_action"].upper())

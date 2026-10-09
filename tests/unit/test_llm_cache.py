@@ -168,7 +168,7 @@ class TestLLMResponseCache:
         # Create cache with very short TTL
         cache = LLMResponseCache(
             db_path=tmp_path / "ttl_test.db",
-            ttl_hours=0.001  # ~3.6 seconds
+            ttl_hours=0.0001  # 0.36 seconds
         )
         await cache.initialize()
         
@@ -182,7 +182,7 @@ class TestLLMResponseCache:
         assert result == sample_response_data
         
         # Wait for expiration
-        await asyncio.sleep(0.1)  # Wait longer than TTL
+        await asyncio.sleep(0.5)  # Wait longer than TTL
         
         # Should miss after expiration
         result = await cache.get(test_text)

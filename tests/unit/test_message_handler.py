@@ -8,7 +8,7 @@ import pytest
 from datetime import datetime, UTC
 from unittest.mock import Mock, AsyncMock, patch
 
-from telethon.tl.types import Message, User, Channel
+from telethon.tl.types import Message, User, Channel, PeerChannel
 
 from src.telegram_client.message_handler import MessageHandler
 
@@ -42,8 +42,9 @@ class TestMessageHandler:
         mock_message.date = datetime.now(UTC)
         mock_message.reply_to = None
         mock_message.forward = None
+        mock_message.edit_date = None
         mock_message.from_id = Mock(user_id=67890)
-        mock_message.peer_id = Mock(channel_id=111222)
+        mock_message.peer_id = PeerChannel(111222)
         
         mock_event = AsyncMock()
         mock_event.message = mock_message
@@ -68,7 +69,7 @@ class TestMessageHandler:
         assert call_args['telegram_message_id'] == 12345
         assert call_args['raw_text'] == "Test trading signal"
         assert call_args['sender'] == "user_67890"
-        assert call_args['telegram_chat_id'] == 111222
+        assert call_args['telegram_chat_id'] == -1000000111222  # marked channel id (get_peer_id)
         assert call_args['chat_title'] == "Test Signal Group"
         assert call_args['message_type'] == 'text'
         assert call_args['is_forwarded'] is False

@@ -274,6 +274,19 @@ class TestMetricsCollector:
         assert empty_stability["reconnects"] == 0
         assert empty_stability["last_event"] is None
     
+    def test_connection_last_event_with_equal_timestamps(self, metrics_collector):
+        """Last event is the last recorded one, even when timestamps tie (Windows clock)."""
+        metrics_collector.record_connection_event("telegram", "connect", True)
+        metrics_collector.record_connection_event("telegram", "reconnect", False)
+        tied = metrics_collector._connection_events[0]["timestamp"]
+        for event in metrics_collector._connection_events:
+            event["timestamp"] = tied
+
+        last_event = metrics_collector.get_connection_stability("telegram")["last_event"]
+
+        assert last_event["type"] == "reconnect"
+        assert last_event["success"] is False
+
     def test_get_processing_success_rate(self, metrics_collector):
         """Test processing success rate calculation."""
         correlation_id = "test-123"

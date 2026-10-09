@@ -21,8 +21,7 @@ Known gaps:
   legs without break-even management.
 - Nothing records trade results (profit, R, close reason), so we can't tell which signals work.
 - `AlertManager` exists but is never called: the bot acts silently.
-- Full unit suite hangs (> 5 min); 3 tests fail on the clean code
-  (`test_telegram_callback_correlates_before_attempting_new_signal_parse`, two in `test_llm_parser.py`).
+- Unit suite is green and fast since story 5.1 (628 passed, ~1 min); no CI runs it yet.
 - Edits to already-executed signals are ignored (logged only).
 
 Order of work: **1 (done) → 5 (test suite health) → 19 (architecture review/simplify) → 4 → 3 → 6 →
@@ -68,9 +67,9 @@ Done when: kill the bot mid-ladder, restart, TP1 hit → remaining legs still go
 Done when: every event above produces one readable DM on the demo account.
 
 ### 5. Test suite health
-- [ ] Find and fix the hanging test(s) so `pytest tests/unit` finishes in < 2 min.
-- [ ] Fix or remove the 3 failing tests.
-- [ ] Stop the noisy `'NoneType' object has no attribute 'upper'` error when the LLM returns no action.
+- [x] Find and fix the hanging test(s) so `pytest tests/unit` finishes in < 2 min.
+- [x] Fix or remove the failing tests (there were 146 + 10 errors once `pytest.ini` was really applied).
+- [x] Stop the noisy `'NoneType' object has no attribute 'upper'` error when the LLM returns no action.
 - [ ] Optional: GitHub Actions running `pytest tests/unit`, `ruff`, `mypy src/`.
 
 Done when: full unit suite green and fast.

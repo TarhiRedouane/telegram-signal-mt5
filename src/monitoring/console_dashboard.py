@@ -279,9 +279,12 @@ Available commands:
         """Build the dashboard header with title and key metrics."""
         # Get system metrics
         uptime = self._get_uptime()
-        cpu_percent = psutil.cpu_percent()
-        memory = psutil.virtual_memory()
-        ram_mb = round(memory.used / (1024 * 1024))
+        try:
+            cpu_percent: float | str = psutil.cpu_percent()
+            ram_mb: int | str = round(psutil.virtual_memory().used / (1024 * 1024))
+        except Exception as e:
+            self.logger.debug(f"System metrics unavailable: {e}")
+            cpu_percent, ram_mb = "?", "?"
 
         # Check for emergency stop first
         if self._emergency_stop_status.get('is_stopped', False):
@@ -541,12 +544,3 @@ Available commands:
     def is_running(self) -> bool:
         """Check if dashboard is currently running."""
         return self._is_running
-
-    async def __aenter__(self):
-        """Async context manager entry."""
-        await self.start_dashboard()
-        return self
-
-    async def __aexit__(self, exc_type, exc_val, exc_tb):
-        """Async context manager exit with proper cleanup."""
-        await self.stop_dashboard()

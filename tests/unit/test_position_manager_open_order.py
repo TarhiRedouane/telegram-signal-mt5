@@ -5,6 +5,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 
 from main import ApplicationManager
+from src.correlation_engine.setup_aggregator import SetupAggregator
 from src.database.models import ParserType, SignalStatus
 from src.database.repository import DatabaseManager, SignalRepository
 from src.mt5_executor.position_manager import PositionManager
@@ -174,6 +175,7 @@ async def test_telegram_callback_correlates_before_attempting_new_signal_parse()
     application._correlation_engine = AsyncMock()
     application._correlation_engine.correlate_message.return_value = object()
     application._handle_correlated_message = AsyncMock()
+    application._setup_aggregator = SetupAggregator()
 
     metadata = {
         "telegram_chat_id": -100123,

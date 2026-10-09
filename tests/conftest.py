@@ -2,7 +2,7 @@
 Pytest configuration and shared fixtures for the test suite.
 """
 
-import asyncio
+import logging
 import shutil
 import tempfile
 from collections.abc import Generator
@@ -15,12 +15,13 @@ import pytest
 pytest_plugins = ["pytest_asyncio"]
 
 
-@pytest.fixture(scope="session")
-def event_loop():
-    """Create an event loop for the test session."""
-    loop = asyncio.new_event_loop()
-    yield loop
-    loop.close()
+def close_log_handlers() -> None:
+    """Close the file handlers setup_logging() left open (Windows cannot delete open log files)."""
+    for name in (None, "trade"):
+        logger = logging.getLogger(name)
+        for handler in logger.handlers[:]:
+            logger.removeHandler(handler)
+            handler.close()
 
 
 @pytest.fixture
@@ -28,6 +29,7 @@ def temp_dir() -> Generator[Path, None, None]:
     """Create a temporary directory for test files."""
     temp_dir = Path(tempfile.mkdtemp())
     yield temp_dir
+    close_log_handlers()
     shutil.rmtree(temp_dir)
 
 

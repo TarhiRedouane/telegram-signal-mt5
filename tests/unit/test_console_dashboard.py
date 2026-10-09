@@ -341,19 +341,6 @@ class TestConsoleDashboard:
         except asyncio.CancelledError:
             pass
     
-    @pytest.mark.asyncio
-    async def test_context_manager(self, dashboard):
-        """Test dashboard as async context manager."""
-        async with dashboard as d:
-            assert d == dashboard
-            # Brief wait to let it start
-            await asyncio.sleep(0.05)
-            # Should be running
-            assert dashboard.is_running()
-        
-        # Should be stopped after context
-        assert not dashboard.is_running()
-    
     def test_last_signal_time_formatting(self, dashboard):
         """Test last signal time display formatting."""
         now = datetime.now(UTC)
@@ -387,7 +374,8 @@ class TestConsoleDashboard:
         # Should not crash when building header
         header = dashboard._build_header()
         assert header is not None
-    
+        assert "CPU: ?% | RAM: ?MB" in header.renderable.plain
+
     def test_health_status_color_mapping(self, dashboard):
         """Test health status to color mapping in header."""
         # Test different health statuses

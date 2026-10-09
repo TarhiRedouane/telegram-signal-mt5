@@ -6,6 +6,7 @@ Tests structured logging format, rotation, and context management.
 import json
 import logging
 import tempfile
+from contextlib import contextmanager
 from pathlib import Path
 from unittest.mock import patch, MagicMock
 
@@ -27,6 +28,18 @@ from config.logging_config import (
     clear_all_context,
     get_contextual_logger
 )
+
+from tests.conftest import close_log_handlers
+
+
+@contextmanager
+def _log_temp_dir():
+    """Temp dir for setup_logging(); handlers are closed before the dir is deleted."""
+    with tempfile.TemporaryDirectory() as temp_dir:
+        try:
+            yield temp_dir
+        finally:
+            close_log_handlers()
 
 
 class TestStructuredFormatter:
@@ -342,7 +355,7 @@ class TestLoggingSetup:
     
     def test_setup_logging_with_temp_dir(self):
         """Test logging setup with temporary directory."""
-        with tempfile.TemporaryDirectory() as temp_dir:
+        with _log_temp_dir() as temp_dir:
             # Setup logging in temp directory
             config = setup_logging(log_level="DEBUG", log_dir=temp_dir, structured=True)
             
@@ -360,7 +373,7 @@ class TestLoggingSetup:
     
     def test_setup_logging_structured_vs_plain(self):
         """Test logging setup with structured vs plain formatting."""
-        with tempfile.TemporaryDirectory() as temp_dir:
+        with _log_temp_dir() as temp_dir:
             # Test structured logging
             setup_logging(log_dir=temp_dir, structured=True)
             logger = logging.getLogger("test.structured")
@@ -378,7 +391,7 @@ class TestLoggingSetup:
     @patch.dict('os.environ', {'DEV_MODE': 'true'})
     def test_setup_logging_dev_mode(self):
         """Test logging setup in development mode."""
-        with tempfile.TemporaryDirectory() as temp_dir:
+        with _log_temp_dir() as temp_dir:
             config = setup_logging(log_dir=temp_dir)
             
             # Should add console handler in dev mode
@@ -395,7 +408,7 @@ class TestLoggingSetup:
     
     def test_log_rotation_configuration(self):
         """Test that log rotation is configured correctly."""
-        with tempfile.TemporaryDirectory() as temp_dir:
+        with _log_temp_dir() as temp_dir:
             setup_logging(log_dir=temp_dir)
             
             root_logger = logging.getLogger()
@@ -416,7 +429,7 @@ class TestLoggingSetup:
     
     def test_logger_levels_configuration(self):
         """Test that specific logger levels are configured."""
-        with tempfile.TemporaryDirectory() as temp_dir:
+        with _log_temp_dir() as temp_dir:
             setup_logging(log_dir=temp_dir)
             
             # Check that noisy loggers are set to WARNING
@@ -426,7 +439,7 @@ class TestLoggingSetup:
     
     def test_trade_logger_separation(self):
         """Test that trade logger is separate from root logger."""
-        with tempfile.TemporaryDirectory() as temp_dir:
+        with _log_temp_dir() as temp_dir:
             setup_logging(log_dir=temp_dir)
             
             trade_logger = logging.getLogger("trade")
@@ -439,7 +452,7 @@ class TestLoggingSetup:
     
     def test_error_log_level_filtering(self):
         """Test that error log only gets ERROR and CRITICAL messages."""
-        with tempfile.TemporaryDirectory() as temp_dir:
+        with _log_temp_dir() as temp_dir:
             setup_logging(log_dir=temp_dir)
             
             root_logger = logging.getLogger()
@@ -456,7 +469,7 @@ class TestLoggingSetup:
     
     def test_integration_with_structured_formatter(self):
         """Test integration of structured formatter with logging setup."""
-        with tempfile.TemporaryDirectory() as temp_dir:
+        with _log_temp_dir() as temp_dir:
             setup_logging(log_dir=temp_dir, structured=True)
             
             # Set context and log message

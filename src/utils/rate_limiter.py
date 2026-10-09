@@ -110,7 +110,7 @@ class APIRateLimiter:
             
             # Need to queue the request
             try:
-                await self._request_queue.put((current_time, priority), block=False)
+                self._request_queue.put_nowait((current_time, priority))
                 self._total_queued += 1
                 
                 self.logger.info(

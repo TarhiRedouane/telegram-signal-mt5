@@ -317,8 +317,8 @@ class MetricsCollector:
 
         reconnects = sum(1 for event in component_events if event['event_type'] == 'reconnect')
 
-        # Find most recent event
-        last_event = max(component_events, key=lambda x: x['timestamp'])
+        # Most recently recorded event (appended in order; timestamps can tie on Windows)
+        last_event = component_events[-1]
 
         return {
             'total_events': total_events,
