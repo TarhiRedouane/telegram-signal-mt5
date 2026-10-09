@@ -32,17 +32,18 @@ def get_database_url() -> str:
     Returns:
         Database URL for SQLite with aiosqlite driver
     """
-    # Check for environment variable first
+    # A broker instance always has its own database (a shared DATABASE_URL would mix brokers)
+    instance = os.getenv("BOT_INSTANCE", "").strip().lower()
     db_url = os.getenv("DATABASE_URL")
-    if db_url:
+    if db_url and not instance:
         return db_url
     
-    # Default to project data directory
+    # Default to project data directory (data/<instance>/ for a broker instance)
     project_root = Path(__file__).parent.parent.parent
-    db_path = project_root / "data" / "signal_ea.db"
+    db_path = project_root / "data" / instance / "signal_ea.db"
     
     # Ensure data directory exists
-    db_path.parent.mkdir(exist_ok=True)
+    db_path.parent.mkdir(parents=True, exist_ok=True)
     
     return f"sqlite+aiosqlite:///{db_path}"
 

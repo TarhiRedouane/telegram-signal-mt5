@@ -2,6 +2,10 @@
 """
 Command line interface for Telegram Signal EA.
 Provides start, stop, status, and configuration commands.
+
+Broker instances: profiles in config/brokers.json (see brokers.example.json). `start` with no name
+shows a menu; each chosen broker runs as its own bot process (BOT_INSTANCE=<key>) with its own
+MT5 terminal, data folder, database, logs and Telegram session.
 """
 
 import argparse
@@ -9,51 +13,74 @@ import os
 import signal
 import subprocess
 import sys
+import time
 from pathlib import Path
+
+import psutil
 
 # Add src to path for imports
 sys.path.insert(0, str(Path(__file__).parent / "src"))
 
+from config.brokers import load_brokers, parse_selection
 from config.logging_config import get_logger, setup_logging
+
+PROJECT_ROOT = Path(__file__).resolve().parent
 
 
 class SignalEAManager:
-    """Manages the Telegram Signal EA application lifecycle."""
+    """Manages one Telegram Signal EA process (one broker instance, or the single legacy setup)."""
 
-    def __init__(self):
+    def __init__(self, instance: str | None = None):
         self.logger = get_logger(__name__)
-        self.pid_file = Path("data/signal_ea.pid")
+        self.instance = instance
+        self.name = f"Signal EA [{instance}]" if instance else "Signal EA"
+        data_dir = PROJECT_ROOT / "data" / instance if instance else PROJECT_ROOT / "data"
+        self.pid_file = data_dir / "signal_ea.pid"
+        self.session_file = data_dir / "telegram.session"
 
     def start(self) -> None:
         """Start the Signal EA application."""
         if self.is_running():
-            self.logger.warning("Signal EA is already running")
-            print("Signal EA is already running")
+            self.logger.warning(f"{self.name} is already running")
+            print(f"{self.name} is already running")
             return
 
-        self.logger.info("Starting Signal EA application")
-        print("Starting Signal EA application...")
+        self.logger.info(f"Starting {self.name}")
+        print(f"Starting {self.name}...")
 
-        project_root = Path(__file__).resolve().parent
-        cmd = [sys.executable, str(project_root / "main.py")]
+        cmd = [sys.executable, str(PROJECT_ROOT / "main.py")]
+        env = dict(os.environ)
+        if self.instance:
+            env["BOT_INSTANCE"] = self.instance
         self.pid_file.parent.mkdir(parents=True, exist_ok=True)
 
-        process = subprocess.Popen(
-            cmd,
-            cwd=str(project_root),
-            stdout=subprocess.DEVNULL,
-            stderr=subprocess.DEVNULL,
-            start_new_session=True,
-        )
+        if sys.platform == "win32":
+            # Own console window: shows this broker's dashboard and lets you type the Telegram
+            # login code on the first run of a new instance.
+            process = subprocess.Popen(
+                cmd, cwd=str(PROJECT_ROOT), env=env, creationflags=subprocess.CREATE_NEW_CONSOLE
+            )
+        else:
+            process = subprocess.Popen(
+                cmd,
+                cwd=str(PROJECT_ROOT),
+                env=env,
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+                start_new_session=True,
+            )
 
         self.pid_file.write_text(str(process.pid), encoding="utf-8")
-        print("Signal EA started successfully")
+        print(f"{self.name} started (PID: {process.pid})")
+        if self.instance and not self.session_file.exists():
+            print(f"  First run of '{self.instance}': enter the Telegram login code in its window.")
 
     def stop(self) -> None:
         """Stop the Signal EA application."""
         if not self.is_running():
-            self.logger.warning("Signal EA is not running")
-            print("Signal EA is not running")
+            self.logger.warning(f"{self.name} is not running")
+            print(f"{self.name} is not running")
+            self.pid_file.unlink(missing_ok=True)
             return
 
         pid = self.get_pid()
@@ -61,10 +88,7 @@ class SignalEAManager:
             try:
                 os.kill(pid, signal.SIGTERM)
                 self.logger.info(f"Sent SIGTERM to process {pid}")
-                print(f"Stopping Signal EA (PID: {pid})")
-
-                # Wait for process to stop
-                import time
+                print(f"Stopping {self.name} (PID: {pid})")
 
                 for _ in range(10):  # Wait up to 10 seconds
                     if not self.is_running():
@@ -72,12 +96,12 @@ class SignalEAManager:
                     time.sleep(1)
 
                 if self.is_running():
-                    # Force kill if still running
-                    os.kill(pid, signal.SIGKILL)
+                    # Force kill if still running (no SIGKILL on Windows: SIGTERM already terminates)
+                    os.kill(pid, getattr(signal, "SIGKILL", signal.SIGTERM))
                     self.logger.warning(f"Force killed process {pid}")
-                    print("Force stopped Signal EA")
+                    print(f"Force stopped {self.name}")
                 else:
-                    print("Signal EA stopped successfully")
+                    print(f"{self.name} stopped successfully")
 
             except ProcessLookupError:
                 self.logger.info(f"Process {pid} not found")
@@ -86,53 +110,54 @@ class SignalEAManager:
                 self.logger.error(f"Permission denied killing process {pid}")
                 print("Permission denied - cannot stop process")
 
-        # Clean up PID file
-        if self.pid_file.exists():
-            self.pid_file.unlink()
+        self.pid_file.unlink(missing_ok=True)
 
     def status(self) -> None:
         """Show Signal EA application status."""
         if self.is_running():
-            pid = self.get_pid()
-            print(f"Signal EA is running (PID: {pid})")
-
-            # TODO: Add more detailed status information
-            # - Database connection status
-            # - Telegram client status
-            # - MT5 connection status
-            # - Recent activity summary
-
+            print(f"{self.name} is running (PID: {self.get_pid()})")
         else:
-            print("Signal EA is not running")
+            print(f"{self.name} is not running")
 
     def is_running(self) -> bool:
         """Check if Signal EA is currently running."""
-        if not self.pid_file.exists():
-            return False
-
         pid = self.get_pid()
-        if not pid:
-            return False
-
-        try:
-            # Check if process exists
-            os.kill(pid, 0)
-            return True
-        except (ProcessLookupError, PermissionError):
-            return False
-        except OSError:
-            return False
+        # psutil, not os.kill(pid, 0): on Windows signal 0 is CTRL_C_EVENT and would stop the bot
+        return pid is not None and psutil.pid_exists(pid)
 
     def get_pid(self) -> int | None:
         """Get the PID of the running Signal EA process."""
-        if not self.pid_file.exists():
-            return None
-
         try:
-            with open(self.pid_file) as f:
-                return int(f.read().strip())
+            return int(self.pid_file.read_text(encoding="utf-8").strip())
         except (OSError, ValueError):
             return None
+
+
+def _menu(brokers: dict[str, dict]) -> list[str]:
+    """Ask which configured brokers to start."""
+    keys = list(brokers)
+    print("Configured brokers:")
+    for i, key in enumerate(keys, start=1):
+        profile = brokers[key]
+        print(f"  {i}) {profile.get('label', key)}  [{key}, {profile.get('mode', '?').upper()} {profile.get('login', '?')}]")
+    while True:
+        try:
+            return parse_selection(input("Start which? (e.g. 1  or  1,3  or  all): "), keys)
+        except ValueError as e:
+            print(e)
+
+
+def _targets(names: list[str], brokers: dict[str, dict], command: str) -> list[str | None]:
+    """Instances a command applies to. No broker profiles -> the single legacy instance (None)."""
+    if not brokers:
+        if names:
+            raise ValueError("No brokers configured: copy config/brokers.example.json to config/brokers.json")
+        return [None]
+    if names:
+        return parse_selection(" ".join(names), list(brokers))
+    if command == "start":
+        return _menu(brokers)
+    return list(brokers)  # stop / status without names: every broker
 
 
 def main() -> None:
@@ -143,18 +168,16 @@ def main() -> None:
     )
 
     subparsers = parser.add_subparsers(dest="command", help="Available commands")
+    for command, help_text in (
+        ("start", "Start broker instance(s); no name = choose from a menu"),
+        ("stop", "Stop broker instance(s); no name = all"),
+        ("status", "Show status; no name = all"),
+    ):
+        sub = subparsers.add_parser(command, help=help_text)
+        sub.add_argument("brokers", nargs="*", help="broker keys or menu numbers, or 'all'")
+        if command == "start":
+            sub.add_argument("--daemon", action="store_true", help="Run in daemon mode")
 
-    # Start command
-    start_parser = subparsers.add_parser("start", help="Start the Signal EA application")
-    start_parser.add_argument("--daemon", action="store_true", help="Run in daemon mode")
-
-    # Stop command
-    subparsers.add_parser("stop", help="Stop the Signal EA application")
-
-    # Status command
-    subparsers.add_parser("status", help="Show application status")
-
-    # Parse arguments
     args = parser.parse_args()
 
     if not args.command:
@@ -164,17 +187,9 @@ def main() -> None:
     # Setup logging for CLI operations
     setup_logging()
 
-    # Create manager and execute command
-    manager = SignalEAManager()
-
     try:
-        if args.command == "start":
-            manager.start()
-        elif args.command == "stop":
-            manager.stop()
-        elif args.command == "status":
-            manager.status()
-
+        for instance in _targets(args.brokers, load_brokers(), args.command):
+            getattr(SignalEAManager(instance), args.command)()
     except Exception as e:
         print(f"Error: {e}")
         sys.exit(1)

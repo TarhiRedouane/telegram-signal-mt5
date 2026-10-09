@@ -3,6 +3,9 @@
 .env.local
 .env.*.local
 
+# Broker profiles (real account numbers): copy config/brokers.example.json
+config/brokers.json
+
 # Telegram session files - contain authentication data
 *.session
 *.session-journal

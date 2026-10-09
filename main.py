@@ -1485,7 +1485,7 @@ class ApplicationManager:
         """Save current application state to disk for recovery."""
         try:
             # Create state directory if it doesn't exist
-            state_dir = Path("data/state")
+            state_dir = settings.data_dir / "state"
             state_dir.mkdir(parents=True, exist_ok=True)
             
             # Save queue states (placeholder for actual queue implementations)
@@ -1613,8 +1613,8 @@ async def main() -> None:
     """
     global app_manager
     
-    # Setup logging first
-    setup_logging()
+    # Setup logging first (per-instance folder when BOT_INSTANCE is set)
+    setup_logging(log_dir=str(settings.log_dir))
     logger = get_logger(__name__)
     
     try:

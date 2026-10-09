@@ -51,6 +51,9 @@ class Settings:
         self.mt5_password: str = os.getenv("MT5_PASSWORD", "")
         self.mt5_server: str = os.getenv("MT5_SERVER", "")
         self.mt5_path: str = os.getenv("MT5_PATH", "")
+        self.mt5_portable: bool = os.getenv("MT5_PORTABLE", "false").lower() == "true"
+        # "demo" (default) or "real": the bot refuses a terminal logged in to the other kind
+        self.mt5_account_mode: str = os.getenv("MT5_ACCOUNT_MODE", "demo").lower()
         self.mt5_timeout_seconds: int = int(os.getenv("MT5_TIMEOUT_SECONDS", "60"))
         self.mt5_max_connections: int = int(os.getenv("MT5_MAX_CONNECTIONS", "5"))
         self.mt5_reconnect_delay: int = int(os.getenv("MT5_RECONNECT_DELAY", "5"))
@@ -100,14 +103,34 @@ class Settings:
         self.dev_mode: bool = os.getenv("DEV_MODE", "false").lower() == "true"
         self.log_level: str = os.getenv("LOG_LEVEL", "INFO")
 
+        # Bot instance (BOT_INSTANCE=raise): one broker profile, own data/logs/session/database
+        self.instance: str = os.getenv("BOT_INSTANCE", "").strip().lower()
+        if self.instance:
+            self._apply_broker_profile(self.instance)
+
         # Paths
-        self.data_dir = Path("data")
-        self.log_dir = Path("logs")
+        self.data_dir = Path("data") / self.instance if self.instance else Path("data")
+        self.log_dir = Path("logs") / self.instance if self.instance else Path("logs")
         self.session_file = self.data_dir / "telegram.session"
 
         # Ensure directories exist
-        self.data_dir.mkdir(exist_ok=True)
-        self.log_dir.mkdir(exist_ok=True)
+        self.data_dir.mkdir(parents=True, exist_ok=True)
+        self.log_dir.mkdir(parents=True, exist_ok=True)
+
+    def _apply_broker_profile(self, key: str) -> None:
+        """MT5 account of this instance from config/brokers.json (+ BROKER_<KEY>_PASSWORD in .env)."""
+        from config.brokers import get_broker, password_var
+
+        profile = get_broker(key)
+        password = os.getenv(password_var(key), "")
+        if not password:
+            raise ValueError(f"Set {password_var(key)} in .env (password of broker '{key}')")
+        self.mt5_path = profile["mt5_path"]
+        self.mt5_portable = bool(profile.get("portable", False))
+        self.mt5_account_mode = profile["mode"]
+        self.mt5_login = str(profile["login"])
+        self.mt5_server = profile["server"]
+        self.mt5_password = password
 
     def validate_telegram_config(self) -> bool:
         """
@@ -257,6 +280,8 @@ class Settings:
             password=self.mt5_password,
             server=self.mt5_server,
             path=self.mt5_path or None,
+            portable=self.mt5_portable,
+            account_mode=self.mt5_account_mode,
             timeout_seconds=self.mt5_timeout_seconds,
             max_connections=self.mt5_max_connections,
             reconnect_delay=self.mt5_reconnect_delay
@@ -270,6 +295,8 @@ class MT5Settings(BaseSettings):
     password: str = Field(..., description="MT5 account password")
     server: str = Field(..., description="MT5 broker server name")
     path: Optional[str] = Field(None, description="MT5 installation path")
+    portable: bool = Field(False, description="Terminal runs in /portable mode (data inside its folder)")
+    account_mode: str = Field("demo", description="Expected account kind: demo or real")
     timeout_seconds: int = Field(60, ge=10, le=300, description="Connection timeout")
     max_connections: int = Field(5, ge=1, le=10, description="Connection pool size")
     reconnect_delay: int = Field(5, ge=1, le=60, description="Base reconnection delay")
@@ -279,6 +306,13 @@ class MT5Settings(BaseSettings):
         "case_sensitive": False
     }
     
+    @field_validator('account_mode')
+    @classmethod
+    def validate_account_mode(cls, v):
+        if v not in ("demo", "real"):
+            raise ValueError(f"MT5_ACCOUNT_MODE must be 'demo' or 'real', got '{v}'")
+        return v
+
     @field_validator('login')
     @classmethod
     def validate_login(cls, v):

@@ -20,6 +20,7 @@ except ImportError:
     mt5 = None
 
 from src.mt5_executor.connection import MT5ConnectionManager, get_connection_manager
+from src.risk_manager.risk_guard import account_mode_name
 from src.utils.decorators import circuit_breaker, log_execution_time, retry_on_failure
 from src.utils.formatters import normalize_price
 
@@ -137,6 +138,8 @@ class PositionManager:
             )
             terminal = mt5.terminal_info()
             return {
+                "login": getattr(account, "login", None),
+                "account_mode": account_mode_name(getattr(account, "trade_mode", None)),
                 "trade_allowed": getattr(terminal, "trade_allowed", None),
                 "balance": Decimal(str(account.balance)),
                 "equity": Decimal(str(account.equity)),

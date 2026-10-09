@@ -4,6 +4,13 @@ from decimal import Decimal
 from typing import Any
 
 
+def account_mode_name(trade_mode: int | None) -> str | None:
+    """MT5 ACCOUNT_TRADE_MODE (0 demo, 1 contest, 2 real) -> "demo" / "real"; None when unknown."""
+    if not isinstance(trade_mode, int):
+        return None
+    return "real" if trade_mode == 2 else "demo"
+
+
 def order_risk(sl_distance: Decimal | None, volume: Decimal, tick_size: Decimal, tick_value: Decimal) -> Decimal | None:
     """Money lost if this order's SL is hit; None when it has no SL or the specs are missing."""
     if sl_distance is None or not tick_size:
@@ -23,6 +30,12 @@ def refusal(snapshot: dict[str, Any] | None, new_risk: Decimal | None, settings:
         return f"kill switch on ({settings.kill_switch_file})"
     if snapshot is None:
         return "account exposure unavailable from MT5"
+    expected_mode = getattr(settings, "mt5_account_mode", None)
+    if expected_mode and snapshot.get("account_mode") not in (None, expected_mode):
+        return f"terminal is on a {snapshot['account_mode'].upper()} account but MT5_ACCOUNT_MODE={expected_mode}"
+    expected_login = str(getattr(settings, "mt5_login", "") or "")
+    if expected_login and snapshot.get("login") not in (None, 0) and str(snapshot["login"]) != expected_login:
+        return f"terminal is on account {snapshot['login']}, expected {expected_login}"
     if snapshot.get("trade_allowed") is False:
         return "AutoTrading is OFF in the MT5 terminal (turn on the Algo Trading button, Ctrl+E)"
 

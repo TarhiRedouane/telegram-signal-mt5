@@ -261,6 +261,7 @@ class HealthMonitor:
                     HealthStatus.HEALTHY,
                     "Connected and responding",
                     details={
+                        "account": status.get("account"),
                         "pool_size": status["pool_size"],
                         "active_connections": status["active_connections"],
                         "healthy_connections": status["healthy_connections"],

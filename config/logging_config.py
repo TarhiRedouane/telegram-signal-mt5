@@ -119,7 +119,7 @@ def setup_logging(log_level: str = "INFO", log_dir: str = "logs", structured: bo
     """
     # Create logs directory if it doesn't exist
     log_path = Path(log_dir)
-    log_path.mkdir(exist_ok=True)
+    log_path.mkdir(parents=True, exist_ok=True)
 
     # Configure root logger
     root_logger = logging.getLogger()

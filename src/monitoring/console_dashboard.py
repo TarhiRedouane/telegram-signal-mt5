@@ -17,6 +17,7 @@ from rich.panel import Panel
 from rich.table import Table
 from rich.text import Text
 
+from config.settings import settings
 from src.monitoring.health_checker import HealthMonitor, HealthStatus
 from src.utils.emergency_stop import emergency_stop_manager
 
@@ -387,7 +388,8 @@ Available commands:
         # MT5 status
         mt5_health = component_healths.get('mt5')
         if mt5_health and mt5_health.status == HealthStatus.HEALTHY:
-            mt5_status = "[green]UP[/green]"
+            account = (mt5_health.details or {}).get("account")
+            mt5_status = f"[green]UP {account}[/green]" if account else "[green]UP[/green]"
         elif mt5_health and (mt5_health.details or {}).get("trade_allowed") is False:
             mt5_status = "[bold red]AUTOTRADING OFF[/bold red]"
         else:
@@ -404,7 +406,8 @@ Available commands:
 
         table.add_row("AI", openai_status)
 
-        return Panel(table, title="[bold cyan]CONNECTIONS[/bold cyan]", border_style="cyan")
+        title = f"CONNECTIONS [{settings.instance}]" if settings.instance else "CONNECTIONS"
+        return Panel(table, title=f"[bold cyan]{title}[/bold cyan]", border_style="cyan")
 
     def _build_signals_panel(self) -> Panel:
         """Build the signals statistics panel."""

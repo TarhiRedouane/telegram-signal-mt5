@@ -24,6 +24,7 @@ from config.logging_config import (
     set_service_context,
 )
 from config.settings import settings
+from src.risk_manager.risk_guard import account_mode_name
 from src.signal_parser.symbol_policy import symbol_policy
 from src.utils.circuit_breaker import circuit_breaker
 
@@ -141,7 +142,15 @@ class MT5Connection:
         self.error_count = 0
         self.logger = get_contextual_logger(f"{__name__}.Connection{connection_id}")
 
-    async def connect(self, login: int, password: str, server: str, path: str = None) -> bool:
+    async def connect(
+        self,
+        login: int,
+        password: str,
+        server: str,
+        path: str = None,
+        portable: bool = False,
+        account_mode: str | None = None,
+    ) -> bool:
         """
         Connect to MT5 terminal.
 
@@ -150,6 +159,8 @@ class MT5Connection:
             password: MT5 account password
             server: MT5 broker server
             path: Optional MT5 terminal path
+            portable: terminal runs in /portable mode (its data lives in its own folder)
+            account_mode: "demo" or "real"; refuse a terminal logged in to the other kind
 
         Returns:
             True if connection successful
@@ -159,7 +170,9 @@ class MT5Connection:
 
         try:
             # Initialize MT5 terminal
-            if path:
+            if path and portable:
+                initialized = mt5.initialize(path, portable=True)
+            elif path:
                 initialized = mt5.initialize(path)
             else:
                 initialized = mt5.initialize()
@@ -190,6 +203,20 @@ class MT5Connection:
                 and existing_account.server.lower() == server.lower()
             ):
                 authorized = True
+            elif (
+                existing_account
+                and isinstance(existing_account.login, int)
+                and existing_account.login
+                and existing_account.login != login
+            ):
+                # Never switch a terminal that is on another account (e.g. a manual live terminal)
+                self.logger.error(
+                    f"Terminal{' at ' + path if path else ''} is logged in to account "
+                    f"{existing_account.login}, expected {login}: log in to the right account in that "
+                    "terminal first (or fix MT5_PATH). Refusing to switch accounts."
+                )
+                mt5.shutdown()
+                return False
             else:
                 authorized = mt5.login(login, password, server)
             if not authorized:
@@ -206,10 +233,24 @@ class MT5Connection:
                 mt5.shutdown()
                 return False
 
+            account = mt5.account_info()
+            actual_mode = account_mode_name(getattr(account, "trade_mode", None))
+            if account_mode and actual_mode and actual_mode != account_mode:
+                self.logger.error(
+                    f"Account {login} is a {actual_mode.upper()} account but MT5_ACCOUNT_MODE={account_mode}: "
+                    "refusing to connect"
+                )
+                mt5.shutdown()
+                return False
+
             self.connected = True
             self.connection_time = datetime.now(UTC)
             self.error_count = 0
             self.last_used = datetime.now(UTC)
+            self.logger.info(
+                f"MT5 connected: {(actual_mode or 'unknown').upper()} account {login} @ {server}"
+                f"{' terminal ' + path if path else ''}"
+            )
 
             log_mt5_operation(
                 self.logger,
@@ -323,6 +364,8 @@ class MT5ConnectionManager:
         self.password = mt5_settings.password
         self.server = mt5_settings.server
         self.path = mt5_settings.path
+        self.portable = mt5_settings.portable
+        self.account_mode = mt5_settings.account_mode
         self.timeout_seconds = mt5_settings.timeout_seconds
         self.max_connections = max_connections or mt5_settings.max_connections
         self.reconnect_delay = mt5_settings.reconnect_delay
@@ -358,7 +401,9 @@ class MT5ConnectionManager:
             session = MT5Connection(self.next_connection_id)
             self.next_connection_id += 1
 
-            if await session.connect(self.login, self.password, self.server, self.path):
+            if await session.connect(
+                self.login, self.password, self.server, self.path, self.portable, self.account_mode
+            ):
                 self._session = session
                 self.connections = {session.id: session}
                 for _ in range(self.max_connections):
@@ -481,7 +526,7 @@ class MT5ConnectionManager:
                         await asyncio.sleep(delay)
 
                     success = await connection.connect(
-                        self.login, self.password, self.server, self.path
+                        self.login, self.password, self.server, self.path, self.portable, self.account_mode
                     )
                     if success:
                         self.logger.info(f"Successfully reconnected connection {connection.id}")
@@ -834,6 +879,9 @@ class MT5ConnectionManager:
         # Terminal "Algo Trading" button: readable via the API but only switchable by hand
         terminal = mt5.terminal_info() if mt5 is not None and health_status["active_connections"] else None
         health_status["trade_allowed"] = getattr(terminal, "trade_allowed", None)
+        account = mt5.account_info() if terminal is not None else None
+        mode = account_mode_name(getattr(account, "trade_mode", None))
+        health_status["account"] = f"{mode.upper()} {account.login}" if mode and account else None
         return health_status
 
     def _build_price_lookup_candidates(self, symbol: str) -> list[str]:
@@ -1164,7 +1212,7 @@ class MT5ConnectionManager:
                 else:
                     test_connection = MT5Connection(9999)  # Temporary connection ID
                     connection_success = await test_connection.connect(
-                        self.login, self.password, self.server, self.path
+                        self.login, self.password, self.server, self.path, self.portable, self.account_mode
                     )
                     await test_connection.disconnect()
 
