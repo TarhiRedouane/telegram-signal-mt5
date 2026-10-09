@@ -10,9 +10,10 @@ from config.settings import settings
 from main import ApplicationManager
 
 
-def test_start_uses_current_python_executable(monkeypatch):
+def test_start_uses_current_python_executable(monkeypatch, tmp_path):
     """Starting the app should use the current venv Python interpreter instead of a generic shell `python`."""
     manager = cli.SignalEAManager()
+    manager.pid_file = tmp_path / "signal_ea.pid"  # never write into the real data/ folder
     monkeypatch.setattr(manager, "is_running", lambda: False)
 
     with patch("cli.subprocess.Popen") as mock_popen:

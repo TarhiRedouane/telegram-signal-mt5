@@ -712,3 +712,30 @@ async def test_main_complete_signal_with_candle_close_sl_goes_through_setup():
     await app._on_telegram_message({**meta, "raw_text": "SELL GOLD 4149\nSL 4165 clôture M30\nTP 4115"})
     app._start_setup.assert_called_once()
     app._handle_parsed_signal.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_single_leg_with_candle_close_invalidation_keeps_being_watched_after_idle(monkeypatch):
+    import asyncio
+    from types import SimpleNamespace
+
+    from config.settings import settings
+    from main import ApplicationManager
+
+    monkeypatch.setattr(settings, "setup_price_poll_seconds", 0.01)
+    for close_tf, kept in ((30, True), (None, False)):
+        app = ApplicationManager()
+        app._track_setup_legs = AsyncMock(return_value=False)
+        app._check_close_invalidation = AsyncMock(return_value=False)
+        agg, setup = _run(["SELL GOLD 4189\nTP 4150"])
+        app._setup_aggregator = agg
+        setup.set_sl(Decimal("4205"), close_tf)
+        setup.positions.append(SimpleNamespace(mt5_ticket=1, open_price=4190.0))
+        setup.first_fill_at = datetime.now().astimezone()
+        setup.last_update = datetime.now().astimezone() - timedelta(hours=1)  # idle long ago
+        task = asyncio.create_task(app._watch_setup(setup))
+        await asyncio.sleep(0.1)
+        assert (agg.get(setup.chat_id) is setup) is kept, close_tf
+        task.cancel()
+        await asyncio.gather(task, return_exceptions=True)
+    app._check_close_invalidation.assert_not_awaited()  # no invalidation -> no candle checks

@@ -1,7 +1,7 @@
 {
   "raise": {
     "label": "Raise demo",
-    "mt5_path": "C:\MetaTrader5_Robot_Raise\terminal64.exe",
+    "mt5_path": "C:\\MetaTrader5_Robot_Raise\\terminal64.exe",
     "portable": true,
     "mode": "demo",
     "login": 12345678,
@@ -9,7 +9,7 @@
   },
   "vt": {
     "label": "VT Markets demo",
-    "mt5_path": "C:\MetaTrader5_Robot_VT\terminal64.exe",
+    "mt5_path": "C:\\MetaTrader5_Robot_VT\\terminal64.exe",
     "portable": true,
     "mode": "demo",
     "login": 87654321,

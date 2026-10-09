@@ -921,7 +921,9 @@ class ApplicationManager:
                     if not setup.positions:
                         self._setup_aggregator.drop(setup, "expired before entry")
                         return
-                    if setup.be_done or all_closed or len(setup.positions) <= 1:
+                    # A candle-close invalidation is only enforced while the setup is watched
+                    watch_close = setup.close_invalidation is not None
+                    if setup.be_done or all_closed or (len(setup.positions) <= 1 and not watch_close):
                         self._setup_aggregator.drop(setup, "idle timeout after fill")
                         return
                     # Keep watching open legs for TP1 -> break-even; stop waiting for unfilled legs.
