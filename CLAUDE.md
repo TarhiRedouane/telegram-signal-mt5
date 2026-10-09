@@ -78,9 +78,9 @@ python scripts/migrate_database.py      # Alembic: create schema
 python scripts/benchmark_db.py          # perf test
 
 # Tests
-pytest                                  # full suite (37 tests)
-pytest tests/unit/                      # unit only (~25 tests)
-pytest tests/integration/               # integration only (~8 tests)
+pytest                                  # full suite (~700 tests)
+pytest tests/unit/                      # unit only (~630 tests, ~1 min)
+pytest tests/integration/               # integration only (~70 tests)
 pytest tests/unit/test_correlator.py::test_name  # single test
 pytest --cov=src                        # coverage report
 
