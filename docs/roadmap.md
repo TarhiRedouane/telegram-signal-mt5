@@ -25,8 +25,8 @@ Known gaps:
   (`test_telegram_callback_correlates_before_attempting_new_signal_parse`, two in `test_llm_parser.py`).
 - Edits to already-executed signals are ignored (logged only).
 
-Order of work: **1 → 4 → 3 → 6 → 8 → 9**, then **18** (channels per broker) → **16** (control page),
-the rest in any order.
+Order of work: **1 (done) → 5 (test suite health) → 19 (architecture review/simplify) → 4 → 3 → 6 →
+8 → 9**, then **18** (channels per broker) → **16** (control page), the rest in any order.
 Each step ships on its own.
 
 ---
@@ -161,6 +161,23 @@ switch work from it; closing the page changes nothing for running bots.
       never attach without a terminal path, never switch a terminal's account, demo/real mode checked
       at connect and before every order.
 - [ ] MT4 (parked): no Python API, needs an EA bridge or a cloud API.
+
+### 19. Architecture review and simplification
+`main.py` has grown to ~1,660 lines / 42 methods (Telegram routing, setups, zones, ladder legs,
+candle-close invalidation, sizing, risk guard, MT5 execution, polling, shutdown). Other big files:
+`connection.py` 1,426, `repository.py` 1,373, `position_manager.py` 1,331. Review before adding
+steps 3/16/18, which all touch `main.py`.
+- [ ] Review (architect / tech lead): current structure, responsibilities per file, dead code,
+      duplicated logic, unused dependencies (APScheduler, pendulum, aiohttp, aiofiles), modules that
+      exist but are bypassed (`close_processor`, `alert_manager`, `queue_manager`, `models`).
+- [ ] Target structure, e.g. split `main.py` into: app wiring/lifecycle, message router,
+      setup/zone orchestration (ladder, legs, invalidation), order execution (sizing + risk guard + MT5).
+- [ ] Refactor in small stories, behaviour unchanged: move code, no new features; each story keeps
+      the full unit suite green (needs step 5 first: suite must finish and be green).
+- [ ] Delete dead code and unused dependencies found by the review.
+
+Done when: no file over ~600 lines without a reason, `main.py` only wires components, all tests green,
+demo run identical to before (same log decisions on a replayed message set).
 
 ### 18. Telegram channels per broker
 Each broker instance listens only to the channels configured for it, e.g. VT → A, B, C;

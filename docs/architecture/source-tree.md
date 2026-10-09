@@ -1,134 +1,96 @@
 # Source Tree
 
+Actual layout (updated 2026-10-09). Runtime data and logs are per broker instance — see the end.
+
 ```plaintext
-telegram-signal-ea/
-├── .env.example                    # Environment variables template
-├── .gitignore                      # Git ignore file
-├── README.md                       # Project documentation
-├── requirements.txt                # Python dependencies
-├── setup.py                        # Package setup file
-├── pyproject.toml                  # Modern Python project config
-├── pytest.ini                      # Pytest configuration
-├── .ruff.toml                      # Ruff linter configuration
-├── mypy.ini                        # Type checking configuration
+telegram-signal-mt5/
+├── main.py                         # Async app: Telegram → parse → setups/zones → risk guard → MT5
+├── cli.py                          # start/stop/status; broker menu, one process per broker
+├── .env / .env.example             # Secrets + parameters (.env never committed)
+├── pyproject.toml, .ruff.toml, mypy.ini, pytest.ini, requirements.txt
 │
-├── config/                         # Configuration files
-│   ├── __init__.py
-│   ├── settings.py                 # Settings management with pydantic
-│   ├── logging_config.py           # Logging configuration
-│   └── prompts/                    # LLM prompt templates
-│       ├── signal_parser.txt       # gpt-5-mini parsing prompt
-│       └── context_analyzer.txt    # Context correlation prompt
+├── config/
+│   ├── settings.py                 # All settings from .env; BOT_INSTANCE → broker profile + per-instance paths
+│   ├── brokers.py                  # Broker profiles: load/validate, menu selection, password env var name
+│   ├── brokers.example.json        # Template; real config/brokers.json is gitignored
+│   ├── logging_config.py           # JSON logs, rotating files (log dir per instance)
+│   ├── openai_config.py            # LLM client config
+│   └── prompts/                    # signal_parser.txt, context_analyzer.txt
 │
-├── src/                            # Main source code
-│   ├── __init__.py
+├── src/
+│   ├── telegram_client/            # Telethon wrapper, auth/session, message handler, rate limiter
+│   │   ├── client.py, auth_manager.py, session_manager.py
+│   │   ├── message_handler.py, rate_limiter.py, errors.py
 │   │
-│   ├── telegram_client/            # Telegram integration module
-│   │   ├── __init__.py
-│   │   ├── client.py               # Telethon client wrapper
-│   │   ├── session_manager.py      # Session authentication
-│   │   ├── message_handler.py      # Event handlers
-│   │   └── rate_limiter.py         # Human-like delays
+│   ├── signal_parser/
+│   │   ├── __init__.py             # ParsedSignal, ParsedAction, ValidationResult
+│   │   ├── patterns.py             # Regex (French/English): actions, SL/TP lines, zones, follow-ups,
+│   │   │                           #   candle-close timeframe, SL range, candle-close remark
+│   │   ├── regex_parser.py         # Fast path (combined + component parsing, multi-TP, OBJECTIF)
+│   │   ├── llm_parser.py           # gpt-5-mini fallback (circuit breaker, cache)
+│   │   ├── context_analyzer.py     # LLM analysis of correlated follow-ups
+│   │   └── symbol_policy.py        # Asset-specific values ONLY here (tolerances, buffers, aliases)
 │   │
-│   ├── signal_parser/              # Signal parsing module
-│   │   ├── __init__.py
-│   │   ├── parser.py               # Main parser orchestrator
-│   │   ├── regex_parser.py         # Regex pattern matching
-│   │   ├── llm_parser.py           # gpt-5-mini integration
-│   │   ├── validator.py            # Signal validation
-│   │   └── patterns.py             # French signal patterns
+│   ├── correlation_engine/
+│   │   ├── correlator.py, reply_tracer.py, time_matcher.py   # Link follow-ups to executed signals
+│   │   ├── setup_aggregator.py     # Multi-message setups (PendingSetup), multi-TP ladder legs,
+│   │   │                           #   zone watches (ZoneWatch), follow-up extraction
+│   │   └── rejection_detector.py   # Pure: zone sweep → reclaim → confirmation on M1/M3 candles
 │   │
-│   ├── mt5_executor/               # MT5 trading module
-│   │   ├── __init__.py
-│   │   ├── executor.py             # Order execution
-│   │   ├── connection.py           # MT5 connection manager
-│   │   ├── position_manager.py     # Position operations
-│   │   └── symbol_specs.py         # GOLD specifications
+│   ├── risk_manager/
+│   │   ├── risk_guard.py           # Account-wide checks before EVERY order (kill switch, legs,
+│   │   │                           #   open risk, daily loss, AutoTrading, account mode/login)
+│   │   ├── position_sizer.py       # Risk-based lot per leg
+│   │   ├── break_even.py, position_modifier.py, close_processor.py, context_processor.py
 │   │
-│   ├── correlation_engine/         # Message correlation module
-│   │   ├── __init__.py
-│   │   ├── correlator.py           # Main correlation logic
-│   │   ├── reply_tracer.py         # Reply chain analysis
-│   │   └── time_matcher.py         # Time-based matching
+│   ├── mt5_executor/
+│   │   ├── connection.py           # Single MT5 session per process; terminal path required,
+│   │   │                           #   never switches accounts, demo/real check; prices, candles
+│   │   ├── position_manager.py     # Orders, SL/TP modify, close, sizing inputs, risk snapshot
+│   │   └── symbol_specs.py
 │   │
-│   ├── risk_manager/               # Risk management module
-│   │   ├── __init__.py
-│   │   ├── break_even.py           # BE automation
-│   │   ├── position_modifier.py    # SL/TP modifications
-│   │   └── risk_rules.py           # Risk validation
+│   ├── database/                   # SQLAlchemy async + repository pattern (only DB access point)
+│   │   ├── __init__.py             # get_database_url(): data/<instance>/signal_ea.db
+│   │   ├── models.py, repository.py, cache.py (LLM cache), migrations/
 │   │
-│   ├── database/                   # Database layer
-│   │   ├── __init__.py
-│   │   ├── models.py               # SQLAlchemy models
-│   │   ├── repository.py           # Repository pattern
-│   │   ├── migrations/             # Alembic migrations
-│   │   │   ├── alembic.ini
-│   │   │   ├── env.py
-│   │   │   └── versions/
-│   │   └── cache.py                # LLM response cache
-│   │
-│   ├── queue_manager/              # Queue management module
-│   │   ├── __init__.py
-│   │   ├── message_queue.py        # Async queue implementation
-│   │   └── priority_queue.py       # Priority message handling
-│   │
-│   ├── monitoring/                 # Health and monitoring
-│   │   ├── __init__.py
-│   │   ├── health_checker.py       # Component health checks
-│   │   ├── metrics_collector.py    # System metrics
-│   │   ├── console_dashboard.py    # Rich console UI
-│   │   └── alert_manager.py        # Error alerting
-│   │
-│   └── utils/                      # Utility functions
-│       ├── __init__.py
-│       ├── async_helpers.py        # Async utilities
-│       ├── decorators.py           # Retry, circuit breaker
-│       ├── formatters.py           # Price formatting
-│       └── constants.py            # System constants
+│   ├── monitoring/                 # health_checker.py, console_dashboard.py (Rich TUI),
+│   │                               #   metrics_collector.py, alert_manager.py (not wired yet)
+│   ├── utils/                      # circuit_breaker.py, decorators.py, formatters.py,
+│   │                               #   currency_config.py, emergency_stop.py, rate_limiter.py
+│   ├── models/, queue_manager/     # Placeholders
 │
-├── main.py                         # Application entry point
-├── cli.py                          # CLI commands (start, stop, status)
+├── scripts/
+│   ├── replay_zone.py              # Replay a zone hint on MT5 history (rejection detector)
+│   ├── migrate_database.py, benchmark_db.py
 │
-├── tests/                          # Test suite
-│   ├── __init__.py
-│   ├── conftest.py                 # Pytest fixtures
-│   │
-│   ├── unit/                       # Unit tests
-│   │   ├── test_regex_parser.py
-│   │   ├── test_signal_validator.py
-│   │   ├── test_correlator.py
-│   │   ├── test_break_even.py
-│   │   └── test_repository.py
-│   │
-│   ├── integration/                # Integration tests
-│   │   ├── test_telegram_flow.py
-│   │   ├── test_parsing_pipeline.py
-│   │   ├── test_mt5_execution.py
-│   │   └── test_correlation_flow.py
-│   │
-│   └── fixtures/                   # Test data
-│       ├── sample_signals.json
-│       ├── mock_positions.json
-│       └── telegram_messages.txt
+├── tests/
+│   ├── unit/test_<module>.py       # e.g. test_setup_aggregator.py, test_risk_guard.py,
+│   │                               #   test_broker_instances.py, test_rejection_detector.py
+│   ├── integration/test_<feature>_flow.py
+│   └── conftest.py, fixtures/
 │
-├── scripts/                        # Utility scripts
-│   ├── setup_session.py            # Initialize Telegram session
-│   ├── test_mt5_connection.py      # Verify MT5 connectivity
-│   ├── migrate_database.py         # Run migrations
-│   └── export_stats.py             # Export trading statistics
-│
-├── logs/                           # Log files (gitignored)
-│   ├── app.log
-│   ├── error.log
-│   └── trades.log
-│
-├── data/                           # Data directory (gitignored)
-│   ├── signal_ea.db                # SQLite database
-│   └── telegram.session            # Telethon session file
-│
-└── docs/                           # Documentation
-    ├── architecture.md             # This document
-    ├── prd.md                      # Product requirements
-    ├── deployment.md               # Deployment guide
-    └── api_examples.md             # External API examples
+└── docs/
+    ├── roadmap.md                  # Current plan (steps, order of work)
+    ├── prd/, architecture/         # Sharded PRD and architecture (BMad)
+    └── stories/                    # BMad stories
+```
+
+## Runtime data (gitignored)
+
+One folder per broker instance (`BOT_INSTANCE`, key from `config/brokers.json`). Without an instance
+the same files sit directly in `data/` and `logs/`.
+
+```plaintext
+data/
+├── llm_cache.db                    # Shared by all instances
+├── STOP_TRADING                    # Kill switch (create to block new entries on all instances)
+└── <broker>/
+    ├── signal_ea.db                # Signals, positions
+    ├── telegram.session            # Telegram login of this instance
+    ├── signal_ea.pid               # While started via cli.py
+    └── state/                      # Health/metrics snapshots
+logs/<broker>/app.log, error.log, trades.log
+
+C:\MetaTrader5_Robot_<Broker>\     # Robot MT5 terminal, started with /portable
+└── logs\<date>.log                 # MT5 journal (orders actually executed)
 ```

@@ -1,34 +1,33 @@
 # Tech Stack
 
-## Cloud Infrastructure
+## Infrastructure
 
-- **Provider:** Local/On-Premise initially, VPS-ready
-- **Key Services:** N/A for MVP (self-hosted)
-- **Deployment Regions:** Europe (when moving to VPS)
+- **Runs on:** local Windows PC (MetaTrader 5 terminals are Windows apps); VPS-ready later
+- **Process model:** one bot process per broker instance, started by `cli.py`; each attaches to its own
+  portable MT5 terminal. The MetaTrader5 Python API allows one terminal per process.
 
 ## Technology Stack Table
 
-| Category | Technology | Version | Purpose | Rationale |
-|----------|-----------|---------|---------|-----------|
-| **Language** | Python | 3.12.7 | Primary development language | LTS version, stable, excellent asyncio support |
-| **Async Runtime** | asyncio | Built-in | Concurrent I/O operations | Native Python async, no additional dependencies |
-| **Telegram Client** | Telethon | 1.40.0 | MTProto client library | User session support, mature, well-documented |
-| **Trading Platform** | MetaTrader5 | 5.0.5200 | MT5 Python integration | Official package, stable API |
-| **Database** | SQLite | 3.45.0 | Persistent storage | Simple, file-based, sufficient for MVP load |
-| **Async DB** | aiosqlite | 0.20.0 | Async SQLite operations | Non-blocking database access |
-| **ORM/Query Builder** | SQLAlchemy | 2.0.43 | Database abstraction | Latest 2.0 series, async support, migration management |
-| **LLM Integration** | openai | 1.99.1 | gpt-5-mini API client | Official SDK, very active development |
-| **Configuration** | python-dotenv | 1.0.1 | Environment management | Simple, secure credential handling |
-| **Logging** | Python logging | Built-in | Application logging | Standard, rotating file handlers included |
-| **Testing** | pytest | 8.4.1 | Unit/integration testing | Powerful fixtures, async support |
-| **Test Doubles** | pytest-asyncio | 0.25.0 | Async test support | Seamless async testing |
-| **Mocking** | unittest.mock | Built-in | Test doubles | Standard library, no deps |
-| **Type Checking** | mypy | 1.13.0 | Static type analysis | Catch errors early, better IDE support |
-| **Code Formatting** | black | 24.10.0 | Code style enforcement | Consistent formatting |
-| **Linting** | ruff | 0.8.4 | Fast Python linter | Replaces flake8/pylint, much faster |
-| **Task Queue** | asyncio.Queue | Built-in | In-memory message queuing | Simple, sufficient for MVP |
-| **Scheduling** | APScheduler | 3.10.4 | Periodic tasks | Position sync, health checks |
-| **JSON Parsing** | orjson | 3.10.12 | Fast JSON operations | 3x faster than standard json |
-| **Datetime** | pendulum | 3.0.0 | Timezone-aware dates | Better timezone handling for global markets |
-| **HTTP Client** | aiohttp | 3.11.11 | Async HTTP for webhooks | If needed for monitoring endpoints |
-| **Process Manager** | supervisor | 4.2.5 | Process monitoring | Auto-restart on crashes (Linux/VPS) |
+Versions from `requirements.txt`.
+
+| Category | Technology | Version | Used for |
+|----------|-----------|---------|----------|
+| **Language** | Python | 3.12 | Everything |
+| **Async Runtime** | asyncio | Built-in | Telegram events, price polling, watchers |
+| **Telegram Client** | Telethon | 1.40.0 | User session, channel messages and edits |
+| **Trading Platform** | MetaTrader5 | 5.0.5200 | Orders, positions, ticks, candles, account/terminal info |
+| **Database** | SQLite + aiosqlite | 0.20.0 | Signals, positions, LLM cache (one DB per instance) |
+| **ORM** | SQLAlchemy | 2.0.43 | Async ORM behind the repository |
+| **Migrations** | alembic | 1.15.2 | Schema migrations |
+| **LLM** | openai | 1.99.1 | gpt-5-mini fallback parsing and context analysis |
+| **Configuration** | python-dotenv, pydantic, pydantic-settings | 1.0.1 / 2.10.6 / 2.6.1 | `.env` loading, MT5 settings validation |
+| **Broker profiles** | JSON (`config/brokers.json`) | — | One MT5 account/terminal per instance |
+| **JSON** | orjson | 3.10.12 | LLM response parsing |
+| **Console UI** | rich | 13.9.4 | Live dashboard per instance |
+| **System metrics / processes** | psutil | 6.1.0 | Dashboard metrics, `cli.py` process checks |
+| **Logging** | Python logging | Built-in | JSON logs, rotating files per instance |
+| **Testing** | pytest, pytest-asyncio, pytest-mock | 8.4.1 / 0.25.0 / 3.14.0 | Unit and integration tests |
+| **Quality** | black, ruff, mypy | 24.10.0 / 0.8.4 / 1.13.0 | Format, lint, types |
+
+Installed but not used by the code today: APScheduler, pendulum, aiohttp, aiofiles (candidates for
+removal, or for the control page in roadmap step 16).
