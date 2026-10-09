@@ -23,6 +23,8 @@ def refusal(snapshot: dict[str, Any] | None, new_risk: Decimal | None, settings:
         return f"kill switch on ({settings.kill_switch_file})"
     if snapshot is None:
         return "account exposure unavailable from MT5"
+    if snapshot.get("trade_allowed") is False:
+        return "AutoTrading is OFF in the MT5 terminal (turn on the Algo Trading button, Ctrl+E)"
 
     balance = snapshot["balance"]
     if balance <= 0:

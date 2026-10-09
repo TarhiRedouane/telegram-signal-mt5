@@ -69,6 +69,7 @@ class HealthMonitor:
         # Component references (set by main application)
         self.telegram_client = None
         self.mt5_connection = None  # For future stories
+        self._mt5_trade_allowed: bool | None = None  # last AutoTrading state, to log only changes
         self.openai_client = None   # For future stories
 
         self.logger.info(f"Health monitor initialized with {check_interval}s interval")
@@ -236,7 +237,25 @@ class HealthMonitor:
         try:
             status = await self.mt5_connection.check_connection_health()
 
-            if status["healthy_connections"] > 0:
+            trade_allowed = status.get("trade_allowed")
+            if trade_allowed is not None and trade_allowed != self._mt5_trade_allowed:
+                if trade_allowed:
+                    self.logger.info("MT5 AutoTrading is ON: orders can be sent")
+                else:
+                    self.logger.error(
+                        "MT5 AutoTrading is OFF in the terminal: every order will be refused. "
+                        "Turn on the Algo Trading button (Ctrl+E)"
+                    )
+                self._mt5_trade_allowed = trade_allowed
+
+            if status["healthy_connections"] > 0 and trade_allowed is False:
+                self._update_component_health(
+                    "mt5",
+                    HealthStatus.DEGRADED,
+                    "Connected but AutoTrading is OFF in the terminal",
+                    details={"trade_allowed": False},
+                )
+            elif status["healthy_connections"] > 0:
                 self._update_component_health(
                     "mt5",
                     HealthStatus.HEALTHY,

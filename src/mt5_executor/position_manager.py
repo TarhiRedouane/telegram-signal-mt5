@@ -135,7 +135,9 @@ class PositionManager:
                  for d in deals if day_start is not None and d.time >= day_start and d.type in trades),
                 Decimal(0),
             )
+            terminal = mt5.terminal_info()
             return {
+                "trade_allowed": getattr(terminal, "trade_allowed", None),
                 "balance": Decimal(str(account.balance)),
                 "equity": Decimal(str(account.equity)),
                 "open_legs": len(positions),

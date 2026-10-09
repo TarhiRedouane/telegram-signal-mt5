@@ -388,6 +388,8 @@ Available commands:
         mt5_health = component_healths.get('mt5')
         if mt5_health and mt5_health.status == HealthStatus.HEALTHY:
             mt5_status = "[green]UP[/green]"
+        elif mt5_health and (mt5_health.details or {}).get("trade_allowed") is False:
+            mt5_status = "[bold red]AUTOTRADING OFF[/bold red]"
         else:
             mt5_status = "[yellow]DOWN[/yellow]"
 

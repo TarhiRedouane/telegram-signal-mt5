@@ -831,6 +831,9 @@ class MT5ConnectionManager:
             if health.is_healthy:
                 health_status["healthy_connections"] += 1
 
+        # Terminal "Algo Trading" button: readable via the API but only switchable by hand
+        terminal = mt5.terminal_info() if mt5 is not None and health_status["active_connections"] else None
+        health_status["trade_allowed"] = getattr(terminal, "trade_allowed", None)
         return health_status
 
     def _build_price_lookup_candidates(self, symbol: str) -> list[str]:

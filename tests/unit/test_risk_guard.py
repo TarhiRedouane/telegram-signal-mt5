@@ -113,6 +113,7 @@ async def test_snapshot_sums_sl_risk_and_only_today_server_deals(monkeypatch):
     fake = SimpleNamespace(
         POSITION_TYPE_BUY=0, DEAL_TYPE_BUY=0, DEAL_TYPE_SELL=1,
         account_info=lambda: SimpleNamespace(balance=10000.0, equity=9950.0),
+        terminal_info=lambda: SimpleNamespace(trade_allowed=True),
         symbol_info=lambda _: gold,
         symbol_info_tick=lambda _: SimpleNamespace(time=day + 3600),
         positions_get=lambda: [
@@ -136,3 +137,32 @@ async def test_snapshot_sums_sl_risk_and_only_today_server_deals(monkeypatch):
     snap = await manager.get_risk_snapshot("GOLD")
     assert snap["open_legs"] == 3 and snap["unprotected"] == 1
     assert snap["open_risk"] == D("100") and snap["realized_today"] == D("-82")
+    assert snap["trade_allowed"] is True
+
+
+def test_autotrading_off_refuses_with_clear_reason(tmp_path):
+    reason = refusal(_snapshot(trade_allowed=False), D("1"), _settings(tmp_path))
+    assert "AutoTrading is OFF" in reason
+    assert refusal(_snapshot(trade_allowed=True), D("1"), _settings(tmp_path)) is None
+
+
+@pytest.mark.asyncio
+async def test_health_check_flags_autotrading_off_once_and_dashboard_shows_it(caplog):
+    from src.monitoring.console_dashboard import ConsoleDashboard
+    from src.monitoring.health_checker import HealthMonitor, HealthStatus
+
+    monitor = HealthMonitor()
+    status = {"pool_size": 1, "active_connections": 1, "healthy_connections": 1, "trade_allowed": False}
+    monitor.set_mt5_connection(SimpleNamespace(check_connection_health=AsyncMock(return_value=status)))
+
+    await monitor._check_mt5_health()
+    await monitor._check_mt5_health()
+    health = monitor.get_component_health("mt5")
+    assert health.status == HealthStatus.DEGRADED and health.details["trade_allowed"] is False
+    assert sum(r.levelname == "ERROR" and "AutoTrading is OFF" in r.message for r in caplog.records) == 1
+    panel = ConsoleDashboard(monitor)._build_connections_panel()
+    assert "AUTOTRADING OFF" in str(panel.renderable.columns[1]._cells)
+
+    status["trade_allowed"] = True
+    await monitor._check_mt5_health()
+    assert monitor.get_component_health("mt5").status == HealthStatus.HEALTHY
