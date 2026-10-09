@@ -25,7 +25,9 @@ Known gaps:
   (`test_telegram_callback_correlates_before_attempting_new_signal_parse`, two in `test_llm_parser.py`).
 - Edits to already-executed signals are ignored (logged only).
 
-Order of work: **1 → 4 → 3 → 6 → 8 → 9**, the rest in any order. Each step ships on its own.
+Order of work: **1 → 4 → 3 → 6 → 8 → 9**, then **18** (channels per broker) → **16** (control page),
+the rest in any order.
+Each step ships on its own.
 
 ---
 
@@ -131,13 +133,52 @@ Done when: a rule change can be compared before/after on the last N weeks of rea
 ### 15. Daily report
 - [ ] Evening Telegram DM: trades, profit, R, open risk, tomorrow's active zones.
 
-### 16. Live status page
-- [ ] Open setups, zone phases, legs, risk used vs limits on one screen.
+### 16. Control page (one screen for all brokers)
+Needs first: step 3 (setups/zones persisted, so another process can read them), step 6 (trade
+journal), step 18 (channels per broker). Trading never runs inside the page: bot processes stay
+headless 24/7; the page only reads their data and sends commands, so a page crash stops nothing.
 
-### 17. Multi-account and MT4 (parked)
-- [ ] Revisit after step 3. Constraints found: MetaTrader5 Python lib = one terminal per process;
-      MT4 has no Python API (needs an EA bridge or a cloud API); DB needs an account column and
-      per-account execution claims.
+v1, read-only:
+- [ ] Local web page (`python cli.py dashboard`, http://127.0.0.1 only), no desktop GUI framework.
+- [ ] Per broker: running/stopped, account (`DEMO 5011840`), AutoTrading on/off, channels.
+- [ ] Open positions, pending setups and zone phases, legs, risk used vs limits, today's P&L.
+- [ ] Last messages per channel with the decision taken (traded / setup / zone / ignored + reason).
+- [ ] Reads `data/<broker>/` (DB + state) and `config/brokers.json`; no new store.
+
+v2, controls:
+- [ ] Start/stop a broker (same code as `cli.py start/stop`), kill switch on/off.
+- [ ] Edit channels per broker and non-secret profile fields; writes `config/brokers.json`.
+- [ ] Never shows or edits passwords/API keys (stay in `.env`); listens on localhost only. Remote
+      access (phone, VPS) only behind an authenticated tunnel/VPN, decided when needed.
+
+Done when: with two brokers running, everything above is visible on one page and start/stop + kill
+switch work from it; closing the page changes nothing for running bots.
+
+### 17. Multi-account and MT4
+- [x] Several MT5 brokers side by side (2026-10-09): profiles in `config/brokers.json`,
+      `python cli.py start` menu, one bot process per broker (`BOT_INSTANCE`) with its own portable
+      terminal, `data/<broker>/` (DB, Telegram session, state) and `logs/<broker>/`. Account guards:
+      never attach without a terminal path, never switch a terminal's account, demo/real mode checked
+      at connect and before every order.
+- [ ] MT4 (parked): no Python API, needs an EA bridge or a cloud API.
+
+### 18. Telegram channels per broker
+Each broker instance listens only to the channels configured for it, e.g. VT → A, B, C;
+Raise → A, B; another broker → A only, or all of them.
+- [ ] Optional `"channels"` list per profile in `config/brokers.json` (chat ids, like `TELEGRAM_GROUPS`).
+      No list = today's behaviour: every channel in `TELEGRAM_GROUPS`.
+- [ ] Optional `"channels": "all"` = every channel in `TELEGRAM_GROUPS` (explicit form of the default).
+- [ ] Validation at startup: a profile channel missing from `TELEGRAM_GROUPS` is reported (or allowed on
+      its own; decide when implementing), unknown/invalid ids stop the instance with a clear error.
+- [ ] One place decides: `settings.get_telegram_groups()` returns the instance's list, so the live
+      listener, the polling fallback (`main._poll_telegram_groups`) and group validation
+      (`telegram_client/client.py`) all follow it without separate changes.
+- [ ] `cli.py start` menu shows each broker's channels next to its account
+      (`1) Raise demo [DEMO 5011840] channels: A, B`); dashboard shows them too.
+- [ ] Optional channel names (`{"id": -100…, "name": "LEB VIP"}`) for readable logs and menu.
+
+Done when: two instances with different channel lists run side by side, a signal posted in a channel
+only one of them follows is executed by that instance only (test with mocked messages + demo run).
 
 ---
 
