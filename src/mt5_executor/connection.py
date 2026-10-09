@@ -168,6 +168,11 @@ class MT5Connection:
         if mt5 is None:
             raise RuntimeError("MetaTrader5 module not available")
 
+        if account_mode and not path:
+            # Without a path MT5 attaches to whichever terminal runs, e.g. the manual live one
+            self.logger.error("MT5_PATH is empty: set the robot terminal path (or a broker profile). Not connecting.")
+            return False
+
         try:
             # Initialize MT5 terminal
             if path and portable:

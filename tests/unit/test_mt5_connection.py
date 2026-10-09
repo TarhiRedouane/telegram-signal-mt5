@@ -175,6 +175,7 @@ class TestMT5ConnectionManager:
             login=12345,
             password="test_password",
             server="TestServer-Demo",
+            path="C:/MT5_Test/terminal64.exe",  # the bot refuses to attach without a terminal path
             timeout_seconds=30,
             max_connections=3,
             reconnect_delay=2,

@@ -134,3 +134,13 @@ def test_risk_guard_checks_account_on_every_order(tmp_path):
     assert "REAL account" in refusal({**snap, "account_mode": "real"}, Decimal("100"), settings)
     assert "account 999" in refusal({**snap, "login": 999}, Decimal("100"), settings)
     assert account_mode_name(0) == "demo" and account_mode_name(2) == "real" and account_mode_name(None) is None
+
+
+@pytest.mark.asyncio
+async def test_connect_refuses_empty_terminal_path(monkeypatch):
+    import src.mt5_executor.connection as conn
+
+    fake = _fake_mt5(None)
+    monkeypatch.setattr(conn, "mt5", fake)
+    assert await conn.MT5Connection(1).connect(111, "pw", "Raise-Demo", None, False, "demo") is False
+    fake.initialize.assert_not_called()
