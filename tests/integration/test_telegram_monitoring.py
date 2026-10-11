@@ -8,7 +8,8 @@ import pytest
 from unittest.mock import Mock, AsyncMock, patch, MagicMock
 from datetime import datetime
 
-from telethon.tl.types import Message, Channel, Chat
+from telethon import events
+from telethon.tl.types import Message, Channel, Chat, PeerChannel
 from telethon.errors import FloodWaitError
 
 from src.telegram_client.client import TelegramClient
@@ -80,7 +81,8 @@ class TestTelegramMonitoringIntegration:
         mock_message.reply_to = None
         mock_message.forward = None
         mock_message.from_id = Mock(user_id=55555)
-        mock_message.peer_id = Mock(channel_id=777888)
+        mock_message.peer_id = PeerChannel(777888)
+        mock_message.edit_date = None
         
         mock_event = AsyncMock()
         mock_event.message = mock_message
@@ -118,7 +120,7 @@ class TestTelegramMonitoringIntegration:
     async def test_connection_health_monitoring(self):
         """Test connection health monitoring and auto-reconnection."""
         mock_telethon_client = AsyncMock()
-        mock_telethon_client.is_connected.return_value = True
+        mock_telethon_client.is_connected = Mock(return_value=True)  # sync in Telethon
         mock_telethon_client.is_user_authorized.return_value = True
         mock_telethon_client.get_me.return_value = Mock(id=12345)
         
@@ -144,7 +146,8 @@ class TestTelegramMonitoringIntegration:
         mock_telethon_client.connect.side_effect = connect_attempts
         mock_telethon_client.is_user_authorized.return_value = True
         
-        with patch.object(self.client, 'initialize', return_value=True):
+        with patch.object(self.client, 'initialize', return_value=True), \
+             patch('src.telegram_client.client.asyncio.sleep', new=AsyncMock()):  # skip real backoff
             with patch.object(self.client, 'connect') as mock_connect:
                 mock_connect.side_effect = [False, True]  # Fail then succeed
                 
@@ -160,7 +163,7 @@ class TestTelegramMonitoringIntegration:
     async def test_flood_wait_handling_in_monitoring(self):
         """Test flood wait error handling during monitoring."""
         # Create flood wait error
-        flood_error = FloodWaitError(seconds=5)
+        flood_error = FloodWaitError(request=None, capture=5)
         
         # Mock the rate limiter's flood handling
         with patch.object(self.rate_limiter, 'handle_flood_wait') as mock_flood_handler:
@@ -221,7 +224,8 @@ class TestTelegramMonitoringIntegration:
             mock_message.reply_to = None
             mock_message.forward = None
             mock_message.from_id = Mock(user_id=99999)
-            mock_message.peer_id = Mock(channel_id=88888)
+            mock_message.peer_id = PeerChannel(88888)
+            mock_message.edit_date = None
             
             mock_event = AsyncMock()
             mock_event.message = mock_message
@@ -253,7 +257,8 @@ class TestTelegramMonitoringIntegration:
             mock_message.reply_to = None
             mock_message.forward = None
             mock_message.from_id = Mock(user_id=77777)
-            mock_message.peer_id = Mock(channel_id=66666)
+            mock_message.peer_id = PeerChannel(66666)
+            mock_message.edit_date = None
             
             mock_event = AsyncMock()
             mock_event.message = mock_message
@@ -292,6 +297,5 @@ class TestTelegramMonitoringIntegration:
         # Verify handler was created (mock test)
         assert event_handler is not None
         
-        # In a real scenario, this would register with Telethon client
-        # Here we just verify the handler creation doesn't raise errors
-        assert callable(event_handler)
+        # The handler is the Telethon event builder registered with client.add_event_handler
+        assert isinstance(event_handler, events.NewMessage)

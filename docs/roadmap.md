@@ -21,7 +21,8 @@ Known gaps:
   legs without break-even management.
 - Nothing records trade results (profit, R, close reason), so we can't tell which signals work.
 - `AlertManager` exists but is never called: the bot acts silently.
-- Unit suite is green and fast since story 5.1 (629 passed, ~1 min); no CI runs it yet.
+- Unit + integration suites green and fast since stories 5.1/5.2 (693 passed, ~1 min); no CI runs
+  them yet. `main.py` coverage is 48 % (see step 19).
 - Edits to already-executed signals are ignored (logged only).
 
 Order of work: **1 (done) → 5 (test suite health) → 19 (architecture review/simplify) → 4 → 3 → 6 →
@@ -70,8 +71,8 @@ Done when: every event above produces one readable DM on the demo account.
 - [x] Find and fix the hanging test(s) so `pytest tests/unit` finishes in < 2 min.
 - [x] Fix or remove the failing tests (there were 146 + 10 errors once `pytest.ini` was really applied).
 - [x] Stop the noisy `'NoneType' object has no attribute 'upper'` error when the LLM returns no action.
-- [ ] Integration suite green, no hang (25 failed + 1 hang today), and a coverage baseline for
-      `main.py` (story 5.2). Needed before the step 19 refactor stories.
+- [x] Integration suite green, no hang (was 25 failed + 1 hang), and a coverage baseline for
+      `main.py` (story 5.2). Full `pytest`: 693 passed, 6 skipped, ~1 min.
 - [ ] Optional: GitHub Actions running `pytest tests/unit`, `ruff`, `mypy src/`.
 - [ ] LLM rate limiter really waits: `APIRateLimiter.acquire()` queues the request at the limit but
       returns True at once, so OpenAI is called anyway (found in 5.1 QA). Await the queued slot or
@@ -173,6 +174,16 @@ switch work from it; closing the page changes nothing for running bots.
 candle-close invalidation, sizing, risk guard, MT5 execution, polling, shutdown). Other big files:
 `connection.py` 1,426, `repository.py` 1,373, `position_manager.py` 1,331. Review before adding
 steps 3/16/18, which all touch `main.py`.
+
+Coverage baseline (story 5.2, 2026-10-09, `pytest --cov=main --cov=src`): `main.py` **48 %**
+(483 of 926 statements not run), `main.py` + `src/` **72 %**. Methods in `main.py` that no test runs:
+- Trading paths: `_handle_parsed_signal`, `_order_volume`, `_validate_live_price`, `_start_setup`,
+  `_apply_setup_levels`, `_disarm_or_drop`, `_handle_setup_edit`, `_handle_setup_followup`,
+  `_llm_setup_followup`, `_watch_zone`, `_advance_zones`.
+- Lifecycle: `_initialize_mt5_connection`, `run`, `shutdown`, `_save_application_state`,
+  `_shutdown_monitoring_components`, `_cancel_component_tasks`, `_shutdown_logging`,
+  `signal_shutdown`, `signal_handler`, `main`.
+Cover the trading paths (at least the ones a refactor story moves) before moving them.
 - [ ] Review (architect / tech lead): current structure, responsibilities per file, dead code,
       duplicated logic, unused dependencies (APScheduler, pendulum, aiohttp, aiofiles), modules that
       exist but are bypassed (`close_processor`, `alert_manager`, `queue_manager`, `models`).

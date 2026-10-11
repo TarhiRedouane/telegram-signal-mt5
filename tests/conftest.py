@@ -24,6 +24,26 @@ def close_log_handlers() -> None:
             handler.close()
 
 
+class _BlockedOpenAI:
+    """Stands in for the real AsyncOpenAI client: any use fails loudly instead of calling the API."""
+
+    def __getattr__(self, name: str) -> None:
+        raise RuntimeError(
+            "Test reached the real OpenAI client. Patch it where it is looked up, "
+            "e.g. 'src.signal_parser.llm_parser.openai_client'."
+        )
+
+
+@pytest.fixture(autouse=True)
+def _no_real_llm_services(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    """Guard against patches that miss (stories 5.1 F8, 5.2 I10): no real OpenAI, no shared data/llm_cache.db."""
+    from config.openai_config import openai_client
+    from src.database.cache import llm_cache
+
+    monkeypatch.setattr(openai_client, "_client", _BlockedOpenAI())
+    monkeypatch.setattr(llm_cache, "db_path", tmp_path / "llm_cache.db")
+
+
 @pytest.fixture
 def temp_dir() -> Generator[Path, None, None]:
     """Create a temporary directory for test files."""

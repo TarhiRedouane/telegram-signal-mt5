@@ -361,7 +361,7 @@ class TestCorrelationRepository:
         await correlation_repo.store_correlation(
             parent_id=11111,
             child_id=22222,
-            correlation_type="TIME_BASED",
+            correlation_type="FOLLOWUP",  # production stores time-based matches as FOLLOWUP
             confidence=0.8
         )
         
@@ -420,7 +420,8 @@ class TestCorrelationPerformanceIntegration:
                 'telegram_message_id': 10000 + i,
                 'telegram_chat_id': 67890,
                 'sender': f'provider_{i}',
-                'timestamp': base_time - timedelta(minutes=i),
+                # 10 min apart: each follow-up has exactly one signal in its 5 min window
+                'timestamp': base_time - timedelta(minutes=10 * i),
                 'raw_text': f'BUY GOLD {1950 + i}',
                 'parsed_action': ParsedAction.BUY,
                 'symbol': 'GOLD',
@@ -454,7 +455,7 @@ class TestCorrelationPerformanceIntegration:
                 telegram_message_id=20000 + i,
                 telegram_chat_id=67890,
                 sender="trader",
-                timestamp=base_time,
+                timestamp=base_time - timedelta(minutes=10 * i) + timedelta(minutes=1),
                 raw_text=f"Update for position {i}",
                 reply_to_message_id=None  # Force time-based matching
             )
@@ -476,5 +477,6 @@ class TestCorrelationPerformanceIntegration:
         avg_time_per_correlation = duration_ms / 10
         assert avg_time_per_correlation < 50, f"Average correlation time {avg_time_per_correlation:.1f}ms too high"
         
-        # Should find some matches through time-based correlation
-        assert len(successful_correlations) > 0, "No successful correlations found"
+        # One candidate per window: every follow-up must match its own position, none another one
+        assert len(successful_correlations) == 10, "Not every follow-up was correlated"
+        assert [r.position.id for r in results] == position_ids

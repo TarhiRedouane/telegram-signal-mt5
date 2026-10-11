@@ -34,6 +34,17 @@ class TestLLMContextFlow:
         return ContextProcessor(mock_repository)
     
     @pytest.fixture
+    def parent_message(self):
+        """Original signal; production always passes one (main.py builds it from the stored signal)."""
+        return TelegramMessage(
+            telegram_message_id=11111,
+            telegram_chat_id=67890,
+            sender="signal_provider",
+            timestamp=datetime.now(),
+            raw_text="BUY GOLD 3362.50, SL 3355, TP 3375"
+        )
+
+    @pytest.fixture
     def sample_positions(self):
         """Create sample positions for testing."""
         signal = Signal(
@@ -103,14 +114,14 @@ class TestLLMContextFlow:
         }
         
         # Mock all dependencies
-        with patch('src.database.cache.llm_cache') as mock_cache, \
-             patch('src.utils.rate_limiter.llm_rate_limiter') as mock_limiter, \
+        with patch('src.signal_parser.context_analyzer.llm_cache') as mock_cache, \
+             patch('src.signal_parser.context_analyzer.llm_rate_limiter') as mock_limiter, \
              patch.object(context_analyzer, '_make_openai_request') as mock_api:
             
-            mock_cache.get.return_value = None  # No cache hit
+            mock_cache.get = AsyncMock(return_value=None)  # No cache hit
             mock_cache.set = AsyncMock()
-            mock_limiter.acquire.return_value = True
-            mock_limiter.wait_for_backoff.return_value = None
+            mock_limiter.acquire = AsyncMock(return_value=True)
+            mock_limiter.wait_for_backoff = AsyncMock()
             mock_limiter.record_success.return_value = None
             mock_limiter.get_metrics.return_value = {}
             mock_api.return_value = api_response
@@ -176,14 +187,14 @@ class TestLLMContextFlow:
             "usage": {"total_tokens": 160}
         }
         
-        with patch('src.database.cache.llm_cache') as mock_cache, \
-             patch('src.utils.rate_limiter.llm_rate_limiter') as mock_limiter, \
+        with patch('src.signal_parser.context_analyzer.llm_cache') as mock_cache, \
+             patch('src.signal_parser.context_analyzer.llm_rate_limiter') as mock_limiter, \
              patch.object(context_analyzer, '_make_openai_request') as mock_api:
             
-            mock_cache.get.return_value = None
+            mock_cache.get = AsyncMock(return_value=None)
             mock_cache.set = AsyncMock()
-            mock_limiter.acquire.return_value = True
-            mock_limiter.wait_for_backoff.return_value = None
+            mock_limiter.acquire = AsyncMock(return_value=True)
+            mock_limiter.wait_for_backoff = AsyncMock()
             mock_limiter.record_success.return_value = None
             mock_limiter.get_metrics.return_value = {}
             mock_api.return_value = api_response
@@ -212,7 +223,7 @@ class TestLLMContextFlow:
             mock_close_router.assert_called_once()
     
     @pytest.mark.asyncio
-    async def test_end_to_end_low_confidence_manual_review(self, context_analyzer, context_processor, sample_positions):
+    async def test_end_to_end_low_confidence_manual_review(self, context_analyzer, context_processor, sample_positions, parent_message):
         """Test complete flow for low confidence requiring manual review."""
         
         message = TelegramMessage(
@@ -223,44 +234,44 @@ class TestLLMContextFlow:
             raw_text="maybe do something with position"
         )
         
-        # Mock LLM response with low confidence
+        # Low confidence: above the analyzer floor (0.5), below auto-execution (0.75) -> manual review
         api_response = {
             "content": json.dumps({
                 "action": "modify",
-                "target_position": None,
-                "parameters": {},
-                "confidence": 0.40,
+                "target_position": "123456789",
+                "parameters": {"new_sl": 3358.00, "new_tp": None, "percentage": None},
+                "confidence": 0.60,
                 "reasoning": "Ambiguous instruction, unclear intent"
             }),
             "usage": {"total_tokens": 140}
         }
         
-        with patch('src.database.cache.llm_cache') as mock_cache, \
-             patch('src.utils.rate_limiter.llm_rate_limiter') as mock_limiter, \
+        with patch('src.signal_parser.context_analyzer.llm_cache') as mock_cache, \
+             patch('src.signal_parser.context_analyzer.llm_rate_limiter') as mock_limiter, \
              patch.object(context_analyzer, '_make_openai_request') as mock_api:
             
-            mock_cache.get.return_value = None
+            mock_cache.get = AsyncMock(return_value=None)
             mock_cache.set = AsyncMock()
-            mock_limiter.acquire.return_value = True
-            mock_limiter.wait_for_backoff.return_value = None
+            mock_limiter.acquire = AsyncMock(return_value=True)
+            mock_limiter.wait_for_backoff = AsyncMock()
             mock_limiter.record_success.return_value = None
             mock_limiter.get_metrics.return_value = {}
             mock_api.return_value = api_response
             
             # Analyze context
             analysis_result = await context_analyzer.analyze_update_context(
-                message, None, sample_positions
+                message, parent_message, sample_positions
             )
             
             assert analysis_result is not None
             assert analysis_result.action == "modify"
-            assert analysis_result.confidence == 0.40
+            assert analysis_result.confidence == 0.60
             
             # Process with low confidence - should queue for manual review
             with patch.object(context_processor, '_queue_for_manual_review') as mock_queue:
                 mock_queue.return_value = {
                     "action": "modify",
-                    "confidence": 0.40,
+                    "confidence": 0.60,
                     "review_required": True,
                     "queued_at": datetime.now().isoformat()
                 }
@@ -271,11 +282,11 @@ class TestLLMContextFlow:
             
             assert execution_result == ExecutionResult.QUEUED_FOR_REVIEW
             assert details["review_required"] is True
-            assert details["confidence"] == 0.40
+            assert details["confidence"] == 0.60
             mock_queue.assert_called_once()
     
     @pytest.mark.asyncio
-    async def test_end_to_end_api_failure_fallback(self, context_analyzer, context_processor, sample_positions):
+    async def test_end_to_end_api_failure_fallback(self, context_analyzer, context_processor, sample_positions, parent_message):
         """Test complete flow when LLM API fails."""
         
         message = TelegramMessage(
@@ -286,20 +297,20 @@ class TestLLMContextFlow:
             raw_text="BE on position"
         )
         
-        with patch('src.database.cache.llm_cache') as mock_cache, \
-             patch('src.utils.rate_limiter.llm_rate_limiter') as mock_limiter, \
+        with patch('src.signal_parser.context_analyzer.llm_cache') as mock_cache, \
+             patch('src.signal_parser.context_analyzer.llm_rate_limiter') as mock_limiter, \
              patch.object(context_analyzer, '_make_openai_request') as mock_api:
             
-            mock_cache.get.return_value = None
-            mock_limiter.acquire.return_value = True
-            mock_limiter.wait_for_backoff.return_value = None
+            mock_cache.get = AsyncMock(return_value=None)
+            mock_limiter.acquire = AsyncMock(return_value=True)
+            mock_limiter.wait_for_backoff = AsyncMock()
             mock_limiter.record_failure.return_value = None
             mock_limiter.get_metrics.return_value = {}
             mock_api.side_effect = Exception("OpenAI API error")
             
             # Analyze context - should fail gracefully
             analysis_result = await context_analyzer.analyze_update_context(
-                message, None, sample_positions
+                message, parent_message, sample_positions
             )
             
             assert analysis_result is None
@@ -341,8 +352,8 @@ class TestLLMContextFlow:
             "reasoning": "Cached break even analysis"
         }
         
-        with patch('src.database.cache.llm_cache') as mock_cache:
-            mock_cache.get.return_value = cached_data
+        with patch('src.signal_parser.context_analyzer.llm_cache') as mock_cache:
+            mock_cache.get = AsyncMock(return_value=cached_data)
             
             # Should not call OpenAI API
             with patch.object(context_analyzer, '_make_openai_request') as mock_api:
@@ -368,7 +379,7 @@ class TestLLMContextFlow:
                 assert details["confidence"] == 0.92
     
     @pytest.mark.asyncio
-    async def test_end_to_end_validation_failure(self, context_analyzer, context_processor, sample_positions):
+    async def test_end_to_end_validation_failure(self, context_analyzer, context_processor, sample_positions, parent_message):
         """Test complete flow with validation failure."""
         
         message = TelegramMessage(
@@ -391,20 +402,20 @@ class TestLLMContextFlow:
             "usage": {"total_tokens": 150}
         }
         
-        with patch('src.database.cache.llm_cache') as mock_cache, \
-             patch('src.utils.rate_limiter.llm_rate_limiter') as mock_limiter, \
+        with patch('src.signal_parser.context_analyzer.llm_cache') as mock_cache, \
+             patch('src.signal_parser.context_analyzer.llm_rate_limiter') as mock_limiter, \
              patch.object(context_analyzer, '_make_openai_request') as mock_api:
             
-            mock_cache.get.return_value = None
+            mock_cache.get = AsyncMock(return_value=None)
             mock_cache.set = AsyncMock()
-            mock_limiter.acquire.return_value = True
-            mock_limiter.wait_for_backoff.return_value = None
+            mock_limiter.acquire = AsyncMock(return_value=True)
+            mock_limiter.wait_for_backoff = AsyncMock()
             mock_limiter.record_success.return_value = None
             mock_limiter.get_metrics.return_value = {}
             mock_api.return_value = api_response
             
             analysis_result = await context_analyzer.analyze_update_context(
-                message, None, sample_positions
+                message, parent_message, sample_positions
             )
             
             assert analysis_result is not None
@@ -451,14 +462,14 @@ class TestLLMContextFlow:
         
         start_time = datetime.now()
         
-        with patch('src.database.cache.llm_cache') as mock_cache, \
-             patch('src.utils.rate_limiter.llm_rate_limiter') as mock_limiter, \
+        with patch('src.signal_parser.context_analyzer.llm_cache') as mock_cache, \
+             patch('src.signal_parser.context_analyzer.llm_rate_limiter') as mock_limiter, \
              patch.object(context_analyzer, '_make_openai_request') as mock_api:
             
-            mock_cache.get.return_value = None
+            mock_cache.get = AsyncMock(return_value=None)
             mock_cache.set = AsyncMock()
-            mock_limiter.acquire.return_value = True
-            mock_limiter.wait_for_backoff.return_value = None
+            mock_limiter.acquire = AsyncMock(return_value=True)
+            mock_limiter.wait_for_backoff = AsyncMock()
             mock_limiter.record_success.return_value = None
             mock_limiter.get_metrics.return_value = {}
             mock_api.return_value = api_response

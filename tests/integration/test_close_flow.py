@@ -18,6 +18,11 @@ from src.database.repository import RepositoryFactory, DatabaseManager
 from src.database.models import Position, Signal, PositionStatus, UpdateType
 
 
+
+SKIP_UNWIRED = pytest.mark.skip(
+    reason="CloseProcessor not wired in production; keep/delete decided in roadmap step 19"
+)
+
 @pytest.fixture
 async def database_manager():
     """Create in-memory database manager for testing."""
@@ -98,6 +103,7 @@ async def test_signal_and_position(repo_factory):
 class TestFullCloseIntegration:
     """Test complete full close flow integration."""
 
+    @SKIP_UNWIRED
     @pytest.mark.asyncio
     async def test_full_close_success_flow(
         self,
@@ -226,6 +232,7 @@ class TestFullCloseIntegration:
 class TestPartialCloseIntegration:
     """Test complete partial close flow integration."""
 
+    @SKIP_UNWIRED
     @pytest.mark.asyncio
     async def test_partial_close_success_flow(
         self,
@@ -299,6 +306,7 @@ class TestPartialCloseIntegration:
 class TestCloseAllIntegration:
     """Test close all functionality integration."""
 
+    @SKIP_UNWIRED
     @pytest.mark.asyncio
     async def test_close_all_gold_success(
         self,

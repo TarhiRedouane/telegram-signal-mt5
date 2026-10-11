@@ -36,12 +36,13 @@ class TestMonitoringSystemIntegration:
         mock_telegram = AsyncMock()
         mock_telegram.is_connected.return_value = True
         mock_telegram.is_authorized.return_value = True
-        mock_telegram.get_connection_status.return_value = {
+        # get_connection_status is sync on the real TelegramClient
+        mock_telegram.get_connection_status = MagicMock(return_value={
             "connected_groups_count": 2,
             "connection_failures": 0,
             "last_health_check": "2025-01-01T00:00:00Z",
             "auto_reconnect_enabled": True
-        }
+        })
         
         health_monitor.set_telegram_client(mock_telegram)
         
@@ -368,11 +369,10 @@ class TestMonitoringSystemIntegration:
         metrics_collector = monitoring_system['metrics_collector']
         dashboard = monitoring_system['dashboard']
         
-        # Start all components concurrently
-        await asyncio.gather(
-            health_monitor.start_monitoring(),
-            dashboard.start_dashboard()
-        )
+        # Start all components concurrently (dashboard loops until stopped, so run it as a task)
+        await health_monitor.start_monitoring()
+        dashboard_task = asyncio.create_task(dashboard.start_dashboard())
+        await asyncio.sleep(0.05)
         
         # Simulate concurrent operations
         async def simulate_metrics_collection():
@@ -432,6 +432,7 @@ class TestMonitoringSystemIntegration:
             health_monitor.stop_monitoring(),
             dashboard.stop_dashboard()
         )
+        await dashboard_task
     
     @pytest.mark.asyncio
     async def test_system_metrics_integration(self, monitoring_system):
