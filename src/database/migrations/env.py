@@ -18,6 +18,7 @@ from alembic import context
 
 # Add the project root to Python path
 import sys
+
 project_root = Path(__file__).parent.parent.parent.parent
 sys.path.insert(0, str(project_root))
 
@@ -46,7 +47,7 @@ target_metadata = Base.metadata
 def get_database_url() -> str:
     """
     Get database URL from environment or use default.
-    
+
     Returns:
         Database URL for SQLite with aiosqlite driver
     """
@@ -54,14 +55,14 @@ def get_database_url() -> str:
     db_url = os.getenv("DATABASE_URL")
     if db_url:
         return db_url
-    
+
     # Default to project data directory
     project_root = Path(__file__).parent.parent.parent.parent
     db_path = project_root / "data" / "signal_ea.db"
-    
+
     # Ensure data directory exists
     db_path.parent.mkdir(exist_ok=True)
-    
+
     return f"sqlite+aiosqlite:///{db_path}"
 
 
@@ -80,7 +81,7 @@ def run_migrations_offline() -> None:
     url = get_database_url()
     # Remove +aiosqlite for offline mode
     url = url.replace("+aiosqlite", "")
-    
+
     context.configure(
         url=url,
         target_metadata=target_metadata,
@@ -88,7 +89,7 @@ def run_migrations_offline() -> None:
         dialect_opts={"paramstyle": "named"},
         # SQLite-specific configurations
         render_as_batch=True,  # Required for SQLite ALTER operations
-        compare_type=True,     # Compare column types
+        compare_type=True,  # Compare column types
         compare_server_default=True,  # Compare default values
     )
 
@@ -99,16 +100,16 @@ def run_migrations_offline() -> None:
 def do_run_migrations(connection: Connection) -> None:
     """
     Run migrations with the given connection.
-    
+
     Args:
         connection: Database connection to use for migrations
     """
     context.configure(
-        connection=connection, 
+        connection=connection,
         target_metadata=target_metadata,
         # SQLite-specific configurations
         render_as_batch=True,  # Required for SQLite ALTER operations
-        compare_type=True,     # Compare column types
+        compare_type=True,  # Compare column types
         compare_server_default=True,  # Compare default values
         # Include object name in batch operations
         render_item=lambda type_, obj, autogen_context: (
@@ -125,12 +126,12 @@ def do_run_migrations(connection: Connection) -> None:
 async def run_async_migrations() -> None:
     """
     Run migrations in async mode.
-    
+
     In this scenario we need to create an Engine
     and associate a connection with the context.
     """
     url = get_database_url()
-    
+
     # Create async engine with SQLite optimizations
     connectable = create_async_engine(
         url,
@@ -140,14 +141,14 @@ async def run_async_migrations() -> None:
         connect_args={
             "check_same_thread": False,
             "timeout": 30,
-        }
+        },
     )
 
     async with connectable.connect() as connection:
         # Apply SQLite pragmas for consistency
         await connection.execute("PRAGMA foreign_keys=ON")
         await connection.execute("PRAGMA journal_mode=WAL")
-        
+
         await connection.run_sync(do_run_migrations)
 
     await connectable.dispose()

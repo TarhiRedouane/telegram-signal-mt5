@@ -23,13 +23,13 @@ from .reply_tracer import ReplyChainCache, ReplyTracer
 from .time_matcher import TimeMatchCandidate, TimeMatcher
 
 __all__ = [
-    'CorrelationEngine',
-    'CorrelationResult',
-    'ReplyChainCache',
-    'ReplyTracer',
-    'TelegramMessage',
-    'TimeMatchCandidate',
-    'TimeMatcher'
+    "CorrelationEngine",
+    "CorrelationResult",
+    "ReplyChainCache",
+    "ReplyTracer",
+    "TelegramMessage",
+    "TimeMatchCandidate",
+    "TimeMatcher",
 ]
 
-__version__ = '1.0.0'
+__version__ = "1.0.0"

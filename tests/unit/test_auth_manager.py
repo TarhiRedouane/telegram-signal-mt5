@@ -37,8 +37,14 @@ class TestAuthManager:
     @pytest.fixture
     def auth_manager(self, mock_telegram_client, mock_session_manager):
         """Create AuthManager instance with mocked dependencies."""
-        with patch("src.telegram_client.auth_manager.TelegramClient", return_value=mock_telegram_client), \
-             patch("src.telegram_client.auth_manager.SessionManager", return_value=mock_session_manager):
+        with (
+            patch(
+                "src.telegram_client.auth_manager.TelegramClient", return_value=mock_telegram_client
+            ),
+            patch(
+                "src.telegram_client.auth_manager.SessionManager", return_value=mock_session_manager
+            ),
+        ):
             manager = AuthManager("test_session")
             manager.telegram_client = mock_telegram_client
             manager.session_manager = mock_session_manager
@@ -51,10 +57,10 @@ class TestAuthManager:
         """Test successful startup authentication with existing valid session."""
         mock_telegram_client.initialize.return_value = True
         mock_telegram_client.connect.return_value = True
-        
-        with patch.object(auth_manager, '_validate_existing_session', return_value=True):
+
+        with patch.object(auth_manager, "_validate_existing_session", return_value=True):
             result = await auth_manager.startup_authentication()
-            
+
             assert result is True
             assert auth_manager._is_authenticated is True
             mock_telegram_client.initialize.assert_called_once()
@@ -68,10 +74,10 @@ class TestAuthManager:
         mock_telegram_client.initialize.return_value = True
         mock_telegram_client.connect.return_value = True
         mock_session_manager.authenticate.return_value = True
-        
-        with patch.object(auth_manager, '_validate_existing_session', return_value=False):
+
+        with patch.object(auth_manager, "_validate_existing_session", return_value=False):
             result = await auth_manager.startup_authentication()
-            
+
             assert result is True
             assert auth_manager._is_authenticated is True
             mock_session_manager.authenticate.assert_called_once()
@@ -82,9 +88,9 @@ class TestAuthManager:
     ):
         """Test startup authentication when client initialization fails."""
         mock_telegram_client.initialize.return_value = False
-        
+
         result = await auth_manager.startup_authentication()
-        
+
         assert result is False
         assert auth_manager._is_authenticated is False
 
@@ -95,9 +101,9 @@ class TestAuthManager:
         """Test startup authentication when client connection fails."""
         mock_telegram_client.initialize.return_value = True
         mock_telegram_client.connect.return_value = False
-        
+
         result = await auth_manager.startup_authentication()
-        
+
         assert result is False
         assert auth_manager._is_authenticated is False
 
@@ -109,10 +115,10 @@ class TestAuthManager:
         mock_telegram_client.initialize.return_value = True
         mock_telegram_client.connect.return_value = True
         mock_session_manager.authenticate.return_value = False
-        
-        with patch.object(auth_manager, '_validate_existing_session', return_value=False):
+
+        with patch.object(auth_manager, "_validate_existing_session", return_value=False):
             result = await auth_manager.startup_authentication()
-            
+
             assert result is False
             assert auth_manager._is_authenticated is False
 
@@ -122,9 +128,9 @@ class TestAuthManager:
     ):
         """Test validating existing session when no session file exists."""
         mock_session_manager.session_exists.return_value = False
-        
+
         result = await auth_manager._validate_existing_session()
-        
+
         assert result is False
         mock_session_manager.session_exists.assert_called_once()
 
@@ -135,9 +141,9 @@ class TestAuthManager:
         """Test validating existing session when session is invalid."""
         mock_session_manager.session_exists.return_value = True
         mock_session_manager.validate_session.return_value = False
-        
+
         result = await auth_manager._validate_existing_session()
-        
+
         assert result is False
         mock_session_manager.validate_session.assert_called_once()
 
@@ -148,9 +154,9 @@ class TestAuthManager:
         """Test validating existing session when session is valid."""
         mock_session_manager.session_exists.return_value = True
         mock_session_manager.validate_session.return_value = True
-        
+
         result = await auth_manager._validate_existing_session()
-        
+
         assert result is True
 
     @pytest.mark.asyncio
@@ -162,9 +168,9 @@ class TestAuthManager:
         mock_telegram_client.connect.return_value = True
         mock_session_manager.authenticate.return_value = True
         auth_manager._is_authenticated = True
-        
+
         result = await auth_manager.re_authenticate()
-        
+
         assert result is True
         assert auth_manager._is_authenticated is True
         mock_telegram_client.disconnect.assert_called_once()
@@ -178,9 +184,9 @@ class TestAuthManager:
         """Test re-authentication when reconnection fails."""
         mock_telegram_client.disconnect = AsyncMock()
         mock_telegram_client.connect.return_value = False
-        
+
         result = await auth_manager.re_authenticate()
-        
+
         assert result is False
         assert auth_manager._is_authenticated is False
 
@@ -192,9 +198,9 @@ class TestAuthManager:
         mock_telegram_client.disconnect = AsyncMock()
         mock_telegram_client.connect.return_value = True
         mock_session_manager.authenticate.return_value = False
-        
+
         result = await auth_manager.re_authenticate()
-        
+
         assert result is False
         assert auth_manager._is_authenticated is False
 
@@ -207,7 +213,7 @@ class TestAuthManager:
         mock_telegram_client.is_authorized.return_value = True
         mock_session_manager.session_exists.return_value = True
         auth_manager._is_authenticated = True
-        
+
         # Mock user info
         mock_user = MagicMock()
         mock_user.id = 123456
@@ -215,9 +221,9 @@ class TestAuthManager:
         mock_user.username = "testuser"
         mock_user.phone = "+1234567890"
         mock_telegram_client.client.get_me = AsyncMock(return_value=mock_user)
-        
+
         result = await auth_manager.check_connection_status()
-        
+
         expected = {
             "connected": True,
             "authorized": True,
@@ -230,7 +236,7 @@ class TestAuthManager:
                 "phone": "+1234567890",
             },
         }
-        
+
         assert result == expected
 
     @pytest.mark.asyncio
@@ -242,16 +248,16 @@ class TestAuthManager:
         mock_telegram_client.is_authorized.return_value = False
         mock_session_manager.session_exists.return_value = False
         auth_manager._is_authenticated = False
-        
+
         result = await auth_manager.check_connection_status()
-        
+
         expected = {
             "connected": True,
             "authorized": False,
             "session_file_exists": False,
             "authenticated": False,
         }
-        
+
         assert result == expected
 
     @pytest.mark.asyncio
@@ -264,9 +270,9 @@ class TestAuthManager:
         mock_session_manager.session_exists.return_value = True
         auth_manager._is_authenticated = True
         mock_telegram_client.client.get_me = AsyncMock(side_effect=Exception("API error"))
-        
+
         result = await auth_manager.check_connection_status()
-        
+
         expected = {
             "connected": True,
             "authorized": True,
@@ -274,7 +280,7 @@ class TestAuthManager:
             "authenticated": True,
             "user_info": None,
         }
-        
+
         assert result == expected
 
     @pytest.mark.asyncio
@@ -285,21 +291,21 @@ class TestAuthManager:
         mock_telegram_client.is_connected.side_effect = [False, True]  # Lost, then reconnected
         mock_telegram_client.connect.return_value = True
         mock_telegram_client.is_authorized.return_value = True
-        
+
         # Create a task that we'll cancel after one iteration
         health_check_task = asyncio.create_task(auth_manager.periodic_health_check(0.1))
-        
+
         # Let it run for a short time
         await asyncio.sleep(0.2)
-        
+
         # Cancel the task
         health_check_task.cancel()
-        
+
         try:
             await health_check_task
         except asyncio.CancelledError:
             pass
-        
+
         # Verify reconnection was attempted
         mock_telegram_client.connect.assert_called()
 
@@ -309,23 +315,26 @@ class TestAuthManager:
     ):
         """Test periodic health check when authorization is lost."""
         mock_telegram_client.is_connected.return_value = True
-        mock_telegram_client.is_authorized.side_effect = [False, True]  # Lost, then re-authenticated
-        
-        with patch.object(auth_manager, 're_authenticate', return_value=True) as mock_reauth:
+        mock_telegram_client.is_authorized.side_effect = [
+            False,
+            True,
+        ]  # Lost, then re-authenticated
+
+        with patch.object(auth_manager, "re_authenticate", return_value=True) as mock_reauth:
             # Create a task that we'll cancel after one iteration
             health_check_task = asyncio.create_task(auth_manager.periodic_health_check(0.1))
-            
+
             # Let it run for a short time
             await asyncio.sleep(0.2)
-            
+
             # Cancel the task
             health_check_task.cancel()
-            
+
             try:
                 await health_check_task
             except asyncio.CancelledError:
                 pass
-            
+
             # Verify re-authentication was attempted
             mock_reauth.assert_called()
 
@@ -334,39 +343,39 @@ class TestAuthManager:
         """Test cleanup disconnects and resets state."""
         auth_manager._is_authenticated = True
         mock_telegram_client.disconnect = AsyncMock()
-        
+
         await auth_manager.cleanup()
-        
+
         assert auth_manager._is_authenticated is False
         mock_telegram_client.disconnect.assert_called_once()
 
     def test_is_authenticated_true(self, auth_manager):
         """Test is_authenticated when authenticated."""
         auth_manager._is_authenticated = True
-        
+
         result = auth_manager.is_authenticated()
-        
+
         assert result is True
 
     def test_is_authenticated_false(self, auth_manager):
         """Test is_authenticated when not authenticated."""
         auth_manager._is_authenticated = False
-        
+
         result = auth_manager.is_authenticated()
-        
+
         assert result is False
 
     @pytest.mark.asyncio
     async def test_async_context_manager_success(self, mock_telegram_client, mock_session_manager):
         """Test async context manager with successful authentication."""
-        with patch.object(AuthManager, 'startup_authentication', return_value=True):
+        with patch.object(AuthManager, "startup_authentication", return_value=True):
             async with AuthManager("test") as auth_mgr:
                 assert auth_mgr is not None
 
     @pytest.mark.asyncio
     async def test_async_context_manager_failure(self, mock_telegram_client, mock_session_manager):
         """Test async context manager with authentication failure."""
-        with patch.object(AuthManager, 'startup_authentication', return_value=False):
+        with patch.object(AuthManager, "startup_authentication", return_value=False):
             with pytest.raises(RuntimeError, match="Failed to authenticate Telegram session"):
                 async with AuthManager("test"):
                     pass

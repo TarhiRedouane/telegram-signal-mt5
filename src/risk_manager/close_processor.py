@@ -22,6 +22,7 @@ from src.utils.decorators import circuit_breaker, log_execution_time
 
 class CloseAction(str, Enum):
     """Enumeration for close action types."""
+
     FULL_CLOSE = "FULL_CLOSE"
     PARTIAL_CLOSE = "PARTIAL_CLOSE"
     CLOSE_ALL = "CLOSE_ALL"
@@ -30,6 +31,7 @@ class CloseAction(str, Enum):
 @dataclass
 class CloseInstruction:
     """Structured close instruction with action details."""
+
     action: CloseAction
     percentage: float | None = None  # 0.0-1.0 for partial closes
     symbol_filter: str | None = None  # Symbol filter for CLOSE_ALL
@@ -49,7 +51,7 @@ class CloseProcessor:
         self,
         correlation_engine: CorrelationEngine,
         position_manager: PositionManager,
-        repo_factory: RepositoryFactory
+        repo_factory: RepositoryFactory,
     ):
         """
         Initialize close processor with dependencies.
@@ -69,34 +71,29 @@ class CloseProcessor:
 
         # Close signal patterns (French and English)
         self._full_close_patterns = [
-            r'\b(?:clôturez|fermez|fermer|tp\s+hit|exit|clôture)\b',
-            r'\b(?:fermer\s+la\s+position|clôture\s+position)\b',
-            r'\bclose\b(?!\s+(?:all|\d+%|moitié|half))',  # CLOSE but not followed by ALL or percentage
-            r'^stop$|^stop\s+(?:hit|activé|triggered)',  # STOP only as standalone or with specific keywords
+            r"\b(?:clôturez|fermez|fermer|tp\s+hit|exit|clôture)\b",
+            r"\b(?:fermer\s+la\s+position|clôture\s+position)\b",
+            r"\bclose\b(?!\s+(?:all|\d+%|moitié|half))",  # CLOSE but not followed by ALL or percentage
+            r"^stop$|^stop\s+(?:hit|activé|triggered)",  # STOP only as standalone or with specific keywords
         ]
 
         self._partial_close_patterns = [
-            r'\b(?:close|fermez|fermer)\s+(\d+)%',
-            r'\b(\d+)%\s+(?:close|fermez)',
-            r'\b(?:partial\s+tp)\s+(\d+)%',
-            r'\b(?:close|fermez)\s+(?:la\s+)?moitié\b',
-            r'\b(?:partial\s+tp|fermez\s+moitié)\b',
-            r'\b(?:close|fermez)\s+(?:la\s+)?half\b'
+            r"\b(?:close|fermez|fermer)\s+(\d+)%",
+            r"\b(\d+)%\s+(?:close|fermez)",
+            r"\b(?:partial\s+tp)\s+(\d+)%",
+            r"\b(?:close|fermez)\s+(?:la\s+)?moitié\b",
+            r"\b(?:partial\s+tp|fermez\s+moitié)\b",
+            r"\b(?:close|fermez)\s+(?:la\s+)?half\b",
         ]
 
         self._close_all_patterns = [
-            r'\b(?:close\s+all|fermez\s+tout)\s+(?:positions?\s*)?(?:on\s+)?(\w+)\b',
-            r'\b(?:close\s+all|fermez\s+tout)\s+(\w+)\s+(?:positions?)\b',
-            r'\b(?:close\s+all|fermez\s+tout)(?:\s+positions?)?\b'
+            r"\b(?:close\s+all|fermez\s+tout)\s+(?:positions?\s*)?(?:on\s+)?(\w+)\b",
+            r"\b(?:close\s+all|fermez\s+tout)\s+(\w+)\s+(?:positions?)\b",
+            r"\b(?:close\s+all|fermez\s+tout)(?:\s+positions?)?\b",
         ]
 
         # Percentage mapping for text-based percentages
-        self._percentage_mapping = {
-            'moitié': 0.5,
-            'half': 0.5,
-            'tout': 1.0,
-            'all': 1.0
-        }
+        self._percentage_mapping = {"moitié": 0.5, "half": 0.5, "tout": 1.0, "all": 1.0}
 
     @log_execution_time
     async def detect_close_signal(self, text: str) -> CloseInstruction | None:
@@ -114,7 +111,7 @@ class CloseProcessor:
 
             self.logger.debug(
                 f"Analyzing text for close signals: '{text_lower[:100]}...'",
-                extra={'text_length': len(text)}
+                extra={"text_length": len(text)},
             )
 
             # Check for CLOSE ALL patterns first (highest priority)
@@ -123,10 +120,10 @@ class CloseProcessor:
                 self.logger.info(
                     f"Detected CLOSE ALL signal with symbol filter: {close_all_result.symbol_filter}",
                     extra={
-                        'action': close_all_result.action,
-                        'symbol_filter': close_all_result.symbol_filter,
-                        'confidence': close_all_result.confidence
-                    }
+                        "action": close_all_result.action,
+                        "symbol_filter": close_all_result.symbol_filter,
+                        "confidence": close_all_result.confidence,
+                    },
                 )
                 return close_all_result
 
@@ -136,10 +133,10 @@ class CloseProcessor:
                 self.logger.info(
                     f"Detected PARTIAL CLOSE signal: {partial_result.percentage:.1%}",
                     extra={
-                        'action': partial_result.action,
-                        'percentage': partial_result.percentage,
-                        'confidence': partial_result.confidence
-                    }
+                        "action": partial_result.action,
+                        "percentage": partial_result.percentage,
+                        "confidence": partial_result.confidence,
+                    },
                 )
                 return partial_result
 
@@ -148,10 +145,7 @@ class CloseProcessor:
             if full_result:
                 self.logger.info(
                     "Detected FULL CLOSE signal",
-                    extra={
-                        'action': full_result.action,
-                        'confidence': full_result.confidence
-                    }
+                    extra={"action": full_result.action, "confidence": full_result.confidence},
                 )
                 return full_result
 
@@ -172,17 +166,17 @@ class CloseProcessor:
                 if match.lastindex and match.lastindex >= 1:
                     symbol_filter = match.group(1).upper()
                     # Normalize common symbol names
-                    if symbol_filter in ['GOLD', 'XAU', 'XAUUSD']:
-                        symbol_filter = 'GOLD'
-                    elif symbol_filter == 'EUR':
-                        symbol_filter = 'EUR'  # Keep EUR as is for the test case
-                    elif symbol_filter == 'EURUSD':
-                        symbol_filter = 'EURUSD'
+                    if symbol_filter in ["GOLD", "XAU", "XAUUSD"]:
+                        symbol_filter = "GOLD"
+                    elif symbol_filter == "EUR":
+                        symbol_filter = "EUR"  # Keep EUR as is for the test case
+                    elif symbol_filter == "EURUSD":
+                        symbol_filter = "EURUSD"
 
                 return CloseInstruction(
                     action=CloseAction.CLOSE_ALL,
                     symbol_filter=symbol_filter,
-                    confidence=0.95  # High confidence for explicit patterns
+                    confidence=0.95,  # High confidence for explicit patterns
                 )
         return None
 
@@ -201,16 +195,14 @@ class CloseProcessor:
                             return CloseInstruction(
                                 action=CloseAction.PARTIAL_CLOSE,
                                 percentage=percentage,
-                                confidence=0.9
+                                confidence=0.9,
                             )
 
                 # Text-based percentage (e.g., "moitié", "half")
                 for word, pct in self._percentage_mapping.items():
                     if word in text and pct < 1.0:  # Only partial percentages
                         return CloseInstruction(
-                            action=CloseAction.PARTIAL_CLOSE,
-                            percentage=pct,
-                            confidence=0.85
+                            action=CloseAction.PARTIAL_CLOSE, percentage=pct, confidence=0.85
                         )
         return None
 
@@ -220,7 +212,7 @@ class CloseProcessor:
             if re.search(pattern, text, re.IGNORECASE):
                 return CloseInstruction(
                     action=CloseAction.FULL_CLOSE,
-                    confidence=0.8  # Standard confidence for full close
+                    confidence=0.8,  # Standard confidence for full close
                 )
         return None
 
@@ -243,38 +235,37 @@ class CloseProcessor:
             self.logger.info(
                 f"Starting close signal processing for message {message.telegram_message_id}",
                 extra={
-                    'processing_id': processing_id,
-                    'message_id': message.telegram_message_id,
-                    'chat_id': message.telegram_chat_id,
-                    'sender': message.sender
-                }
+                    "processing_id": processing_id,
+                    "message_id": message.telegram_message_id,
+                    "chat_id": message.telegram_chat_id,
+                    "sender": message.sender,
+                },
             )
 
             # Detect close instruction
             close_instruction = await self.detect_close_signal(message.raw_text)
             if not close_instruction:
                 return {
-                    'success': False,
-                    'processing_id': processing_id,
-                    'error': 'No close signal detected',
-                    'execution_time_ms': (datetime.now() - start_time).total_seconds() * 1000
+                    "success": False,
+                    "processing_id": processing_id,
+                    "error": "No close signal detected",
+                    "execution_time_ms": (datetime.now() - start_time).total_seconds() * 1000,
                 }
 
             # Process based on close action type
             if close_instruction.action == CloseAction.CLOSE_ALL:
                 result = await self._process_close_all_command(
-                    close_instruction.symbol_filter,
-                    processing_id
+                    close_instruction.symbol_filter, processing_id
                 )
             else:
                 # Single position close (full or partial)
                 target_position = await self.correlation_engine.correlate_message(message)
                 if not target_position:
                     return {
-                        'success': False,
-                        'processing_id': processing_id,
-                        'error': 'Could not correlate message to position',
-                        'execution_time_ms': (datetime.now() - start_time).total_seconds() * 1000
+                        "success": False,
+                        "processing_id": processing_id,
+                        "error": "Could not correlate message to position",
+                        "execution_time_ms": (datetime.now() - start_time).total_seconds() * 1000,
                     }
 
                 if close_instruction.action == CloseAction.FULL_CLOSE:
@@ -282,50 +273,51 @@ class CloseProcessor:
                 else:  # PARTIAL_CLOSE
                     if close_instruction.percentage is None:
                         return {
-                            'success': False,
-                            'processing_id': processing_id,
-                            'error': 'No percentage specified for partial close',
-                            'execution_time_ms': (datetime.now() - start_time).total_seconds() * 1000
+                            "success": False,
+                            "processing_id": processing_id,
+                            "error": "No percentage specified for partial close",
+                            "execution_time_ms": (datetime.now() - start_time).total_seconds()
+                            * 1000,
                         }
                     result = await self._execute_partial_close(
-                        target_position,
-                        close_instruction.percentage,
-                        processing_id
+                        target_position, close_instruction.percentage, processing_id
                     )
 
             execution_time = (datetime.now() - start_time).total_seconds() * 1000
-            result['execution_time_ms'] = execution_time
+            result["execution_time_ms"] = execution_time
 
             self.logger.info(
                 f"Close processing completed in {execution_time:.1f}ms",
                 extra={
-                    'processing_id': processing_id,
-                    'success': result['success'],
-                    'action': close_instruction.action,
-                    'execution_time_ms': execution_time
-                }
+                    "processing_id": processing_id,
+                    "success": result["success"],
+                    "action": close_instruction.action,
+                    "execution_time_ms": execution_time,
+                },
             )
 
             return result
 
         except asyncio.CancelledError:
-            self.logger.info(f"Close processing cancelled for message {message.telegram_message_id}")
+            self.logger.info(
+                f"Close processing cancelled for message {message.telegram_message_id}"
+            )
             raise
         except Exception as e:
             execution_time = (datetime.now() - start_time).total_seconds() * 1000
             self.logger.error(
                 f"Error processing close signal: {e}",
                 extra={
-                    'processing_id': processing_id,
-                    'error': str(e),
-                    'execution_time_ms': execution_time
-                }
+                    "processing_id": processing_id,
+                    "error": str(e),
+                    "execution_time_ms": execution_time,
+                },
             )
             return {
-                'success': False,
-                'processing_id': processing_id,
-                'error': f"Processing exception: {e}",
-                'execution_time_ms': execution_time
+                "success": False,
+                "processing_id": processing_id,
+                "error": f"Processing exception: {e}",
+                "execution_time_ms": execution_time,
             }
 
     async def _process_close_all_command(self, symbol: str | None, processing_id: str) -> dict:
@@ -346,7 +338,8 @@ class CloseProcessor:
             if symbol:
                 # Filter by symbol through signal relationship
                 target_positions = [
-                    position for position in all_positions
+                    position
+                    for position in all_positions
                     if position.signal and position.signal.symbol == symbol
                 ]
             else:
@@ -354,20 +347,20 @@ class CloseProcessor:
 
             if not target_positions:
                 return {
-                    'success': True,
-                    'processing_id': processing_id,
-                    'message': f'No open positions found for symbol filter: {symbol}',
-                    'positions_closed': 0,
-                    'failures': []
+                    "success": True,
+                    "processing_id": processing_id,
+                    "message": f"No open positions found for symbol filter: {symbol}",
+                    "positions_closed": 0,
+                    "failures": [],
                 }
 
             self.logger.info(
                 f"Found {len(target_positions)} positions to close",
                 extra={
-                    'processing_id': processing_id,
-                    'symbol_filter': symbol,
-                    'position_count': len(target_positions)
-                }
+                    "processing_id": processing_id,
+                    "symbol_filter": symbol,
+                    "position_count": len(target_positions),
+                },
             )
 
             # Execute concurrent closures using asyncio.gather
@@ -385,45 +378,51 @@ class CloseProcessor:
 
             for i, result in enumerate(results):
                 if isinstance(result, Exception):
-                    failures.append({
-                        'position_id': target_positions[i].id,
-                        'ticket': target_positions[i].mt5_ticket,
-                        'error': str(result)
-                    })
-                elif isinstance(result, dict) and result.get('success', False):
+                    failures.append(
+                        {
+                            "position_id": target_positions[i].id,
+                            "ticket": target_positions[i].mt5_ticket,
+                            "error": str(result),
+                        }
+                    )
+                elif isinstance(result, dict) and result.get("success", False):
                     successful_closes += 1
                 elif isinstance(result, dict):
-                    failures.append({
-                        'position_id': target_positions[i].id,
-                        'ticket': target_positions[i].mt5_ticket,
-                        'error': result.get('error', 'Unknown error')
-                    })
+                    failures.append(
+                        {
+                            "position_id": target_positions[i].id,
+                            "ticket": target_positions[i].mt5_ticket,
+                            "error": result.get("error", "Unknown error"),
+                        }
+                    )
                 else:
-                    failures.append({
-                        'position_id': target_positions[i].id,
-                        'ticket': target_positions[i].mt5_ticket,
-                        'error': f'Unexpected result type: {type(result)}'
-                    })
+                    failures.append(
+                        {
+                            "position_id": target_positions[i].id,
+                            "ticket": target_positions[i].mt5_ticket,
+                            "error": f"Unexpected result type: {type(result)}",
+                        }
+                    )
 
             success_rate = successful_closes / len(target_positions) if target_positions else 1.0
 
             return {
-                'success': success_rate >= 0.8,  # Consider successful if 80%+ positions closed
-                'processing_id': processing_id,
-                'positions_closed': successful_closes,
-                'total_positions': len(target_positions),
-                'success_rate': success_rate,
-                'failures': failures
+                "success": success_rate >= 0.8,  # Consider successful if 80%+ positions closed
+                "processing_id": processing_id,
+                "positions_closed": successful_closes,
+                "total_positions": len(target_positions),
+                "success_rate": success_rate,
+                "failures": failures,
             }
 
         except Exception as e:
             self.logger.error(f"Error in close all processing: {e}")
             return {
-                'success': False,
-                'processing_id': processing_id,
-                'error': f"Close all exception: {e}",
-                'positions_closed': 0,
-                'failures': []
+                "success": False,
+                "processing_id": processing_id,
+                "error": f"Close all exception: {e}",
+                "positions_closed": 0,
+                "failures": [],
             }
 
     async def _execute_full_close(self, position: Position, processing_id: str) -> dict:
@@ -431,9 +430,9 @@ class CloseProcessor:
         try:
             if not position.mt5_ticket:
                 return {
-                    'success': False,
-                    'processing_id': processing_id,
-                    'error': f'Position {position.id} has no MT5 ticket'
+                    "success": False,
+                    "processing_id": processing_id,
+                    "error": f"Position {position.id} has no MT5 ticket",
                 }
 
             # Execute MT5 close
@@ -446,54 +445,50 @@ class CloseProcessor:
                     close_result.close_price or 0.0,
                     close_result.profit or 0.0,
                     close_result.volume_closed or 0.0,
-                    processing_id
+                    processing_id,
                 )
 
                 return {
-                    'success': True,
-                    'processing_id': processing_id,
-                    'position_id': position.id,
-                    'ticket': position.mt5_ticket,
-                    'volume_closed': close_result.volume_closed,
-                    'close_price': close_result.close_price,
-                    'profit': close_result.profit
+                    "success": True,
+                    "processing_id": processing_id,
+                    "position_id": position.id,
+                    "ticket": position.mt5_ticket,
+                    "volume_closed": close_result.volume_closed,
+                    "close_price": close_result.close_price,
+                    "profit": close_result.profit,
                 }
             else:
                 return {
-                    'success': False,
-                    'processing_id': processing_id,
-                    'position_id': position.id,
-                    'ticket': position.mt5_ticket,
-                    'error': close_result.error_message
+                    "success": False,
+                    "processing_id": processing_id,
+                    "position_id": position.id,
+                    "ticket": position.mt5_ticket,
+                    "error": close_result.error_message,
                 }
 
         except Exception as e:
             self.logger.error(f"Error executing full close: {e}")
             return {
-                'success': False,
-                'processing_id': processing_id,
-                'error': f"Full close exception: {e}"
+                "success": False,
+                "processing_id": processing_id,
+                "error": f"Full close exception: {e}",
             }
 
     async def _execute_partial_close(
-        self,
-        position: Position,
-        percentage: float,
-        processing_id: str
+        self, position: Position, percentage: float, processing_id: str
     ) -> dict:
         """Execute partial position close."""
         try:
             if not position.mt5_ticket:
                 return {
-                    'success': False,
-                    'processing_id': processing_id,
-                    'error': f'Position {position.id} has no MT5 ticket'
+                    "success": False,
+                    "processing_id": processing_id,
+                    "error": f"Position {position.id} has no MT5 ticket",
                 }
 
             # Execute MT5 partial close
             close_result = await self.position_manager.close_position_partial(
-                position.mt5_ticket,
-                percentage
+                position.mt5_ticket, percentage
             )
 
             if close_result.success:
@@ -504,34 +499,34 @@ class CloseProcessor:
                     close_result.profit or 0.0,
                     close_result.volume_closed or 0.0,
                     percentage,
-                    processing_id
+                    processing_id,
                 )
 
                 return {
-                    'success': True,
-                    'processing_id': processing_id,
-                    'position_id': position.id,
-                    'ticket': position.mt5_ticket,
-                    'percentage': percentage,
-                    'volume_closed': close_result.volume_closed,
-                    'close_price': close_result.close_price,
-                    'profit': close_result.profit
+                    "success": True,
+                    "processing_id": processing_id,
+                    "position_id": position.id,
+                    "ticket": position.mt5_ticket,
+                    "percentage": percentage,
+                    "volume_closed": close_result.volume_closed,
+                    "close_price": close_result.close_price,
+                    "profit": close_result.profit,
                 }
             else:
                 return {
-                    'success': False,
-                    'processing_id': processing_id,
-                    'position_id': position.id,
-                    'ticket': position.mt5_ticket,
-                    'error': close_result.error_message
+                    "success": False,
+                    "processing_id": processing_id,
+                    "position_id": position.id,
+                    "ticket": position.mt5_ticket,
+                    "error": close_result.error_message,
                 }
 
         except Exception as e:
             self.logger.error(f"Error executing partial close: {e}")
             return {
-                'success': False,
-                'processing_id': processing_id,
-                'error': f"Partial close exception: {e}"
+                "success": False,
+                "processing_id": processing_id,
+                "error": f"Partial close exception: {e}",
             }
 
     async def _update_position_closed(
@@ -540,7 +535,7 @@ class CloseProcessor:
         close_price: float,
         profit: float,
         volume_closed: float,
-        processing_id: str
+        processing_id: str,
     ) -> None:
         """Update position record for full closure."""
         try:
@@ -548,10 +543,7 @@ class CloseProcessor:
 
             # Update position record
             success = await self.position_repo.update_position_closed(
-                position.id,
-                close_price,
-                profit,
-                close_time
+                position.id, close_price, profit, close_time
             )
 
             # Record audit trail
@@ -561,23 +553,23 @@ class CloseProcessor:
                 "FULL_CLOSE",
                 volume_closed,
                 success,
-                None if success else "Database update failed"
+                None if success else "Database update failed",
             )
 
             if success:
                 self.logger.info(
                     f"Successfully updated position {position.id} as closed",
                     extra={
-                        'processing_id': processing_id,
-                        'position_id': position.id,
-                        'close_price': close_price,
-                        'profit': profit
-                    }
+                        "processing_id": processing_id,
+                        "position_id": position.id,
+                        "close_price": close_price,
+                        "profit": profit,
+                    },
                 )
             else:
                 self.logger.error(
                     f"Failed to update position {position.id} as closed",
-                    extra={'processing_id': processing_id}
+                    extra={"processing_id": processing_id},
                 )
 
         except Exception as e:
@@ -586,11 +578,7 @@ class CloseProcessor:
             try:
                 update_repo = self.repo_factory.get_position_update_repository()
                 await update_repo.record_close_attempt(
-                    position.id,
-                    "FULL_CLOSE",
-                    volume_closed,
-                    False,
-                    str(e)
+                    position.id, "FULL_CLOSE", volume_closed, False, str(e)
                 )
             except Exception as audit_error:
                 self.logger.error(f"Failed to record audit trail: {audit_error}")
@@ -602,7 +590,7 @@ class CloseProcessor:
         profit: float,
         volume_closed: float,
         percentage: float,
-        processing_id: str
+        processing_id: str,
     ) -> None:
         """Update position record for partial closure."""
         try:
@@ -611,11 +599,7 @@ class CloseProcessor:
 
             # Update position record
             success = await self.position_repo.update_position_partial_close(
-                position.id,
-                close_price,
-                profit,
-                volume_remaining,
-                close_time
+                position.id, close_price, profit, volume_remaining, close_time
             )
 
             # Record audit trail
@@ -625,26 +609,26 @@ class CloseProcessor:
                 "PARTIAL_CLOSE",
                 volume_closed,
                 success,
-                None if success else "Database update failed"
+                None if success else "Database update failed",
             )
 
             if success:
                 self.logger.info(
                     f"Successfully updated position {position.id} for partial close",
                     extra={
-                        'processing_id': processing_id,
-                        'position_id': position.id,
-                        'percentage': percentage,
-                        'volume_closed': volume_closed,
-                        'volume_remaining': volume_remaining,
-                        'close_price': close_price,
-                        'profit': profit
-                    }
+                        "processing_id": processing_id,
+                        "position_id": position.id,
+                        "percentage": percentage,
+                        "volume_closed": volume_closed,
+                        "volume_remaining": volume_remaining,
+                        "close_price": close_price,
+                        "profit": profit,
+                    },
                 )
             else:
                 self.logger.error(
                     f"Failed to update position {position.id} for partial close",
-                    extra={'processing_id': processing_id}
+                    extra={"processing_id": processing_id},
                 )
 
         except Exception as e:
@@ -653,11 +637,7 @@ class CloseProcessor:
             try:
                 update_repo = self.repo_factory.get_position_update_repository()
                 await update_repo.record_close_attempt(
-                    position.id,
-                    "PARTIAL_CLOSE",
-                    volume_closed,
-                    False,
-                    str(e)
+                    position.id, "PARTIAL_CLOSE", volume_closed, False, str(e)
                 )
             except Exception as audit_error:
                 self.logger.error(f"Failed to record audit trail: {audit_error}")

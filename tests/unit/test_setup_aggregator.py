@@ -81,7 +81,9 @@ def test_live_log_sequence_sell_now_then_levels():
     signal = _parse("sell gold 4151-4152")
     assert (signal.entry_price, signal.entry_price_high) == (Decimal("4151"), Decimal("4152"))
 
-    _, setup = _run(["sell gold 4151-4152", "you can sell now 4144", "sl 4150", "TP 4135", "TP 2 : 4128"])
+    _, setup = _run(
+        ["sell gold 4151-4152", "you can sell now 4144", "sl 4150", "TP 4135", "TP 2 : 4128"]
+    )
     assert setup.fire_now
     assert (setup.low, setup.high) == (Decimal("4144"), Decimal("4144"))
     assert setup.sl == Decimal("4150")
@@ -128,7 +130,14 @@ def test_noise_does_not_reset_idle_timer():
 
 @pytest.mark.parametrize(
     "text",
-    ["Setup annulé", "on annule tout", "cancel this one", "oubliez le trade", "on laisse tomber", "pas de trade"],
+    [
+        "Setup annulé",
+        "on annule tout",
+        "cancel this one",
+        "oubliez le trade",
+        "on laisse tomber",
+        "pas de trade",
+    ],
 )
 def test_cancel_phrases(text):
     assert extract_followup(text).cancel
@@ -167,7 +176,9 @@ async def test_main_routes_complete_signal_to_instant_path_and_incomplete_to_set
     app._start_setup = MagicMock()
 
     meta = {"telegram_chat_id": 1, "sender": "s", "timestamp": NOW}
-    await app._on_telegram_message({**meta, "telegram_message_id": 1, "raw_text": "sell gold 4149\nSL 4165\nTP 4115"})
+    await app._on_telegram_message(
+        {**meta, "telegram_message_id": 1, "raw_text": "sell gold 4149\nSL 4165\nTP 4115"}
+    )
     app._handle_parsed_signal.assert_awaited_once()
     app._start_setup.assert_not_called()
 
@@ -207,7 +218,10 @@ def test_live_edit_sequence_restatement_keeps_zone_and_edit_note_is_ignored():
     assert (followup.entry, followup.entry_high) == (Decimal("4197"), Decimal("4200"))
     assert setup.apply(followup, LIVE_1418, NOW) == ["entry", "sl", "tp"]
     assert (setup.low, setup.high, setup.sl, setup.tp) == (
-        Decimal("4197"), Decimal("4200"), Decimal("4203"), Decimal("4190")
+        Decimal("4197"),
+        Decimal("4200"),
+        Decimal("4203"),
+        Decimal("4190"),
     )
     # "J'ai modifier 205 !" is a note about the edit; an LLM reading SL=205 must not move the SL
     assert setup.apply(Followup(sl=Decimal("205")), "J'ai modifier 205 !", NOW) == []
@@ -220,7 +234,10 @@ def test_three_step_setup_regex_only_no_llm_needed():
     assert RegexParser().parse("sell GOld") is None  # no price: nothing started
     _, setup = _run(["Sell gold 4100 4105", "je vise les 4050", "invalidation autour 4115"])
     assert (setup.low, setup.high, setup.tp, setup.sl) == (
-        Decimal("4100"), Decimal("4105"), Decimal("4050"), Decimal("4115")
+        Decimal("4100"),
+        Decimal("4105"),
+        Decimal("4050"),
+        Decimal("4115"),
     )
     # follow-ups are fully regex-resolved -> LLM fallback (and its context) never involved
     assert not extract_followup("je vise les 4050").empty
@@ -228,14 +245,18 @@ def test_three_step_setup_regex_only_no_llm_needed():
     # new-trade LLM guard: no direction word -> no trade; French verbs still count
     assert not has_action_word("**PE SNIPER 4180,95 GOLD SCALP**")
     assert not has_action_word("on regarde ça vendredi")
-    assert all(has_action_word(t) for t in ("je vais vendre l'or", "acheter gold", "j'achète", "je vends"))
+    assert all(
+        has_action_word(t) for t in ("je vais vendre l'or", "acheter gold", "j'achète", "je vends")
+    )
 
 
 def test_llm_user_message_carries_setup_context():
     from src.signal_parser.llm_parser import LLMParser
 
     parser = LLMParser()
-    prompt = parser._prepare_prompt("Je vise les 4050", "Setup en attente: SELL GOLD entrée 4100-4105")
+    prompt = parser._prepare_prompt(
+        "Je vise les 4050", "Setup en attente: SELL GOLD entrée 4100-4105"
+    )
     user = prompt.removeprefix(parser._prompt_template).strip()
     assert user.startswith("Contexte:\nSetup en attente: SELL GOLD entrée 4100-4105")
     assert user.endswith("Message à analyser:\nJe vise les 4050")
@@ -266,14 +287,20 @@ def test_followup_tp_list_slots_and_final_target():
     assert setup.tps == [Decimal("4180"), Decimal("4170"), Decimal("4160")]
     setup.apply(extract_followup("je vise les 4150"), "je vise les 4150", NOW)
     assert setup.tps[-1] == Decimal("4150") and len(setup.tps) == 4
-    setup.apply(extract_followup("je vise les 4175"), "je vise les 4175", NOW)  # nearer final target
+    setup.apply(
+        extract_followup("je vise les 4175"), "je vise les 4175", NOW
+    )  # nearer final target
     assert setup.tps == [Decimal("4180"), Decimal("4175")]
 
 
 def test_ladder_legs_spacing_and_scale_out_tps():
     _, setup = _run(["SELL GOLD 4190 4195", "TP 4180 | 4170 | 4160"])
     assert setup.legs() == [Decimal("4190"), Decimal("4192.5"), Decimal("4195")]
-    assert [setup.leg_tp(i) for i in range(3)] == [Decimal("4180"), Decimal("4170"), Decimal("4160")]
+    assert [setup.leg_tp(i) for i in range(3)] == [
+        Decimal("4180"),
+        Decimal("4170"),
+        Decimal("4160"),
+    ]
     assert not setup.leg_reached(1, Decimal("4191"), Decimal("1"))
     assert setup.leg_reached(1, Decimal("4191.5"), Decimal("1"))
 
@@ -327,18 +354,23 @@ async def test_main_ladder_fills_legs_progressively_then_tp1_moves_rest_to_break
     _, setup = _run(["SELL GOLD 4190 4195\nSL 4200\nTP 4180 | 4170 | 4160"])
 
     await app._maybe_fire_setup(setup, Decimal("4190.3"))  # leg 1 (complete -> live check)
-    await app._maybe_fire_setup(setup, Decimal("4191"))    # leg 2 level 4192.5 not reached
+    await app._maybe_fire_setup(setup, Decimal("4191"))  # leg 2 level 4192.5 not reached
     assert len(opened) == 1
     await app._maybe_fire_setup(setup, Decimal("4195.2"))  # jump: legs 2 and 3 due together
     assert [o[2] for o in opened] == [Decimal("4180"), Decimal("4170"), Decimal("4160")]
     assert [o[3] for o in opened] == [False, True, True]  # extra legs reuse the executed signal
     assert not setup.armed and setup.planned_legs == 3
 
-    app.position_manager = SimpleNamespace(get_close_reason=AsyncMock(side_effect=["tp", None, None]))
+    app.position_manager = SimpleNamespace(
+        get_close_reason=AsyncMock(side_effect=["tp", None, None])
+    )
     assert await app._track_setup_legs(setup) is False
     assert setup.be_done
     be_calls = [c.args for c in app._apply_position_levels.await_args_list]
-    assert be_calls == [(setup.positions[1], Decimal("4195.2"), None), (setup.positions[2], Decimal("4195.2"), None)]
+    assert be_calls == [
+        (setup.positions[1], Decimal("4195.2"), None),
+        (setup.positions[2], Decimal("4195.2"), None),
+    ]
 
 
 ZONE_POST = """Première BUY ZONE autour de 4174–4178
@@ -360,7 +392,12 @@ def test_zone_post_parsed_and_normal_signals_are_not_zones():
         (ParsedAction.BUY, Decimal("4158"), Decimal("4162")),
     ]
     assert targets == [Decimal("4188"), Decimal("4195"), Decimal("4219")]
-    for text in ["BUY GOLD 4174", "sell gold 4149\nSL 4165\nTP 4115", "SELL GOLD 4190 4195", "on est dans la zone 4174"]:
+    for text in [
+        "BUY GOLD 4174",
+        "sell gold 4149\nSL 4165\nTP 4115",
+        "SELL GOLD 4190 4195",
+        "on est dans la zone 4174",
+    ]:
         assert extract_zone_hint(text) is None
 
 
@@ -381,9 +418,13 @@ async def test_main_routes_zone_post_to_watch_and_regular_signals_unchanged():
     app._handle_parsed_signal.assert_not_awaited()
     app._start_setup.assert_not_called()
 
-    await app._on_telegram_message({**meta, "telegram_message_id": 2, "raw_text": "sell gold 4149\nSL 4165\nTP 4115"})
+    await app._on_telegram_message(
+        {**meta, "telegram_message_id": 2, "raw_text": "sell gold 4149\nSL 4165\nTP 4115"}
+    )
     app._handle_parsed_signal.assert_awaited_once()  # instant path, as before
-    await app._on_telegram_message({**meta, "telegram_message_id": 3, "raw_text": "SELL GOLD 4190 4195"})
+    await app._on_telegram_message(
+        {**meta, "telegram_message_id": 3, "raw_text": "SELL GOLD 4190 4195"}
+    )
     app._start_setup.assert_called_once()  # setup path, as before
     assert app._start_zone_watch.call_count == 1
 
@@ -396,10 +437,17 @@ async def test_confirmed_zone_becomes_complete_setup_with_sweep_sl_and_post_targ
 
     app = ApplicationManager()
     app._watch_setup = AsyncMock()
-    state = RejectionState(sell=False, low=Decimal("4174"), high=Decimal("4178"),
-                           phase=Phase.CONFIRMED, extreme=Decimal("4172.2"))
+    state = RejectionState(
+        sell=False,
+        low=Decimal("4174"),
+        high=Decimal("4178"),
+        phase=Phase.CONFIRMED,
+        extreme=Decimal("4172.2"),
+    )
     zone = ZoneEntry(ParsedAction.BUY, Decimal("4174"), Decimal("4178"), state)
-    watch = ZoneWatch(1, 7, "s", NOW, "GOLD", [zone], [Decimal("4219"), Decimal("4188"), Decimal("4170")], NOW)
+    watch = ZoneWatch(
+        1, 7, "s", NOW, "GOLD", [zone], [Decimal("4219"), Decimal("4188"), Decimal("4170")], NOW
+    )
     await app._on_zone_confirmed(watch, 0, zone, Decimal("0.5"))
     setup = app._setup_aggregator.get(1)
     assert setup.action == ParsedAction.BUY and setup.message_id == 7 and setup.fire_now
@@ -420,21 +468,31 @@ async def test_zone_followups_update_watch_from_live_test_messages():
     app.llm_parser = MagicMock(parse_with_llm=AsyncMock(return_value=None))
 
     meta = {"telegram_chat_id": -1004311007519, "sender": "s", "timestamp": NOW}
-    await app._on_telegram_message({**meta, "telegram_message_id": 57, "raw_text": "gold buy zone 4124-4128"})
+    await app._on_telegram_message(
+        {**meta, "telegram_message_id": 57, "raw_text": "gold buy zone 4124-4128"}
+    )
     watch = app._setup_aggregator.get_zone(-1004311007519)
     assert watch is not None and watch.targets == []
 
-    await app._on_telegram_message({**meta, "telegram_message_id": 58, "raw_text": "targets are 4145, 4160 ,4176"})
+    await app._on_telegram_message(
+        {**meta, "telegram_message_id": 58, "raw_text": "targets are 4145, 4160 ,4176"}
+    )
     assert watch.targets == [Decimal("4145"), Decimal("4160"), Decimal("4176")]
-    await app._on_telegram_message({**meta, "telegram_message_id": 59, "raw_text": "invalidation 4130"})
+    await app._on_telegram_message(
+        {**meta, "telegram_message_id": 59, "raw_text": "invalidation 4130"}
+    )
     assert watch.sl is None  # above a BUY zone: wrong side
-    await app._on_telegram_message({**meta, "telegram_message_id": 60, "raw_text": "invalidation sous 4118"})
+    await app._on_telegram_message(
+        {**meta, "telegram_message_id": 60, "raw_text": "invalidation sous 4118"}
+    )
     assert watch.sl == Decimal("4118")
     app.llm_parser.parse_with_llm.assert_not_awaited()
     app._validate_live_price.assert_not_awaited()
     app._handle_parsed_signal.assert_not_awaited()
 
-    await app._on_telegram_message({**meta, "telegram_message_id": 61, "raw_text": "on annule la zone"})
+    await app._on_telegram_message(
+        {**meta, "telegram_message_id": 61, "raw_text": "on annule la zone"}
+    )
     assert app._setup_aggregator.get_zone(-1004311007519) is None
 
 
@@ -446,10 +504,18 @@ async def test_unlinked_modify_is_ignored_without_live_price_check():
     app = ApplicationManager()
     app.regex_parser = RegexParser()
     app._validate_live_price = AsyncMock(return_value=False)
-    modify = ParsedSignal(parsed_action=ParsedAction.MODIFY, symbol="GOLD", take_profit=Decimal("4145"))
+    modify = ParsedSignal(
+        parsed_action=ParsedAction.MODIFY, symbol="GOLD", take_profit=Decimal("4145")
+    )
     app.llm_parser = MagicMock(parse_with_llm=AsyncMock(return_value=modify))
     await app._on_telegram_message(
-        {"telegram_chat_id": 5, "telegram_message_id": 1, "sender": "s", "timestamp": NOW, "raw_text": "targets are 4145"}
+        {
+            "telegram_chat_id": 5,
+            "telegram_message_id": 1,
+            "sender": "s",
+            "timestamp": NOW,
+            "raw_text": "targets are 4145",
+        }
     )
     app._validate_live_price.assert_not_awaited()
 
@@ -462,8 +528,13 @@ async def test_confirmed_zone_uses_author_invalidation_as_sl():
 
     app = ApplicationManager()
     app._watch_setup = AsyncMock()
-    state = RejectionState(sell=False, low=Decimal("4124"), high=Decimal("4128"),
-                           phase=Phase.CONFIRMED, extreme=Decimal("4122.4"))
+    state = RejectionState(
+        sell=False,
+        low=Decimal("4124"),
+        high=Decimal("4128"),
+        phase=Phase.CONFIRMED,
+        extreme=Decimal("4122.4"),
+    )
     zone = ZoneEntry(ParsedAction.BUY, Decimal("4124"), Decimal("4128"), state)
     watch = ZoneWatch(1, 57, "s", NOW, "GOLD", [zone], [Decimal("4145")], NOW, sl=Decimal("4118"))
     await app._on_zone_confirmed(watch, 0, zone, Decimal("0.5"))
@@ -483,7 +554,9 @@ def _zone_app(price: str):
     app._order_volume = AsyncMock(return_value=0.1)
     app._apply_position_levels = AsyncMock()
     app.llm_parser = MagicMock(parse_with_llm=AsyncMock(return_value=None))
-    app.mt5_connection_manager = SimpleNamespace(get_current_price=AsyncMock(return_value=Decimal(price)))
+    app.mt5_connection_manager = SimpleNamespace(
+        get_current_price=AsyncMock(return_value=Decimal(price))
+    )
     opened = []
 
     async def fake_open(signal, volume=None, allow_reuse=False):
@@ -515,9 +588,13 @@ async def test_live_sequence_buy_now_takes_one_early_leg_and_zone_confirmation_a
 
     await _send(app, 62, "gold buy now")
     setup = app._setup_aggregator.get(ZONE_CHAT)
-    assert watch.linked_setup is setup and app._setup_aggregator.get_zone(ZONE_CHAT) is watch  # zone kept
+    assert (
+        watch.linked_setup is setup and app._setup_aggregator.get_zone(ZONE_CHAT) is watch
+    )  # zone kept
     assert setup.planned_legs == 3 and setup.hold_at == 1
-    assert setup.close_invalidation == (Decimal("4121"), 30) and setup.sl == Decimal("4118.0")  # protective
+    assert setup.close_invalidation == (Decimal("4121"), 30) and setup.sl == Decimal(
+        "4118.0"
+    )  # protective
     await app._maybe_fire_setup(setup, Decimal("4132.74"))
     assert opened == [(Decimal("4118.0"), Decimal("4145"), False)]  # ONE leg, TP1
     assert not setup.armed
@@ -532,7 +609,9 @@ async def test_live_sequence_buy_now_takes_one_early_leg_and_zone_confirmation_a
     await app._maybe_fire_setup(setup, Decimal("4129.5"))
     assert [o[1] for o in opened] == [Decimal("4145"), Decimal("4160"), Decimal("4176")]
     assert [o[2] for o in opened] == [False, True, True]
-    assert all(o[0] == Decimal("4118.0") for o in opened)  # author's invalidation kept, not sweep SL
+    assert all(
+        o[0] == Decimal("4118.0") for o in opened
+    )  # author's invalidation kept, not sweep SL
 
 
 @pytest.mark.asyncio
@@ -543,7 +622,9 @@ async def test_buy_now_with_single_target_gives_one_extra_zone_leg():
     await _send(app, 3, "buy now")
     setup = app._setup_aggregator.get(ZONE_CHAT)
     assert setup.planned_legs == 2 and setup.tps == [Decimal("4145")]
-    assert setup.sl is None  # no invalidation yet: early leg uses the default SL, sweep SL comes later
+    assert (
+        setup.sl is None
+    )  # no invalidation yet: early leg uses the default SL, sweep SL comes later
 
 
 @pytest.mark.asyncio
@@ -576,8 +657,17 @@ async def test_m30_close_beyond_invalidation_closes_all_legs_but_wick_does_not()
     assert setup.close_invalidation == (Decimal("4121"), 30)
     setup.positions = [SimpleNamespace(mt5_ticket=1), SimpleNamespace(mt5_ticket=2)]
     app._setup_aggregator.adopt(setup)
-    app.position_manager = SimpleNamespace(close_position_full=AsyncMock(return_value=SimpleNamespace(success=True)))
-    bar = lambda t, low, close: (t, Decimal("4125"), Decimal("4126"), Decimal(low), Decimal(close), 10)  # noqa: E731
+    app.position_manager = SimpleNamespace(
+        close_position_full=AsyncMock(return_value=SimpleNamespace(success=True))
+    )
+    bar = lambda t, low, close: (
+        t,
+        Decimal("4125"),
+        Decimal("4126"),
+        Decimal(low),
+        Decimal(close),
+        10,
+    )  # noqa: E731
     rates = [bar(0, "4123", "4124"), bar(1800, "4122", "4123")]
     app.mt5_connection_manager = SimpleNamespace(get_closed_rates=AsyncMock(return_value=rates))
     assert await app._check_close_invalidation(setup) is False  # baseline
@@ -628,7 +718,9 @@ async def test_complete_four_tp_signal_still_opens_four_equal_legs():
     app._validate_live_price = AsyncMock(return_value=True)
     app._order_volume = AsyncMock(return_value=0.1)
     app._apply_position_levels = AsyncMock()
-    app._handle_parsed_signal = AsyncMock(side_effect=lambda *_, **__: SimpleNamespace(mt5_ticket=1, open_price=1.0))
+    app._handle_parsed_signal = AsyncMock(
+        side_effect=lambda *_, **__: SimpleNamespace(mt5_ticket=1, open_price=1.0)
+    )
     _, setup = _run(["BUY GOLD 4136 4139\nSL 4128\nTP 4155 | 4165 | 4176 | 4190"])
 
     await app._maybe_fire_setup(setup, Decimal("4139"))
@@ -675,7 +767,12 @@ def test_sl_range_without_candle_close_is_a_hard_sl_at_far_edge_and_single_sl_un
 def test_objectif_range_becomes_last_tp_nearest_edge():
     signal = _parse(SIGNAL_1719)
     assert signal.stop_loss == Decimal("4187")
-    assert signal.take_profits == [Decimal("4167"), Decimal("4153"), Decimal("4143"), Decimal("4120")]
+    assert signal.take_profits == [
+        Decimal("4167"),
+        Decimal("4153"),
+        Decimal("4143"),
+        Decimal("4120"),
+    ]
 
 
 def test_potential_sell_is_a_zone_watch_not_an_order():
@@ -685,14 +782,18 @@ def test_potential_sell_is_a_zone_watch_not_an_order():
     assert zones == [(ParsedAction.SELL, Decimal("4129.36"), Decimal("4129.36"))] and targets == []
 
 
-@pytest.mark.parametrize("text", ["Clôture dns 5", "clôture dans 5 min", "Attendez la clôture M30", "__clôture H1__"])
+@pytest.mark.parametrize(
+    "text", ["Clôture dns 5", "clôture dans 5 min", "Attendez la clôture M30", "__clôture H1__"]
+)
 def test_candle_close_remarks_are_not_trade_closes(text):
     from src.signal_parser.patterns import is_candle_close_remark
 
     assert is_candle_close_remark(text)
 
 
-@pytest.mark.parametrize("text", ["Je clôture", "Clôture de la position", "clôture tout maintenant"])
+@pytest.mark.parametrize(
+    "text", ["Je clôture", "Clôture de la position", "clôture tout maintenant"]
+)
 def test_real_close_orders_still_close(text):
     from src.signal_parser.patterns import is_candle_close_remark
 
@@ -709,13 +810,17 @@ async def test_main_complete_signal_with_candle_close_sl_goes_through_setup():
     app._handle_parsed_signal = AsyncMock()
     app._start_setup = MagicMock()
     meta = {"telegram_chat_id": 1, "telegram_message_id": 5, "sender": "s", "timestamp": NOW}
-    await app._on_telegram_message({**meta, "raw_text": "SELL GOLD 4149\nSL 4165 clôture M30\nTP 4115"})
+    await app._on_telegram_message(
+        {**meta, "raw_text": "SELL GOLD 4149\nSL 4165 clôture M30\nTP 4115"}
+    )
     app._start_setup.assert_called_once()
     app._handle_parsed_signal.assert_not_awaited()
 
 
 @pytest.mark.asyncio
-async def test_single_leg_with_candle_close_invalidation_keeps_being_watched_after_idle(monkeypatch):
+async def test_single_leg_with_candle_close_invalidation_keeps_being_watched_after_idle(
+    monkeypatch,
+):
     import asyncio
     from types import SimpleNamespace
 

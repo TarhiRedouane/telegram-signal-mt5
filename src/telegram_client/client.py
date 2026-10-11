@@ -245,27 +245,26 @@ class TelegramClient:
                 if entity:
                     self._connected_groups[group] = entity
                     connection_results[group] = {
-                        'success': True,
-                        'entity': entity,
-                        'title': getattr(entity, 'title', getattr(entity, 'first_name', group)),
-                        'id': entity.id
+                        "success": True,
+                        "entity": entity,
+                        "title": getattr(entity, "title", getattr(entity, "first_name", group)),
+                        "id": entity.id,
                     }
                     self.logger.info(f"Successfully connected to group: {group}")
                 else:
                     connection_results[group] = {
-                        'success': False,
-                        'error': 'Failed to get group entity'
+                        "success": False,
+                        "error": "Failed to get group entity",
                     }
                     self.logger.error(f"Failed to connect to group: {group}")
 
             except Exception as e:
-                connection_results[group] = {
-                    'success': False,
-                    'error': str(e)
-                }
+                connection_results[group] = {"success": False, "error": str(e)}
                 self.logger.error(f"Error connecting to group {group}: {e}")
 
-        successful_connections = sum(1 for result in connection_results.values() if result['success'])
+        successful_connections = sum(
+            1 for result in connection_results.values() if result["success"]
+        )
         self.logger.info(f"Connected to {successful_connections}/{len(groups)} groups")
 
         return connection_results
@@ -283,7 +282,7 @@ class TelegramClient:
             Telegram entity or None if not found
         """
         try:
-            if group.startswith('@'):
+            if group.startswith("@"):
                 # Username format
                 entity = await self.client.get_entity(group)
             else:
@@ -390,10 +389,14 @@ class TelegramClient:
                         )
 
                         # Attempt auto-reconnection if enabled and failures exceed threshold
-                        if (self._auto_reconnect_enabled and
-                            self._connection_failures >= self._max_connection_failures):
+                        if (
+                            self._auto_reconnect_enabled
+                            and self._connection_failures >= self._max_connection_failures
+                        ):
 
-                            self.logger.warning("Max connection failures reached, attempting auto-reconnection")
+                            self.logger.warning(
+                                "Max connection failures reached, attempting auto-reconnection"
+                            )
 
                             success = await self._attempt_auto_reconnection()
                             if success:
@@ -417,7 +420,7 @@ class TelegramClient:
     async def _get_me_with_circuit_breaker(self) -> Any:
         """Get current user info with circuit breaker protection."""
         return await self.client.get_me()
-    
+
     async def _perform_health_check(self) -> bool:
         """
         Perform connection health check.
@@ -466,10 +469,12 @@ class TelegramClient:
         for attempt in range(max_attempts):
             try:
                 # Calculate delay with exponential backoff
-                delay = min(base_delay * (2 ** attempt), max_delay)
+                delay = min(base_delay * (2**attempt), max_delay)
 
                 if attempt > 0:
-                    self.logger.info(f"Reconnection attempt {attempt + 1}/{max_attempts} in {delay}s")
+                    self.logger.info(
+                        f"Reconnection attempt {attempt + 1}/{max_attempts} in {delay}s"
+                    )
                     await asyncio.sleep(delay)
 
                 # Mark as disconnected and attempt reconnection
@@ -490,9 +495,13 @@ class TelegramClient:
                     self._connected_groups.clear()
 
                     connection_results = await self.connect_to_groups()
-                    successful_reconnects = sum(1 for r in connection_results.values() if r['success'])
+                    successful_reconnects = sum(
+                        1 for r in connection_results.values() if r["success"]
+                    )
 
-                    self.logger.info(f"Reconnected to {successful_reconnects}/{len(old_groups)} groups")
+                    self.logger.info(
+                        f"Reconnected to {successful_reconnects}/{len(old_groups)} groups"
+                    )
 
                 self.logger.info("Auto-reconnection completed successfully")
                 return True
@@ -513,14 +522,15 @@ class TelegramClient:
             Dictionary with connection status details
         """
         return {
-            'connected': self._is_connected,
-            'health_monitoring_active': self._health_check_task is not None and not self._health_check_task.done(),
-            'last_health_check': self._last_health_check.isoformat(),
-            'connection_failures': self._connection_failures,
-            'max_connection_failures': self._max_connection_failures,
-            'auto_reconnect_enabled': self._auto_reconnect_enabled,
-            'connected_groups_count': len(self._connected_groups),
-            'health_check_interval': self._health_check_interval
+            "connected": self._is_connected,
+            "health_monitoring_active": self._health_check_task is not None
+            and not self._health_check_task.done(),
+            "last_health_check": self._last_health_check.isoformat(),
+            "connection_failures": self._connection_failures,
+            "max_connection_failures": self._max_connection_failures,
+            "auto_reconnect_enabled": self._auto_reconnect_enabled,
+            "connected_groups_count": len(self._connected_groups),
+            "health_check_interval": self._health_check_interval,
         }
 
     async def __aenter__(self):

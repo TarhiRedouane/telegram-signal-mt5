@@ -170,7 +170,9 @@ class MT5Connection:
 
         if account_mode and not path:
             # Without a path MT5 attaches to whichever terminal runs, e.g. the manual live one
-            self.logger.error("MT5_PATH is empty: set the robot terminal path (or a broker profile). Not connecting.")
+            self.logger.error(
+                "MT5_PATH is empty: set the robot terminal path (or a broker profile). Not connecting."
+            )
             return False
 
         try:
@@ -531,7 +533,12 @@ class MT5ConnectionManager:
                         await asyncio.sleep(delay)
 
                     success = await connection.connect(
-                        self.login, self.password, self.server, self.path, self.portable, self.account_mode
+                        self.login,
+                        self.password,
+                        self.server,
+                        self.path,
+                        self.portable,
+                        self.account_mode,
                     )
                     if success:
                         self.logger.info(f"Successfully reconnected connection {connection.id}")
@@ -882,7 +889,9 @@ class MT5ConnectionManager:
                 health_status["healthy_connections"] += 1
 
         # Terminal "Algo Trading" button: readable via the API but only switchable by hand
-        terminal = mt5.terminal_info() if mt5 is not None and health_status["active_connections"] else None
+        terminal = (
+            mt5.terminal_info() if mt5 is not None and health_status["active_connections"] else None
+        )
         health_status["trade_allowed"] = getattr(terminal, "trade_allowed", None)
         account = mt5.account_info() if terminal is not None else None
         mode = account_mode_name(getattr(account, "trade_mode", None))
@@ -999,14 +1008,21 @@ class MT5ConnectionManager:
         if mt5 is None:
             return None
         timeframe = {
-            1: mt5.TIMEFRAME_M1, 3: mt5.TIMEFRAME_M3, 5: mt5.TIMEFRAME_M5, 15: mt5.TIMEFRAME_M15,
-            30: mt5.TIMEFRAME_M30, 60: mt5.TIMEFRAME_H1, 240: mt5.TIMEFRAME_H4,
+            1: mt5.TIMEFRAME_M1,
+            3: mt5.TIMEFRAME_M3,
+            5: mt5.TIMEFRAME_M5,
+            15: mt5.TIMEFRAME_M15,
+            30: mt5.TIMEFRAME_M30,
+            60: mt5.TIMEFRAME_H1,
+            240: mt5.TIMEFRAME_H4,
         }[minutes]
         async with self.get_connection() as connection:
             if not connection.connected:
                 return None
             for candidate in self._build_price_lookup_candidates(symbol):
-                rates = mt5.copy_rates_from_pos(self._resolve_broker_symbol_name(candidate), timeframe, 0, count + 1)
+                rates = mt5.copy_rates_from_pos(
+                    self._resolve_broker_symbol_name(candidate), timeframe, 0, count + 1
+                )
                 if rates is None or len(rates) == 0:
                     continue
                 return [
@@ -1217,7 +1233,12 @@ class MT5ConnectionManager:
                 else:
                     test_connection = MT5Connection(9999)  # Temporary connection ID
                     connection_success = await test_connection.connect(
-                        self.login, self.password, self.server, self.path, self.portable, self.account_mode
+                        self.login,
+                        self.password,
+                        self.server,
+                        self.path,
+                        self.portable,
+                        self.account_mode,
                     )
                     await test_connection.disconnect()
 

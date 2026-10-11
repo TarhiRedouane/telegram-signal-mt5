@@ -159,8 +159,8 @@ class AuthManager:
                     status["user_info"] = {
                         "id": me.id,
                         "first_name": me.first_name,
-                        "username": getattr(me, 'username', None),
-                        "phone": getattr(me, 'phone', None),
+                        "username": getattr(me, "username", None),
+                        "phone": getattr(me, "phone", None),
                     }
                 except Exception as e:
                     self.logger.warning(f"Could not get user info: {e}")

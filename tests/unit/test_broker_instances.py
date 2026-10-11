@@ -15,12 +15,29 @@ from src.risk_manager.risk_guard import account_mode_name, refusal
 pytestmark = pytest.mark.unit
 
 PROFILES = {
-    "raise": {"label": "Raise demo", "mt5_path": "C:\\MT5_Raise\\terminal64.exe", "portable": True,
-              "mode": "demo", "login": 111, "server": "Raise-Demo"},
-    "vt": {"label": "VT demo", "mt5_path": "C:\\MT5_VT\\terminal64.exe", "portable": True,
-           "mode": "demo", "login": 222, "server": "VT-Demo"},
-    "fx": {"label": "FX live", "mt5_path": "C:\\MT5_FX\\terminal64.exe", "mode": "real",
-           "login": 333, "server": "FX-Live"},
+    "raise": {
+        "label": "Raise demo",
+        "mt5_path": "C:\\MT5_Raise\\terminal64.exe",
+        "portable": True,
+        "mode": "demo",
+        "login": 111,
+        "server": "Raise-Demo",
+    },
+    "vt": {
+        "label": "VT demo",
+        "mt5_path": "C:\\MT5_VT\\terminal64.exe",
+        "portable": True,
+        "mode": "demo",
+        "login": 222,
+        "server": "VT-Demo",
+    },
+    "fx": {
+        "label": "FX live",
+        "mt5_path": "C:\\MT5_FX\\terminal64.exe",
+        "mode": "real",
+        "login": 333,
+        "server": "FX-Live",
+    },
 }
 
 
@@ -57,12 +74,21 @@ def test_instance_settings_use_profile_and_own_folders(tmp_path, monkeypatch):
     monkeypatch.chdir(tmp_path)
     monkeypatch.setenv("BOT_INSTANCE", "raise")
     monkeypatch.setenv("BROKER_RAISE_PASSWORD", "secret")
-    monkeypatch.setenv("DATABASE_URL", "sqlite+aiosqlite:///data/signal_ea.db")  # shared one is ignored
+    monkeypatch.setenv(
+        "DATABASE_URL", "sqlite+aiosqlite:///data/signal_ea.db"
+    )  # shared one is ignored
 
     s = Settings(env_file=str(tmp_path / "none.env"))
-    assert (s.mt5_login, s.mt5_server, s.mt5_path) == ("111", "Raise-Demo", "C:\\MT5_Raise\\terminal64.exe")
+    assert (s.mt5_login, s.mt5_server, s.mt5_path) == (
+        "111",
+        "Raise-Demo",
+        "C:\\MT5_Raise\\terminal64.exe",
+    )
     assert s.mt5_portable and s.mt5_account_mode == "demo" and s.mt5_password == "secret"
-    assert str(s.data_dir).replace("\\", "/") == "data/raise" and str(s.log_dir).replace("\\", "/") == "logs/raise"
+    assert (
+        str(s.data_dir).replace("\\", "/") == "data/raise"
+        and str(s.log_dir).replace("\\", "/") == "logs/raise"
+    )
     assert str(s.session_file).replace("\\", "/") == "data/raise/telegram.session"
     assert get_database_url().replace("\\", "/").endswith("data/raise/signal_ea.db")
     mt5_settings = s.get_mt5_settings()
@@ -99,10 +125,14 @@ def _fake_mt5(account):
 async def test_connect_never_switches_a_terminal_on_another_account(monkeypatch):
     import src.mt5_executor.connection as conn
 
-    live = SimpleNamespace(login=999, server="Broker-Live", trade_mode=2)  # the manual live terminal
+    live = SimpleNamespace(
+        login=999, server="Broker-Live", trade_mode=2
+    )  # the manual live terminal
     fake = _fake_mt5(live)
     monkeypatch.setattr(conn, "mt5", fake)
-    ok = await conn.MT5Connection(1).connect(111, "pw", "Raise-Demo", "C:\\MT5\\t.exe", True, "demo")
+    ok = await conn.MT5Connection(1).connect(
+        111, "pw", "Raise-Demo", "C:\\MT5\\t.exe", True, "demo"
+    )
     assert ok is False
     fake.login.assert_not_called()
     fake.initialize.assert_called_once_with("C:\\MT5\\t.exe", portable=True)
@@ -124,16 +154,33 @@ async def test_connect_refuses_real_account_in_demo_mode_and_accepts_match(monke
 
 def test_risk_guard_checks_account_on_every_order(tmp_path):
     settings = SimpleNamespace(
-        trading_enabled=True, kill_switch_file=tmp_path / "STOP", risk_percent=Decimal("3"),
-        max_open_risk_percent=Decimal("6"), max_open_legs=6, daily_loss_limit_percent=Decimal("6"),
-        mt5_account_mode="demo", mt5_login="111",
+        trading_enabled=True,
+        kill_switch_file=tmp_path / "STOP",
+        risk_percent=Decimal("3"),
+        max_open_risk_percent=Decimal("6"),
+        max_open_legs=6,
+        daily_loss_limit_percent=Decimal("6"),
+        mt5_account_mode="demo",
+        mt5_login="111",
     )
-    snap = {"balance": Decimal("10000"), "equity": Decimal("10000"), "open_legs": 0, "open_risk": Decimal(0),
-            "unprotected": 0, "realized_today": Decimal(0), "login": 111, "account_mode": "demo"}
+    snap = {
+        "balance": Decimal("10000"),
+        "equity": Decimal("10000"),
+        "open_legs": 0,
+        "open_risk": Decimal(0),
+        "unprotected": 0,
+        "realized_today": Decimal(0),
+        "login": 111,
+        "account_mode": "demo",
+    }
     assert refusal(snap, Decimal("100"), settings) is None
     assert "REAL account" in refusal({**snap, "account_mode": "real"}, Decimal("100"), settings)
     assert "account 999" in refusal({**snap, "login": 999}, Decimal("100"), settings)
-    assert account_mode_name(0) == "demo" and account_mode_name(2) == "real" and account_mode_name(None) is None
+    assert (
+        account_mode_name(0) == "demo"
+        and account_mode_name(2) == "real"
+        and account_mode_name(None) is None
+    )
 
 
 @pytest.mark.asyncio
@@ -142,5 +189,7 @@ async def test_connect_refuses_empty_terminal_path(monkeypatch):
 
     fake = _fake_mt5(None)
     monkeypatch.setattr(conn, "mt5", fake)
-    assert await conn.MT5Connection(1).connect(111, "pw", "Raise-Demo", None, False, "demo") is False
+    assert (
+        await conn.MT5Connection(1).connect(111, "pw", "Raise-Demo", None, False, "demo") is False
+    )
     fake.initialize.assert_not_called()

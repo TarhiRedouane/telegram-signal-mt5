@@ -22,6 +22,7 @@ from src.utils.formatters import (
 @dataclass
 class BreakEvenCalculation:
     """Result of break even price calculation."""
+
     entry_price: float
     new_sl: float
     old_sl: float | None
@@ -34,6 +35,7 @@ class BreakEvenCalculation:
 @dataclass
 class PositionValidation:
     """Result of position validation for break even."""
+
     valid: bool
     position_id: int
     mt5_ticket: int | None
@@ -87,26 +89,24 @@ class PositionModifier:
             price=entry_price,
             pips=1,
             symbol="GOLD",
-            direction=side  # Direction doesn't affect calculation for BE
+            direction=side,  # Direction doesn't affect calculation for BE
         )
 
         self.logger.debug(
             f"Break even price calculated: {entry_price} -> {new_sl}",
             extra={
-                'entry_price': entry_price,
-                'new_sl': new_sl,
-                'side': side,
-                'pip_adjustment': 1,
-                'symbol': 'GOLD'
-            }
+                "entry_price": entry_price,
+                "new_sl": new_sl,
+                "side": side,
+                "pip_adjustment": 1,
+                "symbol": "GOLD",
+            },
         )
 
         return new_sl
 
     def validate_break_even_calculation(
-        self,
-        position: Position,
-        new_sl: float
+        self, position: Position, new_sl: float
     ) -> BreakEvenCalculation:
         """
         Validate break even calculation for a position.
@@ -127,14 +127,12 @@ class PositionModifier:
                     pip_adjustment=1,
                     symbol="GOLD",
                     valid=False,
-                    error_message="Position entry price not available"
+                    error_message="Position entry price not available",
                 )
 
             # Calculate pip adjustment from entry
             pip_difference = calculate_pips_difference(
-                price1=new_sl,
-                price2=position.open_price,
-                symbol="GOLD"
+                price1=new_sl, price2=position.open_price, symbol="GOLD"
             )
 
             # Validate pip adjustment is exactly +1
@@ -146,7 +144,7 @@ class PositionModifier:
                     pip_adjustment=pip_difference,
                     symbol="GOLD",
                     valid=False,
-                    error_message=f"Invalid pip adjustment: {pip_difference:.3f} (expected: 1.0)"
+                    error_message=f"Invalid pip adjustment: {pip_difference:.3f} (expected: 1.0)",
                 )
 
             # Validate price is normalized correctly
@@ -159,7 +157,7 @@ class PositionModifier:
                     pip_adjustment=pip_difference,
                     symbol="GOLD",
                     valid=False,
-                    error_message=f"Price normalization error: {new_sl} != {normalized_sl}"
+                    error_message=f"Price normalization error: {new_sl} != {normalized_sl}",
                 )
 
             # Validation passed
@@ -169,7 +167,7 @@ class PositionModifier:
                 old_sl=position.current_sl,
                 pip_adjustment=pip_difference,
                 symbol="GOLD",
-                valid=True
+                valid=True,
             )
 
         except Exception as e:
@@ -181,7 +179,7 @@ class PositionModifier:
                 pip_adjustment=0.0,
                 symbol="GOLD",
                 valid=False,
-                error_message=f"Validation error: {e!s}"
+                error_message=f"Validation error: {e!s}",
             )
 
     def validate_position_for_break_even(self, position: Position) -> PositionValidation:
@@ -209,9 +207,7 @@ class PositionModifier:
                     valid=False,
                     position_id=position.id,
                     mt5_ticket=position.mt5_ticket,
-                    error_message=(
-                        f"Position {position.id} not open: {position.status}"
-                    )
+                    error_message=(f"Position {position.id} not open: {position.status}"),
                 )
 
             # Check MT5 ticket exists
@@ -220,7 +216,7 @@ class PositionModifier:
                     valid=False,
                     position_id=position.id,
                     mt5_ticket=None,
-                    error_message=f"Position {position.id} has no MT5 ticket"
+                    error_message=f"Position {position.id} has no MT5 ticket",
                 )
 
             # Check entry price exists
@@ -229,14 +225,13 @@ class PositionModifier:
                     valid=False,
                     position_id=position.id,
                     mt5_ticket=position.mt5_ticket,
-                    error_message=f"Position {position.id} missing entry price"
+                    error_message=f"Position {position.id} missing entry price",
                 )
 
             # Check if SL is already at break even (entry + 1 pip)
             if position.current_sl:
                 expected_be_sl = self.calculate_break_even_price(
-                    position.open_price,
-                    "BUY"  # Side doesn't matter for calculation
+                    position.open_price, "BUY"  # Side doesn't matter for calculation
                 )
 
                 current_sl_normalized = normalize_price(position.current_sl, "GOLD")
@@ -246,7 +241,7 @@ class PositionModifier:
                         valid=False,
                         position_id=position.id,
                         mt5_ticket=position.mt5_ticket,
-                        error_message=f"Position {position.id} SL already at break even level"
+                        error_message=f"Position {position.id} SL already at break even level",
                     )
 
             # Warning checks (don't invalidate but worth noting)
@@ -260,20 +255,20 @@ class PositionModifier:
             self.logger.debug(
                 f"Position {position.id} validated for break even",
                 extra={
-                    'position_id': position.id,
-                    'mt5_ticket': position.mt5_ticket,
-                    'entry_price': position.open_price,
-                    'current_sl': position.current_sl,
-                    'current_profit': position.profit,
-                    'warnings_count': len(warnings)
-                }
+                    "position_id": position.id,
+                    "mt5_ticket": position.mt5_ticket,
+                    "entry_price": position.open_price,
+                    "current_sl": position.current_sl,
+                    "current_profit": position.profit,
+                    "warnings_count": len(warnings),
+                },
             )
 
             return PositionValidation(
                 valid=True,
                 position_id=position.id,
                 mt5_ticket=position.mt5_ticket,
-                warnings=warnings if warnings else None
+                warnings=warnings if warnings else None,
             )
 
         except Exception as e:
@@ -282,14 +277,11 @@ class PositionModifier:
                 valid=False,
                 position_id=position.id,
                 mt5_ticket=position.mt5_ticket,
-                error_message=f"Validation error: {e!s}"
+                error_message=f"Validation error: {e!s}",
             )
 
     def validate_broker_constraints(
-        self,
-        position: Position,
-        new_sl: float,
-        current_market_price: float | None = None
+        self, position: Position, new_sl: float, current_market_price: float | None = None
     ) -> dict[str, Any]:
         """
         Validate broker-specific constraints for stop-loss modification.
@@ -302,59 +294,50 @@ class PositionModifier:
         Returns:
             Dictionary with constraint validation results
         """
-        constraints = {
-            'valid': True,
-            'violations': [],
-            'warnings': []
-        }
+        constraints = {"valid": True, "violations": [], "warnings": []}
 
         try:
             # Minimum SL distance from current price (if available)
             if current_market_price:
                 min_sl_distance_pips = 10  # Typical GOLD minimum
-                current_distance_pips = abs(calculate_pips_difference(
-                    new_sl, current_market_price, "GOLD"
-                ))
+                current_distance_pips = abs(
+                    calculate_pips_difference(new_sl, current_market_price, "GOLD")
+                )
 
                 if current_distance_pips < min_sl_distance_pips:
-                    constraints['violations'].append(
+                    constraints["violations"].append(
                         f"SL too close to market: {current_distance_pips:.1f} pips "
                         f"(minimum: {min_sl_distance_pips})"
                     )
-                    constraints['valid'] = False
+                    constraints["valid"] = False
 
             # Price range validation (reasonable bounds for GOLD)
             gold_min_price = 1000.0  # Reasonable minimum for GOLD
             gold_max_price = 3000.0  # Reasonable maximum for GOLD
 
             if not validate_price_range(new_sl, gold_min_price, gold_max_price):
-                constraints['violations'].append(
+                constraints["violations"].append(
                     f"SL price {new_sl} outside reasonable range "
                     f"({gold_min_price}-{gold_max_price})"
                 )
-                constraints['valid'] = False
+                constraints["valid"] = False
 
             # Position size considerations (larger positions may have stricter rules)
             if position.volume > 10.0:  # Large position warning
-                constraints['warnings'].append(
-                    f"Large position volume: {position.volume} lots"
-                )
+                constraints["warnings"].append(f"Large position volume: {position.volume} lots")
 
             return constraints
 
         except Exception as e:
             self.logger.error(f"Error validating broker constraints: {e}")
             return {
-                'valid': False,
-                'violations': [f"Constraint validation error: {e!s}"],
-                'warnings': []
+                "valid": False,
+                "violations": [f"Constraint validation error: {e!s}"],
+                "warnings": [],
             }
 
     def get_modification_summary(
-        self,
-        position: Position,
-        old_sl: float | None,
-        new_sl: float
+        self, position: Position, old_sl: float | None, new_sl: float
     ) -> dict[str, Any]:
         """
         Generate summary of break even modification for logging and audit.
@@ -369,37 +352,30 @@ class PositionModifier:
         """
         try:
             summary = {
-                'position_id': position.id,
-                'mt5_ticket': position.mt5_ticket,
-                'modification_type': 'BREAK_EVEN',
-                'entry_price': position.open_price,
-                'old_sl': old_sl,
-                'new_sl': new_sl,
-                'sl_change_pips': None,
-                'profit_secured': None,
-                'symbol': 'GOLD',
-                'timestamp': position.updated_at
+                "position_id": position.id,
+                "mt5_ticket": position.mt5_ticket,
+                "modification_type": "BREAK_EVEN",
+                "entry_price": position.open_price,
+                "old_sl": old_sl,
+                "new_sl": new_sl,
+                "sl_change_pips": None,
+                "profit_secured": None,
+                "symbol": "GOLD",
+                "timestamp": position.updated_at,
             }
 
             # Calculate SL change in pips
             if old_sl and position.open_price:
-                old_distance = calculate_pips_difference(
-                    old_sl, position.open_price, "GOLD"
-                )
-                new_distance = calculate_pips_difference(
-                    new_sl, position.open_price, "GOLD"
-                )
-                summary['sl_change_pips'] = new_distance - old_distance
+                old_distance = calculate_pips_difference(old_sl, position.open_price, "GOLD")
+                new_distance = calculate_pips_difference(new_sl, position.open_price, "GOLD")
+                summary["sl_change_pips"] = new_distance - old_distance
 
             # Calculate profit secured (if position currently profitable)
             if position.profit > 0:
-                summary['profit_secured'] = position.profit
+                summary["profit_secured"] = position.profit
 
             return summary
 
         except Exception as e:
             self.logger.error(f"Error generating modification summary: {e}")
-            return {
-                'position_id': position.id,
-                'error': str(e)
-            }
+            return {"position_id": position.id, "error": str(e)}

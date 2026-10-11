@@ -8,6 +8,7 @@ from enum import Enum
 
 class ParsedAction(Enum):
     """Supported trading actions."""
+
     BUY = "BUY"
     SELL = "SELL"
     CLOSE = "CLOSE"
@@ -17,6 +18,7 @@ class ParsedAction(Enum):
 @dataclass
 class ParsedSignal:
     """Structured signal object from parsing operations."""
+
     id: int | None = None
     telegram_message_id: int = 0
     telegram_chat_id: int = 0
@@ -43,6 +45,7 @@ class ParsedSignal:
 @dataclass
 class ValidationResult:
     """Result from signal validation operations."""
+
     is_valid: bool
     errors: list[str]
     warnings: list[str] | None = None

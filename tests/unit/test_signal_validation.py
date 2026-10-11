@@ -23,7 +23,7 @@ class TestSignalValidation:
         symbol: str = "GOLD",
         entry_price: Decimal = Decimal("3365"),
         stop_loss: Decimal | None = None,
-        take_profit: Decimal | None = None
+        take_profit: Decimal | None = None,
     ) -> ParsedSignal:
         """Create test ParsedSignal with specified parameters."""
         return ParsedSignal(
@@ -39,7 +39,7 @@ class TestSignalValidation:
             take_profit=take_profit,
             confidence_score=0.95,
             parser_type="REGEX",
-            status="PENDING"
+            status="PENDING",
         )
 
     def test_validation_result_structure(self):
@@ -52,9 +52,7 @@ class TestSignalValidation:
 
         # Invalid result with errors
         result = ValidationResult(
-            is_valid=False,
-            errors=["Price out of range"],
-            warnings=["High risk"]
+            is_valid=False, errors=["Price out of range"], warnings=["High risk"]
         )
         assert result.is_valid is False
         assert len(result.errors) == 1
@@ -65,10 +63,10 @@ class TestSignalValidation:
     def test_valid_gold_price_ranges(self, parser):
         """Test valid GOLD price range validation (2000-10000)."""
         valid_prices = [
-            Decimal("2000.0"),   # Lower boundary
-            Decimal("3365.5"),   # Middle
+            Decimal("2000.0"),  # Lower boundary
+            Decimal("3365.5"),  # Middle
             Decimal("9999.99"),  # Near upper boundary
-            Decimal("10000.0")   # Upper boundary
+            Decimal("10000.0"),  # Upper boundary
         ]
 
         for price in valid_prices:
@@ -81,9 +79,9 @@ class TestSignalValidation:
         """Test invalid GOLD price range validation."""
         invalid_prices = [
             Decimal("1999.99"),  # Below range
-            Decimal("1500.0"),   # Well below
-            Decimal("10000.01"), # Above range
-            Decimal("12000.0")   # Well above
+            Decimal("1500.0"),  # Well below
+            Decimal("10000.01"),  # Above range
+            Decimal("12000.0"),  # Well above
         ]
 
         for price in invalid_prices:
@@ -99,16 +97,14 @@ class TestSignalValidation:
 
         # Valid BUY SL (below entry)
         valid_sl_prices = [
-            Decimal("3360"),    # 5 points below
-            Decimal("3350"),    # 15 points below
-            Decimal("3300")     # 65 points below
+            Decimal("3360"),  # 5 points below
+            Decimal("3350"),  # 15 points below
+            Decimal("3300"),  # 65 points below
         ]
 
         for sl in valid_sl_prices:
             signal = self.create_test_signal(
-                action=ParsedAction.BUY,
-                entry_price=entry_price,
-                stop_loss=sl
+                action=ParsedAction.BUY, entry_price=entry_price, stop_loss=sl
             )
             validation = parser._validate_signal(signal)
             sl_errors = [e for e in validation.errors if "must be below entry" in e]
@@ -116,16 +112,14 @@ class TestSignalValidation:
 
         # Invalid BUY SL (above or equal to entry)
         invalid_sl_prices = [
-            Decimal("3365"),    # Equal to entry
-            Decimal("3370"),    # Above entry
-            Decimal("3400")     # Well above entry
+            Decimal("3365"),  # Equal to entry
+            Decimal("3370"),  # Above entry
+            Decimal("3400"),  # Well above entry
         ]
 
         for sl in invalid_sl_prices:
             signal = self.create_test_signal(
-                action=ParsedAction.BUY,
-                entry_price=entry_price,
-                stop_loss=sl
+                action=ParsedAction.BUY, entry_price=entry_price, stop_loss=sl
             )
             validation = parser._validate_signal(signal)
             sl_errors = [e for e in validation.errors if "must be below entry" in e]
@@ -137,16 +131,14 @@ class TestSignalValidation:
 
         # Valid SELL SL (above entry)
         valid_sl_prices = [
-            Decimal("3370"),    # 5 points above
-            Decimal("3380"),    # 15 points above
-            Decimal("3430")     # 65 points above
+            Decimal("3370"),  # 5 points above
+            Decimal("3380"),  # 15 points above
+            Decimal("3430"),  # 65 points above
         ]
 
         for sl in valid_sl_prices:
             signal = self.create_test_signal(
-                action=ParsedAction.SELL,
-                entry_price=entry_price,
-                stop_loss=sl
+                action=ParsedAction.SELL, entry_price=entry_price, stop_loss=sl
             )
             validation = parser._validate_signal(signal)
             sl_errors = [e for e in validation.errors if "must be above entry" in e]
@@ -154,16 +146,14 @@ class TestSignalValidation:
 
         # Invalid SELL SL (below or equal to entry)
         invalid_sl_prices = [
-            Decimal("3365"),    # Equal to entry
-            Decimal("3360"),    # Below entry
-            Decimal("3300")     # Well below entry
+            Decimal("3365"),  # Equal to entry
+            Decimal("3360"),  # Below entry
+            Decimal("3300"),  # Well below entry
         ]
 
         for sl in invalid_sl_prices:
             signal = self.create_test_signal(
-                action=ParsedAction.SELL,
-                entry_price=entry_price,
-                stop_loss=sl
+                action=ParsedAction.SELL, entry_price=entry_price, stop_loss=sl
             )
             validation = parser._validate_signal(signal)
             sl_errors = [e for e in validation.errors if "must be above entry" in e]
@@ -175,16 +165,14 @@ class TestSignalValidation:
 
         # Valid BUY TP (above entry)
         valid_tp_prices = [
-            Decimal("3370"),    # 5 points above
-            Decimal("3380"),    # 15 points above
-            Decimal("3430")     # 65 points above
+            Decimal("3370"),  # 5 points above
+            Decimal("3380"),  # 15 points above
+            Decimal("3430"),  # 65 points above
         ]
 
         for tp in valid_tp_prices:
             signal = self.create_test_signal(
-                action=ParsedAction.BUY,
-                entry_price=entry_price,
-                take_profit=tp
+                action=ParsedAction.BUY, entry_price=entry_price, take_profit=tp
             )
             validation = parser._validate_signal(signal)
             tp_errors = [e for e in validation.errors if "must be above entry" in e]
@@ -192,16 +180,14 @@ class TestSignalValidation:
 
         # Invalid BUY TP (below or equal to entry)
         invalid_tp_prices = [
-            Decimal("3365"),    # Equal to entry
-            Decimal("3360"),    # Below entry
-            Decimal("3300")     # Well below entry
+            Decimal("3365"),  # Equal to entry
+            Decimal("3360"),  # Below entry
+            Decimal("3300"),  # Well below entry
         ]
 
         for tp in invalid_tp_prices:
             signal = self.create_test_signal(
-                action=ParsedAction.BUY,
-                entry_price=entry_price,
-                take_profit=tp
+                action=ParsedAction.BUY, entry_price=entry_price, take_profit=tp
             )
             validation = parser._validate_signal(signal)
             tp_errors = [e for e in validation.errors if "must be above entry" in e]
@@ -213,16 +199,14 @@ class TestSignalValidation:
 
         # Valid SELL TP (below entry)
         valid_tp_prices = [
-            Decimal("3360"),    # 5 points below
-            Decimal("3350"),    # 15 points below
-            Decimal("3300")     # 65 points below
+            Decimal("3360"),  # 5 points below
+            Decimal("3350"),  # 15 points below
+            Decimal("3300"),  # 65 points below
         ]
 
         for tp in valid_tp_prices:
             signal = self.create_test_signal(
-                action=ParsedAction.SELL,
-                entry_price=entry_price,
-                take_profit=tp
+                action=ParsedAction.SELL, entry_price=entry_price, take_profit=tp
             )
             validation = parser._validate_signal(signal)
             tp_errors = [e for e in validation.errors if "must be below entry" in e]
@@ -230,16 +214,14 @@ class TestSignalValidation:
 
         # Invalid SELL TP (above or equal to entry)
         invalid_tp_prices = [
-            Decimal("3365"),    # Equal to entry
-            Decimal("3370"),    # Above entry
-            Decimal("3400")     # Well above entry
+            Decimal("3365"),  # Equal to entry
+            Decimal("3370"),  # Above entry
+            Decimal("3400"),  # Well above entry
         ]
 
         for tp in invalid_tp_prices:
             signal = self.create_test_signal(
-                action=ParsedAction.SELL,
-                entry_price=entry_price,
-                take_profit=tp
+                action=ParsedAction.SELL, entry_price=entry_price, take_profit=tp
             )
             validation = parser._validate_signal(signal)
             tp_errors = [e for e in validation.errors if "must be below entry" in e]
@@ -253,7 +235,7 @@ class TestSignalValidation:
         tight_sl_signal = self.create_test_signal(
             action=ParsedAction.BUY,
             entry_price=entry_price,
-            stop_loss=Decimal("3364.99")  # 0.01 difference
+            stop_loss=Decimal("3364.99"),  # 0.01 difference
         )
         validation = parser._validate_signal(tight_sl_signal)
         assert validation.is_valid  # Should still be valid
@@ -264,7 +246,7 @@ class TestSignalValidation:
         wide_sl_signal = self.create_test_signal(
             action=ParsedAction.BUY,
             entry_price=entry_price,
-            stop_loss=Decimal("3358.00")  # 7.0 difference > 5.0 limit
+            stop_loss=Decimal("3358.00"),  # 7.0 difference > 5.0 limit
         )
         validation = parser._validate_signal(wide_sl_signal)
         assert validation.is_valid  # Should still be valid
@@ -275,7 +257,7 @@ class TestSignalValidation:
         small_tp_signal = self.create_test_signal(
             action=ParsedAction.BUY,
             entry_price=entry_price,
-            take_profit=Decimal("3365.05")  # 0.05 difference < 0.10 minimum
+            take_profit=Decimal("3365.05"),  # 0.05 difference < 0.10 minimum
         )
         validation = parser._validate_signal(small_tp_signal)
         assert validation.is_valid  # Should still be valid
@@ -286,9 +268,7 @@ class TestSignalValidation:
         """Test validation when SL/TP are not provided."""
         # Signal without SL or TP should be valid
         signal = self.create_test_signal(
-            entry_price=Decimal("3365"),
-            stop_loss=None,
-            take_profit=None
+            entry_price=Decimal("3365"), stop_loss=None, take_profit=None
         )
         validation = parser._validate_signal(signal)
         assert validation.is_valid
@@ -299,9 +279,9 @@ class TestSignalValidation:
         # Signal with multiple validation issues
         problematic_signal = self.create_test_signal(
             action=ParsedAction.BUY,
-            entry_price=Decimal("1500"),        # Invalid price range
-            stop_loss=Decimal("1510"),          # Invalid SL logic
-            take_profit=Decimal("1490")         # Invalid TP logic
+            entry_price=Decimal("1500"),  # Invalid price range
+            stop_loss=Decimal("1510"),  # Invalid SL logic
+            take_profit=Decimal("1490"),  # Invalid TP logic
         )
         validation = parser._validate_signal(problematic_signal)
         assert not validation.is_valid
@@ -323,15 +303,14 @@ class TestSignalValidation:
             symbol="XAUUSD",
             entry_price=Decimal("3365"),
             stop_loss=Decimal("3350"),
-            take_profit=Decimal("3380")
+            take_profit=Decimal("3380"),
         )
         validation = parser._validate_signal(signal)
         assert validation.is_valid
 
         # Invalid XAUUSD price should fail
         invalid_signal = self.create_test_signal(
-            symbol="XAUUSD",
-            entry_price=Decimal("1500")  # Below valid range
+            symbol="XAUUSD", entry_price=Decimal("1500")  # Below valid range
         )
         validation = parser._validate_signal(invalid_signal)
         assert not validation.is_valid
@@ -341,10 +320,10 @@ class TestSignalValidation:
         """Test validation edge cases and boundary conditions."""
         # Exactly at price boundaries
         boundary_signals = [
-            (Decimal("2000.0"), True),    # Lower boundary - valid
-            (Decimal("10000.0"), True),   # Upper boundary - valid
+            (Decimal("2000.0"), True),  # Lower boundary - valid
+            (Decimal("10000.0"), True),  # Upper boundary - valid
             (Decimal("1999.99"), False),  # Just below - invalid
-            (Decimal("10000.01"), False)  # Just above - invalid
+            (Decimal("10000.01"), False),  # Just above - invalid
         ]
 
         for price, should_be_valid in boundary_signals:
@@ -359,7 +338,7 @@ class TestSignalValidation:
         exact_sl_signal = self.create_test_signal(
             action=ParsedAction.BUY,
             entry_price=entry,
-            stop_loss=Decimal("3364.95")  # Exactly 0.05 difference
+            stop_loss=Decimal("3364.95"),  # Exactly 0.05 difference
         )
         validation = parser._validate_signal(exact_sl_signal)
         # This is borderline - check that it doesn't crash and behavior is consistent
@@ -372,7 +351,7 @@ class TestSignalValidation:
             action=ParsedAction.BUY,
             entry_price=Decimal("3365.123456"),
             stop_loss=Decimal("3360.987654"),
-            take_profit=Decimal("3370.555555")
+            take_profit=Decimal("3370.555555"),
         )
         validation = parser._validate_signal(precise_signal)
         assert validation.is_valid
@@ -381,7 +360,7 @@ class TestSignalValidation:
         tiny_diff_signal = self.create_test_signal(
             action=ParsedAction.BUY,
             entry_price=Decimal("3365.000000"),
-            stop_loss=Decimal("3364.999999")  # 0.000001 difference
+            stop_loss=Decimal("3364.999999"),  # 0.000001 difference
         )
         validation = parser._validate_signal(tiny_diff_signal)
         # Should warn about very tight SL

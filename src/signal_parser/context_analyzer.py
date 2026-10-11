@@ -24,6 +24,7 @@ from src.utils.rate_limiter import llm_rate_limiter
 @dataclass
 class TelegramMessage:
     """Telegram message structure for context analysis."""
+
     telegram_message_id: int
     telegram_chat_id: int
     sender: str
@@ -38,6 +39,7 @@ class TelegramMessage:
 @dataclass
 class ContextAnalysisResult:
     """Result from LLM context analysis of update messages."""
+
     action: str  # "breakeven|close|modify|unknown"
     target_position: str | None  # mt5_ticket or null
     parameters: dict[str, Any]  # percentage, new_sl, new_tp
@@ -58,26 +60,25 @@ class ContextAnalyzer:
     def _load_prompt_template(self) -> str:
         """Load context analysis prompt template from config file."""
         try:
-            prompt_path = Path(__file__).parent.parent.parent / "config" / "prompts" / "context_analyzer.txt"
-            return prompt_path.read_text(encoding='utf-8')
+            prompt_path = (
+                Path(__file__).parent.parent.parent / "config" / "prompts" / "context_analyzer.txt"
+            )
+            return prompt_path.read_text(encoding="utf-8")
         except Exception as e:
             self.logger.error(f"Failed to load context analyzer prompt template: {e}")
             raise
 
     async def analyze_update_context(
-        self,
-        message: TelegramMessage,
-        parent_message: TelegramMessage,
-        positions: list[Position]
+        self, message: TelegramMessage, parent_message: TelegramMessage, positions: list[Position]
     ) -> ContextAnalysisResult | None:
         """
         Analyze ambiguous update message context using GPT-5-mini.
-        
+
         Args:
             message: Current update message to analyze
             parent_message: Parent message for context (original signal)
             positions: List of open positions for target identification
-            
+
         Returns:
             ContextAnalysisResult if analysis successful, None if failed or low confidence
         """
@@ -96,7 +97,9 @@ class ContextAnalyzer:
         cached_response = await llm_cache.get(cache_key)
         if cached_response:
             try:
-                result = self._reconstruct_result_from_cache(cached_response, correlation_id, start_time)
+                result = self._reconstruct_result_from_cache(
+                    cached_response, correlation_id, start_time
+                )
                 if result:
                     self.logger.info(
                         "Context analysis completed from cache",
@@ -107,9 +110,9 @@ class ContextAnalyzer:
                                 "confidence": result.confidence,
                                 "cache_hit": True,
                                 "correlation_id": correlation_id,
-                                "message_hash": self._hash_text(message.raw_text)
+                                "message_hash": self._hash_text(message.raw_text),
                             }
-                        }
+                        },
                     )
                     return result
             except Exception as e:
@@ -123,9 +126,9 @@ class ContextAnalyzer:
                     "context_analysis": {
                         **llm_rate_limiter.get_metrics(),
                         "correlation_id": correlation_id,
-                        "message_hash": self._hash_text(message.raw_text)
+                        "message_hash": self._hash_text(message.raw_text),
                     }
-                }
+                },
             )
             return None
 
@@ -142,9 +145,9 @@ class ContextAnalyzer:
                     "open_positions_count": len(positions),
                     "correlation_id": correlation_id,
                     "model": openai_client.model,
-                    **llm_rate_limiter.get_metrics()
+                    **llm_rate_limiter.get_metrics(),
                 }
-            }
+            },
         )
 
         try:
@@ -161,7 +164,9 @@ class ContextAnalyzer:
                 # Parse the LLM response
                 result = self._parse_llm_response(response, correlation_id, start_time)
 
-                if result and result.confidence >= 0.5:  # Store even medium confidence results in cache
+                if (
+                    result and result.confidence >= 0.5
+                ):  # Store even medium confidence results in cache
                     # Store in cache for future requests
                     await self._cache_response(cache_key, result, response)
 
@@ -180,9 +185,9 @@ class ContextAnalyzer:
                                 "tokens_used": response.get("usage", {}).get("total_tokens", 0),
                                 "cache_hit": False,
                                 "correlation_id": correlation_id,
-                                "message_hash": self._hash_text(message.raw_text)
+                                "message_hash": self._hash_text(message.raw_text),
                             }
-                        }
+                        },
                     )
                     return result
                 else:
@@ -193,9 +198,11 @@ class ContextAnalyzer:
                                 "confidence": result.confidence if result else 0.0,
                                 "action": result.action if result else "unknown",
                                 "correlation_id": correlation_id,
-                                "api_latency_ms": int((datetime.now() - start_time).total_seconds() * 1000)
+                                "api_latency_ms": int(
+                                    (datetime.now() - start_time).total_seconds() * 1000
+                                ),
                             }
-                        }
+                        },
                     )
 
         except Exception as e:
@@ -210,50 +217,58 @@ class ContextAnalyzer:
                         "message_hash": self._hash_text(message.raw_text),
                         "error": str(e),
                         "api_latency_ms": int((datetime.now() - start_time).total_seconds() * 1000),
-                        **llm_rate_limiter.get_metrics()
+                        **llm_rate_limiter.get_metrics(),
                     }
-                }
+                },
             )
 
         return None
 
-    def _generate_cache_key(self, message: TelegramMessage, parent_message: TelegramMessage, positions: list[Position]) -> str:
+    def _generate_cache_key(
+        self, message: TelegramMessage, parent_message: TelegramMessage, positions: list[Position]
+    ) -> str:
         """
         Generate cache key from normalized message content and context hash.
-        
+
         Args:
             message: Current message
             parent_message: Parent message context
             positions: Open positions list
-            
+
         Returns:
             Unique cache key string
         """
         # Normalize message text (lowercase, remove extra whitespace)
-        normalized_message = ' '.join(message.raw_text.lower().split())
-        normalized_parent = ' '.join(parent_message.raw_text.lower().split())
+        normalized_message = " ".join(message.raw_text.lower().split())
+        normalized_parent = " ".join(parent_message.raw_text.lower().split())
 
         # Create context hash from positions
-        positions_context = f"{len(positions)}_" + "_".join([
-            f"{p.mt5_ticket}_{p.signal.symbol}_{p.status.value}"
-            for p in positions[:5]  # Limit to first 5 positions for consistency
-        ])
+        positions_context = f"{len(positions)}_" + "_".join(
+            [
+                f"{p.mt5_ticket}_{p.signal.symbol}_{p.status.value}"
+                for p in positions[:5]  # Limit to first 5 positions for consistency
+            ]
+        )
 
         # Combine all context elements
-        cache_content = f"{self._prompt_template}|{normalized_message}|{normalized_parent}|{positions_context}"
+        cache_content = (
+            f"{self._prompt_template}|{normalized_message}|{normalized_parent}|{positions_context}"
+        )
 
         # Generate hash
-        return hashlib.sha256(cache_content.encode('utf-8')).hexdigest()
+        return hashlib.sha256(cache_content.encode("utf-8")).hexdigest()
 
-    def _prepare_context_prompt(self, message: TelegramMessage, parent_message: TelegramMessage, positions: list[Position]) -> str:
+    def _prepare_context_prompt(
+        self, message: TelegramMessage, parent_message: TelegramMessage, positions: list[Position]
+    ) -> str:
         """
         Prepare the context analysis prompt for GPT-5-mini.
-        
+
         Args:
             message: Current update message
             parent_message: Parent message for context
             positions: Open positions list
-            
+
         Returns:
             Complete prompt string for the LLM
         """
@@ -268,7 +283,7 @@ class ContextAnalyzer:
                 "current_sl": float(pos.current_sl) if pos.current_sl else None,
                 "current_tp": float(pos.current_tp) if pos.current_tp else None,
                 "status": getattr(pos.status, "value", pos.status),
-                "profit": float(pos.profit) if pos.profit is not None else 0.0
+                "profit": float(pos.profit) if pos.profit is not None else 0.0,
             }
             positions_context.append(pos_info)
 
@@ -277,14 +292,14 @@ class ContextAnalyzer:
             "current_message": {
                 "text": message.raw_text,
                 "timestamp": message.timestamp.isoformat(),
-                "sender": message.sender
+                "sender": message.sender,
             },
             "parent_message": {
                 "text": parent_message.raw_text,
                 "timestamp": parent_message.timestamp.isoformat(),
-                "sender": parent_message.sender
+                "sender": parent_message.sender,
             },
-            "open_positions": positions_context
+            "open_positions": positions_context,
         }
 
         # Combine template with context
@@ -294,11 +309,11 @@ class ContextAnalyzer:
     async def _make_openai_request(self, prompt: str, correlation_id: str) -> dict | None:
         """
         Make the actual request to OpenAI API with error handling and circuit breaker.
-        
+
         Args:
             prompt: Complete prompt to send to the API
             correlation_id: Correlation ID for logging
-            
+
         Returns:
             API response dictionary or None if failed
         """
@@ -316,14 +331,8 @@ class ContextAnalyzer:
                 **model_config,
                 "response_format": {"type": "json_object"},
                 "messages": [
-                    {
-                        "role": "system",
-                        "content": system_prompt
-                    },
-                    {
-                        "role": "user",
-                        "content": context_data
-                    }
+                    {"role": "system", "content": system_prompt},
+                    {"role": "user", "content": context_data},
                 ],
             }
             response = await openai_client.client.chat.completions.create(**request_options)
@@ -332,7 +341,7 @@ class ContextAnalyzer:
             if self._validate_api_response(response):
                 return {
                     "content": response.choices[0].message.content,
-                    "usage": response.usage.model_dump() if response.usage else {}
+                    "usage": response.usage.model_dump() if response.usage else {},
                 }
 
         except Exception as e:
@@ -344,33 +353,35 @@ class ContextAnalyzer:
     def _validate_api_response(self, response) -> bool:
         """
         Validate that API response has expected structure.
-        
+
         Args:
             response: OpenAI API response object
-            
+
         Returns:
             True if response is valid, False otherwise
         """
         try:
             return (
-                hasattr(response, 'choices') and
-                len(response.choices) > 0 and
-                hasattr(response.choices[0], 'message') and
-                hasattr(response.choices[0].message, 'content') and
-                response.choices[0].message.content is not None
+                hasattr(response, "choices")
+                and len(response.choices) > 0
+                and hasattr(response.choices[0], "message")
+                and hasattr(response.choices[0].message, "content")
+                and response.choices[0].message.content is not None
             )
         except Exception:
             return False
 
-    def _parse_llm_response(self, response: dict, correlation_id: str, start_time: datetime) -> ContextAnalysisResult | None:
+    def _parse_llm_response(
+        self, response: dict, correlation_id: str, start_time: datetime
+    ) -> ContextAnalysisResult | None:
         """
         Parse the JSON response from GPT-5-mini into ContextAnalysisResult object.
-        
+
         Args:
             response: API response dictionary
             correlation_id: Correlation ID for this analysis
             start_time: Analysis start time for latency calculation
-            
+
         Returns:
             ContextAnalysisResult object or None if parsing failed
         """
@@ -391,7 +402,9 @@ class ContextAnalyzer:
             # Validate required fields according to schema
             required_fields = ["action", "confidence"]
             if not all(field in analysis_data for field in required_fields):
-                self.logger.warning(f"LLM context analysis response missing required fields: {analysis_data}")
+                self.logger.warning(
+                    f"LLM context analysis response missing required fields: {analysis_data}"
+                )
                 return None
 
             # Validate action value
@@ -423,7 +436,7 @@ class ContextAnalyzer:
                 confidence=confidence,
                 reasoning=reasoning,
                 correlation_id=correlation_id,
-                analysis_latency_ms=latency_ms
+                analysis_latency_ms=latency_ms,
             )
 
             return result
@@ -435,22 +448,24 @@ class ContextAnalyzer:
                     "context_analysis": {
                         "response_content": response.get("content", "")[:200],  # First 200 chars
                         "error": str(e),
-                        "correlation_id": correlation_id
+                        "correlation_id": correlation_id,
                     }
-                }
+                },
             )
 
         return None
 
-    def _reconstruct_result_from_cache(self, cached_data: dict, correlation_id: str, start_time: datetime) -> ContextAnalysisResult | None:
+    def _reconstruct_result_from_cache(
+        self, cached_data: dict, correlation_id: str, start_time: datetime
+    ) -> ContextAnalysisResult | None:
         """
         Reconstruct ContextAnalysisResult from cached data.
-        
+
         Args:
             cached_data: Cached response data
             correlation_id: Current correlation ID
             start_time: Start time for latency calculation
-            
+
         Returns:
             ContextAnalysisResult object or None if reconstruction failed
         """
@@ -464,16 +479,18 @@ class ContextAnalyzer:
                 confidence=float(cached_data["confidence"]),
                 reasoning=cached_data.get("reasoning", ""),
                 correlation_id=correlation_id,
-                analysis_latency_ms=latency_ms
+                analysis_latency_ms=latency_ms,
             )
         except Exception as e:
             self.logger.error(f"Failed to reconstruct context analysis from cache: {e}")
             return None
 
-    async def _cache_response(self, cache_key: str, result: ContextAnalysisResult, api_response: dict) -> None:
+    async def _cache_response(
+        self, cache_key: str, result: ContextAnalysisResult, api_response: dict
+    ) -> None:
         """
         Cache the successful context analysis response.
-        
+
         Args:
             cache_key: Cache key for this analysis
             result: Analysis result object
@@ -487,7 +504,7 @@ class ContextAnalyzer:
                 "confidence": result.confidence,
                 "reasoning": result.reasoning,
                 "cached_at": datetime.now().isoformat(),
-                "api_usage": api_response.get("usage", {})
+                "api_usage": api_response.get("usage", {}),
             }
 
             await llm_cache.set(cache_key, cache_data, expiry_hours=24)
@@ -497,4 +514,4 @@ class ContextAnalyzer:
 
     def _hash_text(self, text: str) -> str:
         """Hash text for logging without exposing content."""
-        return hashlib.sha256(text.encode('utf-8')).hexdigest()[:16]
+        return hashlib.sha256(text.encode("utf-8")).hexdigest()[:16]

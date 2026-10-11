@@ -14,6 +14,7 @@ from src.database.repository import BaseRepository
 
 class AlertType(Enum):
     """Alert types for different severity levels."""
+
     BE_FAILED = "BE_FAILED"
     POSITION_NOT_FOUND = "POSITION_NOT_FOUND"
     CORRELATION_UNCERTAIN = "CORRELATION_UNCERTAIN"
@@ -24,6 +25,7 @@ class AlertType(Enum):
 
 class AlertSeverity(Enum):
     """Alert severity levels."""
+
     CRITICAL = "critical"
     WARNING = "warning"
     INFO = "info"
@@ -39,7 +41,7 @@ class Alert:
         message: str,
         component: str,
         metadata: dict[str, Any] | None = None,
-        timestamp: datetime | None = None
+        timestamp: datetime | None = None,
     ):
         self.alert_id = f"{alert_type.value}_{int((timestamp or datetime.now(UTC)).timestamp())}"
         self.alert_type = alert_type
@@ -62,7 +64,7 @@ class Alert:
             "metadata": self.metadata,
             "timestamp": self.timestamp.isoformat(),
             "acknowledged": self.acknowledged,
-            "acknowledged_at": self.acknowledged_at.isoformat() if self.acknowledged_at else None
+            "acknowledged_at": self.acknowledged_at.isoformat() if self.acknowledged_at else None,
         }
 
 
@@ -111,7 +113,7 @@ class AlertManager:
         component: str,
         severity: AlertSeverity = AlertSeverity.WARNING,
         metadata: dict[str, Any] | None = None,
-        force: bool = False
+        force: bool = False,
     ) -> Alert | None:
         """
         Trigger an alert with throttling and multi-channel delivery.
@@ -138,7 +140,7 @@ class AlertManager:
             severity=severity,
             message=message,
             component=component,
-            metadata=metadata
+            metadata=metadata,
         )
 
         # Update throttling tracking
@@ -173,13 +175,14 @@ class AlertManager:
                 "alert_type": alert.alert_type.value,
                 "severity": alert.severity.value,
                 "component": alert.component,
-                "metadata": alert.metadata
-            }
+                "metadata": alert.metadata,
+            },
         )
 
         # Console beep for critical alerts (optional)
         if alert.severity == AlertSeverity.CRITICAL:
             import contextlib
+
             with contextlib.suppress(Exception):
                 # Terminal bell character
                 print("\a", end="", flush=True)
@@ -269,7 +272,9 @@ class AlertManager:
         # Sort by timestamp (newest first)
         return sorted(alerts, key=lambda a: a.timestamp, reverse=True)
 
-    def get_alert_history(self, hours: int = 24, alert_type: AlertType | None = None) -> list[Alert]:
+    def get_alert_history(
+        self, hours: int = 24, alert_type: AlertType | None = None
+    ) -> list[Alert]:
         """
         Get alert history for specified time period.
 
@@ -282,10 +287,7 @@ class AlertManager:
         """
         cutoff_time = datetime.now(UTC) - timedelta(hours=hours)
 
-        alerts = [
-            alert for alert in self._active_alerts.values()
-            if alert.timestamp >= cutoff_time
-        ]
+        alerts = [alert for alert in self._active_alerts.values() if alert.timestamp >= cutoff_time]
 
         if alert_type:
             alerts = [alert for alert in alerts if alert.alert_type == alert_type]
@@ -307,8 +309,7 @@ class AlertManager:
 
         # Get alerts in time period
         period_alerts = [
-            alert for alert in self._active_alerts.values()
-            if alert.timestamp >= cutoff_time
+            alert for alert in self._active_alerts.values() if alert.timestamp >= cutoff_time
         ]
 
         # Count by type and severity
@@ -333,7 +334,7 @@ class AlertManager:
             "acknowledgment_rate": round(acknowledgment_rate, 1),
             "active_alerts": len(self.get_active_alerts()),
             "period_hours": hours,
-            "timestamp": datetime.now(UTC).isoformat()
+            "timestamp": datetime.now(UTC).isoformat(),
         }
 
     def clear_old_alerts(self, hours: int = 72) -> int:
@@ -349,7 +350,8 @@ class AlertManager:
         cutoff_time = datetime.now(UTC) - timedelta(hours=hours)
 
         alerts_to_remove = [
-            alert_id for alert_id, alert in self._active_alerts.items()
+            alert_id
+            for alert_id, alert in self._active_alerts.items()
             if alert.acknowledged and alert.timestamp < cutoff_time
         ]
 
@@ -374,7 +376,9 @@ class AlertManager:
             self.logger.warning(f"Shutting down with {active_count} unacknowledged alerts")
 
     # Convenience methods for common alert types
-    async def alert_be_failed(self, position_id: str, error_message: str, metadata: dict[str, Any] | None = None) -> Alert | None:
+    async def alert_be_failed(
+        self, position_id: str, error_message: str, metadata: dict[str, Any] | None = None
+    ) -> Alert | None:
         """Trigger break-even modification failed alert."""
         alert_metadata = {"position_id": position_id, "error": error_message}
         if metadata:
@@ -385,10 +389,12 @@ class AlertManager:
             f"Break-even modification failed for position {position_id}: {error_message}",
             "risk_manager",
             AlertSeverity.WARNING,
-            alert_metadata
+            alert_metadata,
         )
 
-    async def alert_position_not_found(self, position_id: str, operation: str, metadata: dict[str, Any] | None = None) -> Alert | None:
+    async def alert_position_not_found(
+        self, position_id: str, operation: str, metadata: dict[str, Any] | None = None
+    ) -> Alert | None:
         """Trigger position not found alert."""
         alert_metadata = {"position_id": position_id, "operation": operation}
         if metadata:
@@ -399,10 +405,12 @@ class AlertManager:
             f"Position {position_id} not found for {operation}",
             "mt5_executor",
             AlertSeverity.WARNING,
-            alert_metadata
+            alert_metadata,
         )
 
-    async def alert_correlation_uncertain(self, message_id: str, confidence: float, metadata: dict[str, Any] | None = None) -> Alert | None:
+    async def alert_correlation_uncertain(
+        self, message_id: str, confidence: float, metadata: dict[str, Any] | None = None
+    ) -> Alert | None:
         """Trigger uncertain correlation alert."""
         alert_metadata = {"message_id": message_id, "confidence": confidence}
         if metadata:
@@ -413,10 +421,12 @@ class AlertManager:
             f"Low correlation confidence ({confidence:.2f}) for message {message_id}",
             "correlation_engine",
             AlertSeverity.INFO,
-            alert_metadata
+            alert_metadata,
         )
 
-    async def alert_connection_lost(self, component: str, error_message: str, metadata: dict[str, Any] | None = None) -> Alert | None:
+    async def alert_connection_lost(
+        self, component: str, error_message: str, metadata: dict[str, Any] | None = None
+    ) -> Alert | None:
         """Trigger connection lost alert."""
         alert_metadata = {"component": component, "error": error_message}
         if metadata:
@@ -428,10 +438,12 @@ class AlertManager:
             component,
             AlertSeverity.CRITICAL,
             alert_metadata,
-            force=True  # Critical alerts bypass throttling
+            force=True,  # Critical alerts bypass throttling
         )
 
-    async def alert_emergency_stop(self, reason: str, metadata: dict[str, Any] | None = None) -> Alert | None:
+    async def alert_emergency_stop(
+        self, reason: str, metadata: dict[str, Any] | None = None
+    ) -> Alert | None:
         """Trigger emergency stop alert."""
         alert_metadata = {"reason": reason}
         if metadata:
@@ -443,6 +455,5 @@ class AlertManager:
             "system",
             AlertSeverity.CRITICAL,
             alert_metadata,
-            force=True  # Critical alerts bypass throttling
+            force=True,  # Critical alerts bypass throttling
         )
-

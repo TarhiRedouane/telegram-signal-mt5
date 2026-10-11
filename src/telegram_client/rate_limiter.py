@@ -57,7 +57,9 @@ class RateLimiter:
             # Convert to seconds and apply delay
             delay_seconds = final_delay_ms / 1000.0
 
-            self.logger.debug(f"Applying human delay: {delay_seconds:.2f}s (factor: {time_factor:.1f})")
+            self.logger.debug(
+                f"Applying human delay: {delay_seconds:.2f}s (factor: {time_factor:.1f})"
+            )
             await asyncio.sleep(delay_seconds)
 
             # Increment message count
@@ -98,13 +100,17 @@ class RateLimiter:
 
         # Reset counter if it's a new day
         if current_date != self._last_reset_date:
-            self.logger.info(f"New day detected, resetting message count. Previous count: {self._daily_message_count}")
+            self.logger.info(
+                f"New day detected, resetting message count. Previous count: {self._daily_message_count}"
+            )
             self._daily_message_count = 0
             self._last_reset_date = current_date
 
         # Check if we've exceeded daily limit
         if self._daily_message_count >= self._max_daily_messages:
-            self.logger.warning(f"Daily message limit reached ({self._max_daily_messages}). Applying extended delay.")
+            self.logger.warning(
+                f"Daily message limit reached ({self._max_daily_messages}). Applying extended delay."
+            )
             # Apply extended delay to reduce activity
             await asyncio.sleep(60)  # 1 minute delay
 
@@ -136,11 +142,11 @@ class RateLimiter:
             Dictionary with daily statistics
         """
         return {
-            'daily_message_count': self._daily_message_count,
-            'max_daily_messages': self._max_daily_messages,
-            'remaining_messages': max(0, self._max_daily_messages - self._daily_message_count),
-            'current_date': self._last_reset_date.isoformat(),
-            'time_factor': self._get_time_of_day_factor()
+            "daily_message_count": self._daily_message_count,
+            "max_daily_messages": self._max_daily_messages,
+            "remaining_messages": max(0, self._max_daily_messages - self._daily_message_count),
+            "current_date": self._last_reset_date.isoformat(),
+            "time_factor": self._get_time_of_day_factor(),
         }
 
     def reset_daily_counter(self) -> None:

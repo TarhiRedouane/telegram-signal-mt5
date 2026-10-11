@@ -28,13 +28,19 @@ async def test_startup_wires_live_telegram_and_mt5_clients(monkeypatch):
     """Startup should initialize Telegram, register monitoring, and start MT5 initialization without blocking."""
     manager = ApplicationManager()
     manager.health_monitor = AsyncMock()
-    manager.health_monitor.set_telegram_client = lambda client: setattr(manager, "_test_telegram_set", client)
-    manager.health_monitor.set_mt5_connection = lambda connection: setattr(manager, "_test_mt5_set", connection)
+    manager.health_monitor.set_telegram_client = lambda client: setattr(
+        manager, "_test_telegram_set", client
+    )
+    manager.health_monitor.set_mt5_connection = lambda connection: setattr(
+        manager, "_test_mt5_set", connection
+    )
 
     initialize_monitoring_mock = AsyncMock()
     monkeypatch.setattr(manager, "_initialize_monitoring_components", initialize_monitoring_mock)
     initialize_telegram_monitoring_mock = AsyncMock()
-    monkeypatch.setattr(manager, "_initialize_telegram_monitoring", initialize_telegram_monitoring_mock)
+    monkeypatch.setattr(
+        manager, "_initialize_telegram_monitoring", initialize_telegram_monitoring_mock
+    )
     initialize_mt5_mock = AsyncMock()
     monkeypatch.setattr(manager, "_initialize_mt5_connection", initialize_mt5_mock)
     monkeypatch.setattr(settings, "validate_telegram_config", lambda: True)

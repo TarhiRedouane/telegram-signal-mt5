@@ -23,7 +23,7 @@ class TestFrenchSignalPatterns:
             "J'ACHÈTE",
             "j'achète",
             "LONG",
-            "long"
+            "long",
         ]
 
         for text in buy_texts:
@@ -31,14 +31,7 @@ class TestFrenchSignalPatterns:
             assert matched, f"Buy pattern should match: {text}"
 
         # Should not match
-        non_buy_texts = [
-            "SELL",
-            "VENDRE",
-            "SHORT",
-            "HELLO",
-            "PRICE",
-            "ANALYSIS"
-        ]
+        non_buy_texts = ["SELL", "VENDRE", "SHORT", "HELLO", "PRICE", "ANALYSIS"]
 
         for text in non_buy_texts:
             matched = any(pattern.search(text) for pattern in patterns)
@@ -59,7 +52,7 @@ class TestFrenchSignalPatterns:
             "SHORT",
             "short",
             "VENDRE",
-            "vendre"
+            "vendre",
         ]
 
         for text in sell_texts:
@@ -67,13 +60,7 @@ class TestFrenchSignalPatterns:
             assert matched, f"Sell pattern should match: {text}"
 
         # Should not match
-        non_sell_texts = [
-            "BUY",
-            "ACHETER",
-            "LONG",
-            "HELLO",
-            "PRICE"
-        ]
+        non_sell_texts = ["BUY", "ACHETER", "LONG", "HELLO", "PRICE"]
 
         for text in non_sell_texts:
             matched = any(pattern.search(text) for pattern in patterns)
@@ -94,7 +81,7 @@ class TestFrenchSignalPatterns:
             "XAU/USD",
             "xau/usd",
             "XAU",
-            "xau"
+            "xau",
         ]
 
         for text in instrument_texts:
@@ -102,14 +89,7 @@ class TestFrenchSignalPatterns:
             assert matched, f"Instrument pattern should match: {text}"
 
         # Should not match
-        non_instrument_texts = [
-            "EURUSD",
-            "GBPUSD",
-            "SILVER",
-            "OIL",
-            "BUY",
-            "SELL"
-        ]
+        non_instrument_texts = ["EURUSD", "GBPUSD", "SILVER", "OIL", "BUY", "SELL"]
 
         for text in non_instrument_texts:
             matched = any(pattern.search(text) for pattern in patterns)
@@ -124,7 +104,7 @@ class TestFrenchSignalPatterns:
             ("@ 3362", "3362"),
             ("@3362", "3362"),
             ("@ 3362.50", "3362.50"),
-            ("@3362.75", "3362.75")
+            ("@3362.75", "3362.75"),
         ]
 
         for text, expected in at_price_tests:
@@ -139,11 +119,7 @@ class TestFrenchSignalPatterns:
             assert matched, f"Price pattern should match: {text}"
 
         # Test simple number format
-        number_tests = [
-            ("3362", "3362"),
-            ("3362.50", "3362.50"),
-            ("3999.99", "3999.99")
-        ]
+        number_tests = [("3362", "3362"), ("3362.50", "3362.50"), ("3999.99", "3999.99")]
 
         for text, expected in number_tests:
             matched = False
@@ -168,7 +144,7 @@ class TestFrenchSignalPatterns:
             ("STOP 3350", "3350"),
             ("stop 3350.25", "3350.25"),
             ("STOP LOSS 3350", "3350"),
-            ("stop loss: 3350.75", "3350.75")
+            ("stop loss: 3350.75", "3350.75"),
         ]
 
         for text, expected in sl_tests:
@@ -194,7 +170,7 @@ class TestFrenchSignalPatterns:
             ("TARGET 3375", "3375"),
             ("target 3375.25", "3375.25"),
             ("TAKE PROFIT 3375", "3375"),
-            ("take profit: 3375.75", "3375.75")
+            ("take profit: 3375.75", "3375.75"),
         ]
 
         for text, expected in tp_tests:
@@ -213,7 +189,14 @@ class TestFrenchSignalPatterns:
         compiled = FrenchSignalPatterns.get_compiled_patterns()
 
         # Check all expected keys exist
-        expected_keys = ['buy_actions', 'sell_actions', 'instruments', 'prices', 'stop_losses', 'take_profits']
+        expected_keys = [
+            "buy_actions",
+            "sell_actions",
+            "instruments",
+            "prices",
+            "stop_losses",
+            "take_profits",
+        ]
         for key in expected_keys:
             assert key in compiled, f"Missing compiled pattern key: {key}"
             assert isinstance(compiled[key], list), f"Pattern key {key} should be list"
@@ -222,8 +205,8 @@ class TestFrenchSignalPatterns:
         # Check all patterns are compiled regex objects
         for key, patterns in compiled.items():
             for pattern in patterns:
-                assert hasattr(pattern, 'search'), f"Pattern in {key} should be compiled regex"
-                assert hasattr(pattern, 'match'), f"Pattern in {key} should be compiled regex"
+                assert hasattr(pattern, "search"), f"Pattern in {key} should be compiled regex"
+                assert hasattr(pattern, "match"), f"Pattern in {key} should be compiled regex"
 
     def test_main_patterns_generation(self):
         """Test main combined pattern generation."""
@@ -234,16 +217,11 @@ class TestFrenchSignalPatterns:
 
         # All should be compiled regex patterns
         for pattern in main_patterns:
-            assert hasattr(pattern, 'search'), "Main pattern should be compiled regex"
-            assert hasattr(pattern, 'match'), "Main pattern should be compiled regex"
+            assert hasattr(pattern, "search"), "Main pattern should be compiled regex"
+            assert hasattr(pattern, "match"), "Main pattern should be compiled regex"
 
         # Test some expected combinations work
-        test_texts = [
-            "BUY GOLD 3362",
-            "SELL XAUUSD 3375",
-            "ACHETER OR 3350",
-            "VENDRE GOLD @ 3380"
-        ]
+        test_texts = ["BUY GOLD 3362", "SELL XAUUSD 3375", "ACHETER OR 3350", "VENDRE GOLD @ 3380"]
 
         for text in test_texts:
             matched = any(pattern.search(text) for pattern in main_patterns)
@@ -260,7 +238,7 @@ class TestFrenchSignalPatterns:
             ("sell_actions", "SELL", "sell"),
             ("instruments", "GOLD", "gold"),
             ("stop_losses", "SL 3350", "sl 3350"),
-            ("take_profits", "TP 3375", "tp 3375")
+            ("take_profits", "TP 3375", "tp 3375"),
         ]
 
         for pattern_key, upper_text, lower_text in test_cases:
@@ -271,7 +249,9 @@ class TestFrenchSignalPatterns:
 
             # If one matches, both should match (case insensitive)
             if upper_matched or lower_matched:
-                assert upper_matched and lower_matched, f"Case insensitivity failed for {pattern_key}: {upper_text} vs {lower_text}"
+                assert (
+                    upper_matched and lower_matched
+                ), f"Case insensitivity failed for {pattern_key}: {upper_text} vs {lower_text}"
 
     def test_pattern_special_characters(self):
         """Test patterns handle special characters correctly."""
@@ -301,8 +281,8 @@ class TestFrenchSignalPatterns:
         # Test that patterns don't over-match
         boundary_tests = [
             ("buy_actions", "BUYSOMETHING", False),  # Should not match partial
-            ("instruments", "GOLDSMITH", True),      # Might match as substring - this is ok
-            ("prices", "abc3362def", True),          # Numbers in text - might match
+            ("instruments", "GOLDSMITH", True),  # Might match as substring - this is ok
+            ("prices", "abc3362def", True),  # Numbers in text - might match
         ]
 
         for pattern_key, text, should_match in boundary_tests:
@@ -311,4 +291,6 @@ class TestFrenchSignalPatterns:
 
             # This is more informational - regex behavior can vary
             # The key is that our actual parsing logic handles these cases
-            print(f"Boundary test - {pattern_key} in '{text}': {matched} (expected: {should_match})")
+            print(
+                f"Boundary test - {pattern_key} in '{text}': {matched} (expected: {should_match})"
+            )

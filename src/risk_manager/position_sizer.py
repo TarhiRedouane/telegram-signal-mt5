@@ -22,7 +22,9 @@ def leg_volume(
     if loss_per_lot <= 0 or legs < 1:
         return volume_min
     budget = balance * risk_percent / 100 / legs
-    lots = (budget / loss_per_lot / volume_step).to_integral_value(rounding=ROUND_FLOOR) * volume_step
+    lots = (budget / loss_per_lot / volume_step).to_integral_value(
+        rounding=ROUND_FLOOR
+    ) * volume_step
     if lots < volume_min:
         logger.warning(
             f"Risk budget {budget:.2f} too small for SL distance {sl_distance}; using minimum lot {volume_min}"

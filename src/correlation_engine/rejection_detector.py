@@ -50,7 +50,9 @@ class RejectionState:
     extreme: Decimal | None = None  # sweep low (BUY) / sweep high (SELL), real price
     since_sweep: int = 0
     reclaim_time: int | None = None
-    highs: list[tuple[int, Decimal]] = field(default_factory=list)  # M1 highs since sweep (mirrored)
+    highs: list[tuple[int, Decimal]] = field(
+        default_factory=list
+    )  # M1 highs since sweep (mirrored)
     last_m1: int | None = None
     last_m3: int | None = None
     reason: str = ""
@@ -60,7 +62,9 @@ class RejectionState:
         return self.phase in (Phase.CONFIRMED, Phase.INVALID)
 
 
-def advance(state: RejectionState, m1: list[Candle], m3: list[Candle], params: RejectionParams) -> RejectionState:
+def advance(
+    state: RejectionState, m1: list[Candle], m3: list[Candle], params: RejectionParams
+) -> RejectionState:
     """Feed closed candles (oldest first); already-seen candles are skipped. The first call only
     sets the baseline: nothing that closed before the watch started counts."""
     if state.last_m1 is None:
@@ -106,7 +110,9 @@ def advance(state: RejectionState, m1: list[Candle], m3: list[Candle], params: R
     return state
 
 
-def _confirm(state: RejectionState, m3: list[Candle], high: Decimal, params: RejectionParams) -> None:
+def _confirm(
+    state: RejectionState, m3: list[Candle], high: Decimal, params: RejectionParams
+) -> None:
     """Displacement: an M3 candle after the reclaim closes above structure (or the zone top),
     with a strong body and above-average tick volume."""
     reclaim = state.reclaim_time or 0
@@ -114,7 +120,7 @@ def _confirm(state: RejectionState, m3: list[Candle], high: Decimal, params: Rej
     for candle in (c for c in window if c.time > (state.last_m3 or 0)):
         state.last_m3 = candle.time
         index = m3.index(candle)
-        history = m3[max(0, index - params.volume_lookback):index]
+        history = m3[max(0, index - params.volume_lookback) : index]
         avg_volume = sum(c.volume for c in history) / len(history) if history else 0
         prior_highs = [h for t, h in state.highs if t < candle.time]
         threshold = min(high, max(prior_highs)) if prior_highs else high

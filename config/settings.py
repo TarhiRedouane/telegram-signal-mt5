@@ -27,7 +27,7 @@ class Settings:
         if env_file is None:
             # Look for .env in project root
             env_file = Path(__file__).parent.parent / ".env"
-        
+
         # Load environment variables from file
         load_dotenv(env_file)
 
@@ -61,9 +61,13 @@ class Settings:
         # Signal validation
         self.gold_price_min: Decimal = Decimal(os.getenv("GOLD_PRICE_MIN", "2000"))
         self.gold_price_max: Decimal = Decimal(os.getenv("GOLD_PRICE_MAX", "10000"))
-        self.gold_max_price_deviation: Decimal = Decimal(os.getenv("GOLD_MAX_PRICE_DEVIATION", "100"))
+        self.gold_max_price_deviation: Decimal = Decimal(
+            os.getenv("GOLD_MAX_PRICE_DEVIATION", "100")
+        )
         # Price units: 10.0 = 100 pips at 0.10/pip
-        self.gold_default_sl_distance: Decimal = Decimal(os.getenv("GOLD_DEFAULT_SL_DISTANCE", "10.0"))
+        self.gold_default_sl_distance: Decimal = Decimal(
+            os.getenv("GOLD_DEFAULT_SL_DISTANCE", "10.0")
+        )
         self.gold_entry_tolerance: Decimal = Decimal(os.getenv("GOLD_ENTRY_TOLERANCE", "1.0"))
         # Zone rejection: deepest sweep beyond the zone edge still counted as liquidity grab,
         # and SL buffer beyond the sweep extreme (price units)
@@ -73,7 +77,9 @@ class Settings:
         # so wicks don't stop out; the trade is closed on an actual candle close beyond it
         self.gold_close_sl_buffer: Decimal = Decimal(os.getenv("GOLD_CLOSE_SL_BUFFER", "3.0"))
         # "buy now" joins a zone scenario only if price is this close to the zone
-        self.gold_zone_now_max_distance: Decimal = Decimal(os.getenv("GOLD_ZONE_NOW_MAX_DISTANCE", "10.0"))
+        self.gold_zone_now_max_distance: Decimal = Decimal(
+            os.getenv("GOLD_ZONE_NOW_MAX_DISTANCE", "10.0")
+        )
 
         # Zone hints ("BUY ZONE 4174-4178"): trade only after a confirmed rejection on candles
         self.rejection_reclaim_candles: int = int(os.getenv("REJECTION_RECLAIM_CANDLES", "3"))  # M1
@@ -94,7 +100,9 @@ class Settings:
         # Risk guard: checked before every order (instant, setup leg, zone, reinforcement)
         self.max_open_risk_percent: Decimal = Decimal(os.getenv("MAX_OPEN_RISK_PERCENT", "6.0"))
         self.max_open_legs: int = int(os.getenv("MAX_OPEN_LEGS", "6"))
-        self.daily_loss_limit_percent: Decimal = Decimal(os.getenv("DAILY_LOSS_LIMIT_PERCENT", "6.0"))
+        self.daily_loss_limit_percent: Decimal = Decimal(
+            os.getenv("DAILY_LOSS_LIMIT_PERCENT", "6.0")
+        )
         self.trading_enabled: bool = os.getenv("TRADING_ENABLED", "true").lower() == "true"
         # Kill switch without restart: create this file to block new entries, delete it to resume
         self.kill_switch_file = Path(os.getenv("KILL_SWITCH_FILE", "data/STOP_TRADING"))
@@ -159,60 +167,62 @@ class Settings:
         try:
             return int(self.telegram_api_id)
         except ValueError as e:
-            raise ValueError(f"Invalid TELEGRAM_API_ID: must be an integer, got '{self.telegram_api_id}'") from e
-    
+            raise ValueError(
+                f"Invalid TELEGRAM_API_ID: must be an integer, got '{self.telegram_api_id}'"
+            ) from e
+
     def get_telegram_groups(self) -> List[str]:
         """
         Get list of Telegram groups from environment variable.
-        
+
         Returns:
             List of group usernames/IDs, empty list if none configured
         """
         if not self.telegram_groups.strip():
             return []
-        
+
         # Split by comma and clean up whitespace
         groups = [group.strip() for group in self.telegram_groups.split(",")]
         return [group for group in groups if group]
-    
+
     def validate_group_format(self, group: str) -> bool:
         """
         Validate Telegram group username/ID format.
-        
+
         Args:
             group: Group username or ID to validate
-            
+
         Returns:
             True if format is valid
         """
         # Check for @username format
-        if group.startswith('@'):
+        if group.startswith("@"):
             # Username should be 5-32 characters, alphanumeric + underscores
             username = group[1:]
-            return bool(re.match(r'^[a-zA-Z0-9_]{5,32}$', username))
-        
+            return bool(re.match(r"^[a-zA-Z0-9_]{5,32}$", username))
+
         # Check for numeric ID format
-        if group.isdigit() or (group.startswith('-') and group[1:].isdigit()):
+        if group.isdigit() or (group.startswith("-") and group[1:].isdigit()):
             return True
-            
+
         return False
-    
+
     def validate_telegram_groups(self) -> tuple[bool, List[str]]:
         """
         Validate all configured Telegram groups.
-        
+
         Returns:
             Tuple of (all_valid, invalid_groups)
         """
         groups = self.get_telegram_groups()
         if not groups:
             return True, []  # No groups configured is valid
-        
+
         invalid_groups = []
         for group in groups:
             if not self.validate_group_format(group):
                 invalid_groups.append(group)
-        
+
         return len(invalid_groups) == 0, invalid_groups
 
     def validate_openai_config(self) -> bool:
@@ -263,9 +273,11 @@ class Settings:
                 raise ValueError("MT5 login must be a positive integer")
             return login
         except ValueError as e:
-            raise ValueError(f"Invalid MT5_LOGIN: must be a positive integer, got '{self.mt5_login}'") from e
+            raise ValueError(
+                f"Invalid MT5_LOGIN: must be a positive integer, got '{self.mt5_login}'"
+            ) from e
 
-    def get_mt5_settings(self) -> 'MT5Settings':
+    def get_mt5_settings(self) -> "MT5Settings":
         """
         Get MT5 settings as Pydantic model with validation.
 
@@ -284,59 +296,58 @@ class Settings:
             account_mode=self.mt5_account_mode,
             timeout_seconds=self.mt5_timeout_seconds,
             max_connections=self.mt5_max_connections,
-            reconnect_delay=self.mt5_reconnect_delay
+            reconnect_delay=self.mt5_reconnect_delay,
         )
 
 
 class MT5Settings(BaseSettings):
     """MetaTrader5 connection settings with validation."""
-    
+
     login: int = Field(..., description="MT5 account login number")
     password: str = Field(..., description="MT5 account password")
     server: str = Field(..., description="MT5 broker server name")
     path: Optional[str] = Field(None, description="MT5 installation path")
-    portable: bool = Field(False, description="Terminal runs in /portable mode (data inside its folder)")
+    portable: bool = Field(
+        False, description="Terminal runs in /portable mode (data inside its folder)"
+    )
     account_mode: str = Field("demo", description="Expected account kind: demo or real")
     timeout_seconds: int = Field(60, ge=10, le=300, description="Connection timeout")
     max_connections: int = Field(5, ge=1, le=10, description="Connection pool size")
     reconnect_delay: int = Field(5, ge=1, le=60, description="Base reconnection delay")
-    
-    model_config = {
-        "env_prefix": "MT5_",
-        "case_sensitive": False
-    }
-    
-    @field_validator('account_mode')
+
+    model_config = {"env_prefix": "MT5_", "case_sensitive": False}
+
+    @field_validator("account_mode")
     @classmethod
     def validate_account_mode(cls, v):
         if v not in ("demo", "real"):
             raise ValueError(f"MT5_ACCOUNT_MODE must be 'demo' or 'real', got '{v}'")
         return v
 
-    @field_validator('login')
+    @field_validator("login")
     @classmethod
     def validate_login(cls, v):
         """Validate MT5 login is a positive integer."""
         if v <= 0:
             raise ValueError("MT5 login must be a positive integer")
         return v
-    
-    @field_validator('password')
+
+    @field_validator("password")
     @classmethod
     def validate_password(cls, v):
         """Validate MT5 password is not empty."""
         if not v or not v.strip():
             raise ValueError("MT5 password cannot be empty")
         return v.strip()
-    
-    @field_validator('server')
+
+    @field_validator("server")
     @classmethod
     def validate_server(cls, v):
         """Validate MT5 server name format."""
         if not v or not v.strip():
             raise ValueError("MT5 server cannot be empty")
         # Basic server name validation
-        if not re.match(r'^[a-zA-Z0-9\-_.]+$', v.strip()):
+        if not re.match(r"^[a-zA-Z0-9\-_.]+$", v.strip()):
             raise ValueError("MT5 server name contains invalid characters")
         return v.strip()
 

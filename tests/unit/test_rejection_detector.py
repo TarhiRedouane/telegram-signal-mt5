@@ -87,8 +87,16 @@ def test_history_before_watch_is_ignored():
 
 def test_sell_zone_mirrored():
     state = RejectionState(sell=True, low=Decimal("4220"), high=Decimal("4224"))
-    advance(state, [c(-1, 4219, 4219.5, 4218, 4219)], [m3(-i, 4219, 4220, 4218, 4219) for i in range(20, 0, -1)], PARAMS)
-    m1 = [c(0, 4221, 4226.1, 4220.5, 4225), c(1, 4225, 4225.4, 4222, 4223.2)]  # sweep above, back in
+    advance(
+        state,
+        [c(-1, 4219, 4219.5, 4218, 4219)],
+        [m3(-i, 4219, 4220, 4218, 4219) for i in range(20, 0, -1)],
+        PARAMS,
+    )
+    m1 = [
+        c(0, 4221, 4226.1, 4220.5, 4225),
+        c(1, 4225, 4225.4, 4222, 4223.2),
+    ]  # sweep above, back in
     history = [m3(-i, 4219, 4220, 4218, 4219) for i in range(20, 0, -1)]
     advance(state, m1, history, PARAMS)
     assert state.phase == Phase.RECLAIMED and state.extreme == Decimal("4226.1")

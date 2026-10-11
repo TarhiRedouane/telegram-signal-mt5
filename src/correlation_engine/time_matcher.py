@@ -19,6 +19,7 @@ from src.database.repository import PositionRepository, SignalRepository
 @dataclass
 class TimeMatchCandidate:
     """Candidate position for time-based correlation with scoring."""
+
     position: Position
     signal: Signal
     time_score: float
@@ -30,7 +31,7 @@ class TimeMatchCandidate:
 class TimeMatcher:
     """
     Time-based correlation engine for orphaned message matching.
-    
+
     Uses temporal proximity and text pattern analysis to correlate
     messages with recent trading positions when explicit reply
     relationships are not available.
@@ -39,7 +40,7 @@ class TimeMatcher:
     def __init__(self, signal_repo: SignalRepository, position_repo: PositionRepository):
         """
         Initialize time matcher with repository dependencies.
-        
+
         Args:
             signal_repo: Signal repository for database queries
             position_repo: Position repository for database queries
@@ -55,19 +56,21 @@ class TimeMatcher:
 
         # Text pattern matching for correlation hints
         self.update_patterns = {
-            'break_even': re.compile(r'\b(break\s*even|be)\b', re.IGNORECASE),
-            'close': re.compile(r'\b(close|fermer|closed)\b', re.IGNORECASE),
-            'stop_loss': re.compile(r'\b(sl|stop\s*loss|stop)\b', re.IGNORECASE),
-            'take_profit': re.compile(r'\b(tp|take\s*profit|profit)\b', re.IGNORECASE),
-            'modify': re.compile(r'\b(modif|modify|change|changer|invalidation|vise|objectif)\b', re.IGNORECASE),
-            'partial': re.compile(r'\b(partial|partiel)\b', re.IGNORECASE)
+            "break_even": re.compile(r"\b(break\s*even|be)\b", re.IGNORECASE),
+            "close": re.compile(r"\b(close|fermer|closed)\b", re.IGNORECASE),
+            "stop_loss": re.compile(r"\b(sl|stop\s*loss|stop)\b", re.IGNORECASE),
+            "take_profit": re.compile(r"\b(tp|take\s*profit|profit)\b", re.IGNORECASE),
+            "modify": re.compile(
+                r"\b(modif|modify|change|changer|invalidation|vise|objectif)\b", re.IGNORECASE
+            ),
+            "partial": re.compile(r"\b(partial|partiel)\b", re.IGNORECASE),
         }
 
         # Symbol extraction patterns
         self.symbol_patterns = {
-            'gold': re.compile(r'\b(gold|or|xau|xauusd)\b', re.IGNORECASE),
-            'eur': re.compile(r'\b(eur|euro)\b', re.IGNORECASE),
-            'gbp': re.compile(r'\b(gbp|pound|livre)\b', re.IGNORECASE),
+            "gold": re.compile(r"\b(gold|or|xau|xauusd)\b", re.IGNORECASE),
+            "eur": re.compile(r"\b(eur|euro)\b", re.IGNORECASE),
+            "gbp": re.compile(r"\b(gbp|pound|livre)\b", re.IGNORECASE),
         }
 
         # Statistics tracking
@@ -78,11 +81,11 @@ class TimeMatcher:
     async def find_matches(self, message: Any, window_minutes: int = None) -> list[dict[str, Any]]:
         """
         Find time-based correlation matches for orphaned message.
-        
+
         Args:
             message: TelegramMessage object to match
             window_minutes: Time window in minutes (default: 5)
-            
+
         Returns:
             List of candidate matches with confidence scores
         """
@@ -95,17 +98,21 @@ class TimeMatcher:
             if self._looks_like_new_trade(message.raw_text):
                 self.logger.debug(
                     "Skipping time correlation for a new trade announcement",
-                    extra={'message_id': message.telegram_message_id},
+                    extra={"message_id": message.telegram_message_id},
                 )
                 return []
 
             self.logger.info(
                 f"Starting time-based matching for message {message.telegram_message_id}",
                 extra={
-                    'match_id': match_id,
-                    'window_minutes': window_minutes,
-                    'message_text': message.raw_text[:50] + '...' if len(message.raw_text) > 50 else message.raw_text
-                }
+                    "match_id": match_id,
+                    "window_minutes": window_minutes,
+                    "message_text": (
+                        message.raw_text[:50] + "..."
+                        if len(message.raw_text) > 50
+                        else message.raw_text
+                    ),
+                },
             )
 
             # Define time window
@@ -127,18 +134,17 @@ class TimeMatcher:
             if not candidates:
                 self.logger.debug(
                     f"No candidate positions found in {window_minutes}min window",
-                    extra={'match_id': match_id}
+                    extra={"match_id": match_id},
                 )
                 return []
 
             # Score and rank candidates
-            scored_candidates = await self._score_candidates(
-                message, candidates, match_id
-            )
+            scored_candidates = await self._score_candidates(message, candidates, match_id)
 
             # Filter by minimum confidence
             valid_candidates = [
-                c for c in scored_candidates
+                c
+                for c in scored_candidates
                 if c.confidence >= self.min_confidence_threshold
                 or (len(scored_candidates) == 1 and c.confidence >= 0.55)
             ]
@@ -149,46 +155,45 @@ class TimeMatcher:
             # Convert to dictionary format for return
             result = [
                 {
-                    'position': candidate.position,
-                    'signal': candidate.signal,
-                    'confidence': candidate.confidence,
-                    'time_score': candidate.time_score,
-                    'text_score': candidate.text_score,
-                    'metadata': candidate.metadata
+                    "position": candidate.position,
+                    "signal": candidate.signal,
+                    "confidence": candidate.confidence,
+                    "time_score": candidate.time_score,
+                    "text_score": candidate.text_score,
+                    "metadata": candidate.metadata,
                 }
-                for candidate in valid_candidates[:self.max_candidates]
+                for candidate in valid_candidates[: self.max_candidates]
             ]
 
             self.logger.info(
                 f"Time matching complete: {len(scored_candidates)} candidates, "
                 f"{len(valid_candidates)} above threshold",
-                extra={
-                    'match_id': match_id,
-                    'valid_matches': len(valid_candidates)
-                }
+                extra={"match_id": match_id, "valid_matches": len(valid_candidates)},
             )
 
             return result
 
         except Exception as e:
-            self.logger.error(
-                f"Error in time-based matching: {e}",
-                extra={'match_id': match_id}
-            )
+            self.logger.error(f"Error in time-based matching: {e}", extra={"match_id": match_id})
             return []
 
-    async def _get_candidate_positions(self, start_time: datetime, end_time: datetime,
-                                     symbols: set[str], chat_id: int,
-                                     match_id: str) -> list[Position]:
+    async def _get_candidate_positions(
+        self,
+        start_time: datetime,
+        end_time: datetime,
+        symbols: set[str],
+        chat_id: int,
+        match_id: str,
+    ) -> list[Position]:
         """
         Get candidate positions within time window.
-        
+
         Args:
             start_time: Window start time
             end_time: Window end time
             symbols: Detected symbols to filter by
             match_id: Match ID for logging
-            
+
         Returns:
             List of candidate positions
         """
@@ -228,7 +233,7 @@ class TimeMatcher:
             self.logger.debug(
                 f"Found {len(candidate_positions)} candidate positions from "
                 f"{len(filtered_signals)} signals",
-                extra={'match_id': match_id}
+                extra={"match_id": match_id},
             )
 
             return candidate_positions[:20]  # Limit for performance
@@ -237,16 +242,17 @@ class TimeMatcher:
             self.logger.error(f"Error getting candidate positions: {e}")
             return []
 
-    async def _score_candidates(self, message: Any, candidates: list[Position],
-                              match_id: str) -> list[TimeMatchCandidate]:
+    async def _score_candidates(
+        self, message: Any, candidates: list[Position], match_id: str
+    ) -> list[TimeMatchCandidate]:
         """
         Score and rank candidate positions for correlation.
-        
+
         Args:
             message: Message to correlate
             candidates: Candidate positions
             match_id: Match ID for logging
-            
+
         Returns:
             List of scored candidates sorted by confidence
         """
@@ -268,17 +274,15 @@ class TimeMatcher:
                 text_score = self._calculate_text_score(message.raw_text, signal.raw_text)
 
                 # Calculate composite confidence score
-                confidence = self._calculate_confidence(
-                    time_score, text_score, position, signal
-                )
+                confidence = self._calculate_confidence(time_score, text_score, position, signal)
 
                 # Create metadata for debugging
                 metadata = {
-                    'time_diff_seconds': (message.timestamp - signal.timestamp).total_seconds(),
-                    'signal_action': getattr(signal.parsed_action, 'value', signal.parsed_action),
-                    'position_status': getattr(position.status, 'value', position.status),
-                    'symbol_match': signal.symbol,
-                    'scoring_method': 'time_based'
+                    "time_diff_seconds": (message.timestamp - signal.timestamp).total_seconds(),
+                    "signal_action": getattr(signal.parsed_action, "value", signal.parsed_action),
+                    "position_status": getattr(position.status, "value", position.status),
+                    "symbol_match": signal.symbol,
+                    "scoring_method": "time_based",
                 }
 
                 scored_candidate = TimeMatchCandidate(
@@ -287,7 +291,7 @@ class TimeMatcher:
                     time_score=time_score,
                     text_score=text_score,
                     confidence=confidence,
-                    metadata=metadata
+                    metadata=metadata,
                 )
 
                 scored_candidates.append(scored_candidate)
@@ -295,7 +299,7 @@ class TimeMatcher:
             except Exception as e:
                 self.logger.warning(
                     f"Error scoring candidate position {position.id}: {e}",
-                    extra={'match_id': match_id}
+                    extra={"match_id": match_id},
                 )
                 continue
 
@@ -303,9 +307,13 @@ class TimeMatcher:
         scored_candidates.sort(key=lambda x: x.confidence, reverse=True)
 
         self.logger.debug(
-            f"Scored {len(scored_candidates)} candidates, "
-            f"best confidence: {scored_candidates[0].confidence:.3f}" if scored_candidates else "no candidates",
-            extra={'match_id': match_id}
+            (
+                f"Scored {len(scored_candidates)} candidates, "
+                f"best confidence: {scored_candidates[0].confidence:.3f}"
+                if scored_candidates
+                else "no candidates"
+            ),
+            extra={"match_id": match_id},
         )
 
         return scored_candidates
@@ -313,11 +321,11 @@ class TimeMatcher:
     def _calculate_time_score(self, message_time: datetime, signal_time: datetime) -> float:
         """
         Calculate time proximity score (0.0 to 1.0).
-        
+
         Args:
             message_time: Message timestamp
             signal_time: Signal timestamp
-            
+
         Returns:
             Time score (1.0 = same time, decreases with distance)
         """
@@ -338,11 +346,11 @@ class TimeMatcher:
     def _calculate_text_score(self, message_text: str, signal_text: str) -> float:
         """
         Calculate text pattern similarity score.
-        
+
         Args:
             message_text: Update message text
             signal_text: Original signal text
-            
+
         Returns:
             Text similarity score (0.0 to 1.0)
         """
@@ -359,7 +367,17 @@ class TimeMatcher:
             if pattern.search(message_lower):
                 score += 0.1
                 # Extra boost if related words in signal
-                if (pattern_name == 'break_even' and 'entry' in signal_lower) or (pattern_name in ['close', 'stop_loss'] and ('sl' in signal_lower or 'stop' in signal_lower)) or (pattern_name == 'take_profit' and ('tp' in signal_lower or 'profit' in signal_lower)):
+                if (
+                    (pattern_name == "break_even" and "entry" in signal_lower)
+                    or (
+                        pattern_name in ["close", "stop_loss"]
+                        and ("sl" in signal_lower or "stop" in signal_lower)
+                    )
+                    or (
+                        pattern_name == "take_profit"
+                        and ("tp" in signal_lower or "profit" in signal_lower)
+                    )
+                ):
                     score += 0.1
 
         # Check for common words/phrases
@@ -373,17 +391,18 @@ class TimeMatcher:
 
         return min(1.0, score)
 
-    def _calculate_confidence(self, time_score: float, text_score: float,
-                            position: Position, signal: Signal) -> float:
+    def _calculate_confidence(
+        self, time_score: float, text_score: float, position: Position, signal: Signal
+    ) -> float:
         """
         Calculate composite confidence score for correlation.
-        
+
         Args:
             time_score: Time proximity score
             text_score: Text similarity score
             position: Position object
             signal: Signal object
-            
+
         Returns:
             Composite confidence score (0.0 to 1.0)
         """
@@ -395,7 +414,9 @@ class TimeMatcher:
             base_confidence *= 1.1
 
         # Boost for recent signals (within 2 minutes)
-        signal_age_seconds = (datetime.now(UTC).replace(tzinfo=None) - signal.timestamp).total_seconds()
+        signal_age_seconds = (
+            datetime.now(UTC).replace(tzinfo=None) - signal.timestamp
+        ).total_seconds()
         if signal_age_seconds < 120:  # 2 minutes
             base_confidence *= 1.05
 
@@ -408,10 +429,10 @@ class TimeMatcher:
     def _extract_symbols(self, text: str) -> set[str]:
         """
         Extract trading symbols from message text.
-        
+
         Args:
             text: Message text to analyze
-            
+
         Returns:
             Set of detected symbol names in uppercase
         """
@@ -421,13 +442,13 @@ class TimeMatcher:
         for symbol_name, pattern in self.symbol_patterns.items():
             if pattern.search(text_lower):
                 # Map to standard symbol format
-                if symbol_name == 'gold':
-                    detected.add('GOLD')
-                    detected.add('XAUUSD')
-                elif symbol_name == 'eur':
-                    detected.add('EURUSD')
-                elif symbol_name == 'gbp':
-                    detected.add('GBPUSD')
+                if symbol_name == "gold":
+                    detected.add("GOLD")
+                    detected.add("XAUUSD")
+                elif symbol_name == "eur":
+                    detected.add("EURUSD")
+                elif symbol_name == "gbp":
+                    detected.add("GBPUSD")
 
         return detected
 
@@ -441,21 +462,19 @@ class TimeMatcher:
     def get_matcher_stats(self) -> dict[str, Any]:
         """Get time matcher statistics for monitoring."""
         success_rate = (
-            self._successful_matches / self._match_attempts
-            if self._match_attempts > 0 else 0.0
+            self._successful_matches / self._match_attempts if self._match_attempts > 0 else 0.0
         )
 
         avg_evaluations = (
-            self._candidate_evaluations / self._match_attempts
-            if self._match_attempts > 0 else 0.0
+            self._candidate_evaluations / self._match_attempts if self._match_attempts > 0 else 0.0
         )
 
         return {
-            'match_attempts': self._match_attempts,
-            'successful_matches': self._successful_matches,
-            'success_rate': round(success_rate, 3),
-            'total_evaluations': self._candidate_evaluations,
-            'avg_evaluations_per_match': round(avg_evaluations, 1),
-            'min_confidence_threshold': self.min_confidence_threshold,
-            'default_window_minutes': self.default_window_minutes
+            "match_attempts": self._match_attempts,
+            "successful_matches": self._successful_matches,
+            "success_rate": round(success_rate, 3),
+            "total_evaluations": self._candidate_evaluations,
+            "avg_evaluations_per_match": round(avg_evaluations, 1),
+            "min_confidence_threshold": self.min_confidence_threshold,
+            "default_window_minutes": self.default_window_minutes,
         }

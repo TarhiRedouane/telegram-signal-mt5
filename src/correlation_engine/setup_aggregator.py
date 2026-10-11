@@ -39,6 +39,7 @@ def looks_like_new_trade(text: str) -> bool:
 @dataclass
 class Followup:
     """Levels/intents extracted from one follow-up message."""
+
     cancel: bool = False
     sl: Decimal | None = None
     tps: list[Decimal] = field(default_factory=list)  # "TP a | b | c": replaces the TP list
@@ -47,14 +48,21 @@ class Followup:
     entry: Decimal | None = None
     entry_high: Decimal | None = None  # "SELL → 4197 - 4200" restates a zone, not a single price
     now: bool = False
-    sl_close_tf: int | None = None  # SL is a candle-close level ("clôture M30 sous X"), not a hard stop
+    sl_close_tf: int | None = (
+        None  # SL is a candle-close level ("clôture M30 sous X"), not a hard stop
+    )
     sl_far: Decimal | None = None  # "SL / INVALIDATION 4145 - 4150": far edge = hard SL
 
     @property
     def empty(self) -> bool:
         return (
-            not self.cancel and not self.now and self.sl is None and self.entry is None
-            and not self.tps and not self.tp_slots and self.final_tp is None
+            not self.cancel
+            and not self.now
+            and self.sl is None
+            and self.entry is None
+            and not self.tps
+            and not self.tp_slots
+            and self.final_tp is None
         )
 
 
@@ -110,6 +118,7 @@ class ZoneEntry:
 @dataclass
 class ZoneWatch:
     """Zone hint ("BUY ZONE 4174–4178"): trade only after a confirmed rejection in a zone."""
+
     chat_id: int
     message_id: int
     sender: str
@@ -142,7 +151,10 @@ class ZoneWatch:
         if targets != self.targets:
             self.targets = targets
             changed.append("targets")
-        if followup.sl is not None and (followup.sl, followup.sl_close_tf) != (self.sl, self.close_tf):
+        if followup.sl is not None and (followup.sl, followup.sl_close_tf) != (
+            self.sl,
+            self.close_tf,
+        ):
             if any(zone.sl_ok(followup.sl) for zone in self.zones):
                 self.sl, self.close_tf = followup.sl, followup.sl_close_tf
                 changed.append("sl")
@@ -159,7 +171,9 @@ def _zone_symbol(text: str) -> str:
     return symbol_policy.get_default_symbol()
 
 
-def extract_zone_hint(text: str) -> tuple[str, list[tuple[ParsedAction, Decimal, Decimal]], list[Decimal]] | None:
+def extract_zone_hint(
+    text: str,
+) -> tuple[str, list[tuple[ParsedAction, Decimal, Decimal]], list[Decimal]] | None:
     """(symbol, [(action, low, high)...], reaction targets) for a zone post, else None."""
     zones = []
     for match in FrenchSignalPatterns.ZONE_HINT.finditer(text):
@@ -187,6 +201,7 @@ def _signal_tps(signal: ParsedSignal) -> list[Decimal]:
 @dataclass
 class PendingSetup:
     """Setup collected across messages; each fill (initial + re-entries) lands in `positions`."""
+
     chat_id: int
     message_id: int
     sender: str
@@ -205,11 +220,17 @@ class PendingSetup:
     ladder: bool = True  # False after a re-entry: one more order, no new ladder
     leg_base: int = 0  # positions opened before the current entry
     planned_legs: int | None = None  # frozen at first fill so later TPs can't add risk
-    blind: bool = False  # leg 1 fired before any TP: it took half the risk, later TPs split the rest
+    blind: bool = (
+        False  # leg 1 fired before any TP: it took half the risk, later TPs split the rest
+    )
     be_done: bool = False
     first_fill_at: datetime | None = None
-    hold_at: int | None = None  # stop opening legs at this many positions (early leg waits for its zone)
-    close_invalidation: tuple[Decimal, int] | None = None  # (level, timeframe min): exit on candle close
+    hold_at: int | None = (
+        None  # stop opening legs at this many positions (early leg waits for its zone)
+    )
+    close_invalidation: tuple[Decimal, int] | None = (
+        None  # (level, timeframe min): exit on candle close
+    )
     close_check_time: int | None = None  # last candle time checked for close invalidation
 
     def set_sl(self, level: Decimal, close_tf: int | None, far: Decimal | None = None) -> bool:
@@ -279,7 +300,9 @@ class PendingSetup:
         if not self.ladder:
             n = 1
         else:
-            n = self.planned_legs or max(2 if self.blind else 1, min(len(self.tps), settings.setup_max_legs))
+            n = self.planned_legs or max(
+                2 if self.blind else 1, min(len(self.tps), settings.setup_max_legs)
+            )
         if n == 1 or self.low == self.high:
             first = self.low if self.action == ParsedAction.SELL else self.high
             return [first] * n
@@ -294,7 +317,11 @@ class PendingSetup:
 
     def leg_reached(self, k: int, price: Decimal, tolerance: Decimal) -> bool:
         level = self.legs()[k]
-        return price >= level - tolerance if self.action == ParsedAction.SELL else price <= level + tolerance
+        return (
+            price >= level - tolerance
+            if self.action == ParsedAction.SELL
+            else price <= level + tolerance
+        )
 
     def leg_tp(self, index: int) -> Decimal | None:
         """TP for the position at `index` in `positions` (scale-out: worst entry -> TP1)."""
@@ -327,11 +354,15 @@ class PendingSetup:
                 if self.set_sl(followup.sl, followup.sl_close_tf, followup.sl_far):
                     changed.append("sl")
             else:
-                logger.warning(f"Ignoring wrong-side SL {followup.sl} for {self.action.value} setup")
+                logger.warning(
+                    f"Ignoring wrong-side SL {followup.sl} for {self.action.value} setup"
+                )
         tps = self._merge_tps(followup)
         valid = [tp for tp in tps if self._tp_ok(tp, tp_ref)]
         if len(valid) < len(tps):
-            logger.warning(f"Ignoring wrong-side TPs {sorted(set(tps) - set(valid))} for {self.action.value} setup")
+            logger.warning(
+                f"Ignoring wrong-side TPs {sorted(set(tps) - set(valid))} for {self.action.value} setup"
+            )
         valid = sorted(set(valid), reverse=self.action == ParsedAction.SELL)
         if valid and valid != self.tps:
             self.tps = valid
@@ -351,7 +382,11 @@ class PendingSetup:
                 tps.append(level)
         final = followup.final_tp
         if final is not None and final not in tps:
-            closer = (lambda tp: tp > final) if self.action == ParsedAction.SELL else (lambda tp: tp < final)
+            closer = (
+                (lambda tp: tp > final)
+                if self.action == ParsedAction.SELL
+                else (lambda tp: tp < final)
+            )
             tps = [tp for tp in tps if closer(tp)] + [final]
         return tps
 
@@ -378,7 +413,9 @@ class PendingSetup:
             status="PENDING",
         )
 
-    def fire_levels(self, price: Decimal, index: int = 0) -> tuple[Decimal | None, Decimal | None] | None:
+    def fire_levels(
+        self, price: Decimal, index: int = 0
+    ) -> tuple[Decimal | None, Decimal | None] | None:
         """SL/TP for the position at `index` opened at `price`; None if already invalidated there."""
         sl = self.sl
         if sl is None:
@@ -416,7 +453,9 @@ class SetupAggregator:
     def drop_zone(self, watch: ZoneWatch, reason: str) -> None:
         if self._zones.get(watch.chat_id) is watch:
             del self._zones[watch.chat_id]
-            logger.info(f"Zone watch dropped chat={watch.chat_id} message_id={watch.message_id}: {reason}")
+            logger.info(
+                f"Zone watch dropped chat={watch.chat_id} message_id={watch.message_id}: {reason}"
+            )
 
     def start(self, signal: ParsedSignal, now: datetime) -> tuple[PendingSetup, list[str] | None]:
         """Return (setup, None) for a new setup, or (setup, changed) when re-arming a live one."""
@@ -428,7 +467,9 @@ class SetupAggregator:
         ):
             return existing, existing.rearm(signal, now)
         if existing is not None:
-            logger.info(f"Replacing setup in chat {signal.telegram_chat_id} (different side/symbol)")
+            logger.info(
+                f"Replacing setup in chat {signal.telegram_chat_id} (different side/symbol)"
+            )
         setup = PendingSetup(
             chat_id=signal.telegram_chat_id,
             message_id=signal.telegram_message_id,
@@ -444,7 +485,9 @@ class SetupAggregator:
             fire_now=bool(FrenchSignalPatterns.FOLLOWUP_NOW.search(signal.raw_text)),
         )
         if signal.stop_loss is not None:
-            setup.set_sl(signal.stop_loss, close_timeframe(signal.raw_text), sl_far(signal.raw_text))
+            setup.set_sl(
+                signal.stop_loss, close_timeframe(signal.raw_text), sl_far(signal.raw_text)
+            )
         self._setups[setup.chat_id] = setup
         return setup, None
 

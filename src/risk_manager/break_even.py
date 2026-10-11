@@ -23,6 +23,7 @@ from src.utils.formatters import add_pips_to_price, normalize_price
 @dataclass
 class BreakEvenResult:
     """Result of break even processing attempt."""
+
     success: bool
     position: Position | None
     old_sl: float | None
@@ -42,19 +43,19 @@ class BreakEvenProcessor:
 
     # Break even pattern variations (French and English)
     BREAK_EVEN_PATTERNS: ClassVar[list[str]] = [
-        r'\bBREAK\s*EVEN\b',
-        r'\bBE\b',
-        r'\bBREAK\b',
-        r'\bSL\s+ON\s+ENTRY\b',
-        r'\bSECURE\b',
-        r'\bSÉCURISER\b',
-        r'\bSECURITY\b',
-        r'\bPROTECT\b',
-        r'\bPROTÉGER\b',
-        r'\bMOVE\s+SL\b',
-        r'\bDÉPLACER\s+SL\b',
-        r'\bENTRY\s*\+\s*1\b',
-        r'\bENTRÉE\s*\+\s*1\b'
+        r"\bBREAK\s*EVEN\b",
+        r"\bBE\b",
+        r"\bBREAK\b",
+        r"\bSL\s+ON\s+ENTRY\b",
+        r"\bSECURE\b",
+        r"\bSÉCURISER\b",
+        r"\bSECURITY\b",
+        r"\bPROTECT\b",
+        r"\bPROTÉGER\b",
+        r"\bMOVE\s+SL\b",
+        r"\bDÉPLACER\s+SL\b",
+        r"\bENTRY\s*\+\s*1\b",
+        r"\bENTRÉE\s*\+\s*1\b",
     ]
 
     def __init__(self, correlation_engine: CorrelationEngine, db_manager: DatabaseManager):
@@ -111,7 +112,7 @@ class BreakEvenProcessor:
             if pattern.search(normalized_text):
                 self.logger.debug(
                     f"Break even signal detected with pattern: {pattern.pattern}",
-                    extra={'text_length': len(text), 'matched_pattern': pattern.pattern}
+                    extra={"text_length": len(text), "matched_pattern": pattern.pattern},
                 )
                 return True
 
@@ -146,18 +147,18 @@ class BreakEvenProcessor:
                     old_sl=None,
                     new_sl=None,
                     correlation_confidence=None,
-                    error_message="No BE signal detected"
+                    error_message="No BE signal detected",
                 )
 
             self.logger.info(
                 f"Processing break even request for message {message.telegram_message_id}",
                 extra={
-                    'correlation_id': correlation_id,
-                    'message_id': message.telegram_message_id,
-                    'chat_id': message.telegram_chat_id,
-                    'sender': message.sender,
-                    'text_preview': message.raw_text[:100]
-                }
+                    "correlation_id": correlation_id,
+                    "message_id": message.telegram_message_id,
+                    "chat_id": message.telegram_chat_id,
+                    "sender": message.sender,
+                    "text_preview": message.raw_text[:100],
+                },
             )
 
             # Step 2: Correlate message to position using Story 4.1 engine
@@ -169,13 +170,13 @@ class BreakEvenProcessor:
                     old_sl=None,
                     new_sl=None,
                     correlation_confidence=0.0,
-                    error_message="No position found - correlation failed"
+                    error_message="No position found - correlation failed",
                 )
 
             # Get correlation confidence from correlation stats
             try:
                 correlation_stats = self.correlation_engine.get_correlation_stats()
-                correlation_confidence = correlation_stats.get('success_rate', 0.75)
+                correlation_confidence = correlation_stats.get("success_rate", 0.75)
             except Exception as e:
                 self.logger.warning(f"Failed to get correlation stats: {e}")
                 correlation_confidence = 0.75  # Use default threshold
@@ -188,9 +189,7 @@ class BreakEvenProcessor:
                     old_sl=position.current_sl,
                     new_sl=None,
                     correlation_confidence=correlation_confidence,
-                    error_message=(
-                        f"Confidence {correlation_confidence:.2f} below 0.75"
-                    )
+                    error_message=(f"Confidence {correlation_confidence:.2f} below 0.75"),
                 )
 
             # Step 4: Check for existing break even update (idempotency)
@@ -202,7 +201,7 @@ class BreakEvenProcessor:
                     old_sl=position.current_sl,
                     new_sl=None,
                     correlation_confidence=correlation_confidence,
-                    error_message=f"Break even already applied to position {position.id}"
+                    error_message=f"Break even already applied to position {position.id}",
                 )
 
             # Step 5: Calculate break even price (entry +1 pip)
@@ -213,7 +212,7 @@ class BreakEvenProcessor:
                     old_sl=position.current_sl,
                     new_sl=None,
                     correlation_confidence=correlation_confidence,
-                    error_message="No entry price for BE calculation"
+                    error_message="No entry price for BE calculation",
                 )
 
             # Calculate new SL: entry +1 pip for both BUY and SELL positions
@@ -221,7 +220,7 @@ class BreakEvenProcessor:
                 price=position.open_price,
                 pips=1,
                 symbol="GOLD",  # Default to GOLD as per requirements
-                direction="BUY"  # Direction doesn't matter for BE - always add 1 pip
+                direction="BUY",  # Direction doesn't matter for BE - always add 1 pip
             )
 
             # Normalize price to broker specifications
@@ -234,21 +233,21 @@ class BreakEvenProcessor:
                 new_sl=new_sl,
                 telegram_message_id=message.telegram_message_id,
                 success=True,  # Will be updated if MT5 modification fails
-                error_msg=None
+                error_msg=None,
             )
 
             self.logger.info(
                 f"Break even calculation completed for position {position.id}",
                 extra={
-                    'correlation_id': correlation_id,
-                    'position_id': position.id,
-                    'mt5_ticket': position.mt5_ticket,
-                    'entry_price': position.open_price,
-                    'old_sl': position.current_sl,
-                    'new_sl': new_sl,
-                    'correlation_confidence': correlation_confidence,
-                    'update_id': update_id
-                }
+                    "correlation_id": correlation_id,
+                    "position_id": position.id,
+                    "mt5_ticket": position.mt5_ticket,
+                    "entry_price": position.open_price,
+                    "old_sl": position.current_sl,
+                    "new_sl": new_sl,
+                    "correlation_confidence": correlation_confidence,
+                    "update_id": update_id,
+                },
             )
 
             return BreakEvenResult(
@@ -258,22 +257,20 @@ class BreakEvenProcessor:
                 new_sl=new_sl,
                 correlation_confidence=correlation_confidence,
                 error_message=None,
-                update_id=update_id
+                update_id=update_id,
             )
 
         except asyncio.CancelledError:
-            self.logger.info(
-                f"BE processing cancelled for msg {message.telegram_message_id}"
-            )
+            self.logger.info(f"BE processing cancelled for msg {message.telegram_message_id}")
             raise
         except Exception as e:
             self.logger.error(
                 f"Error processing break even request: {e}",
                 extra={
-                    'correlation_id': correlation_id,
-                    'message_id': message.telegram_message_id,
-                    'error': str(e)
-                }
+                    "correlation_id": correlation_id,
+                    "message_id": message.telegram_message_id,
+                    "error": str(e),
+                },
             )
             return BreakEvenResult(
                 success=False,
@@ -281,7 +278,7 @@ class BreakEvenProcessor:
                 old_sl=None,
                 new_sl=None,
                 correlation_confidence=None,
-                error_message=f"Processing error: {e!s}"
+                error_message=f"Processing error: {e!s}",
             )
 
     async def check_existing_be_update(self, position_id: int) -> bool:
@@ -297,8 +294,7 @@ class BreakEvenProcessor:
         try:
             # Query for existing BREAK_EVEN updates on this position
             existing_updates = await self.update_repo.get_updates_by_position(
-                position_id=position_id,
-                update_type=UpdateType.BREAK_EVEN
+                position_id=position_id, update_type=UpdateType.BREAK_EVEN
             )
 
             # Check if any successful break even updates exist
@@ -308,10 +304,10 @@ class BreakEvenProcessor:
                 self.logger.debug(
                     f"Existing break even update found for position {position_id}",
                     extra={
-                        'position_id': position_id,
-                        'existing_updates': len(successful_updates),
-                        'latest_update_id': successful_updates[0].id
-                    }
+                        "position_id": position_id,
+                        "existing_updates": len(successful_updates),
+                        "latest_update_id": successful_updates[0].id,
+                    },
                 )
                 return True
 
@@ -329,7 +325,7 @@ class BreakEvenProcessor:
         new_sl: float,
         telegram_message_id: int,
         success: bool,
-        error_msg: str | None = None
+        error_msg: str | None = None,
     ) -> int:
         """
         Record break even update in position_updates table for audit trail.
@@ -355,7 +351,7 @@ class BreakEvenProcessor:
                 telegram_message_id=telegram_message_id,
                 success=success,
                 error_message=error_msg,
-                timestamp=datetime.now()
+                timestamp=datetime.now(),
             )
 
             update_id = await self.update_repo.create_update(update_record)
@@ -363,13 +359,13 @@ class BreakEvenProcessor:
             self.logger.info(
                 f"Break even update recorded with ID {update_id}",
                 extra={
-                    'update_id': update_id,
-                    'position_id': position_id,
-                    'old_sl': old_sl,
-                    'new_sl': new_sl,
-                    'success': success,
-                    'telegram_message_id': telegram_message_id
-                }
+                    "update_id": update_id,
+                    "position_id": position_id,
+                    "old_sl": old_sl,
+                    "new_sl": new_sl,
+                    "success": success,
+                    "telegram_message_id": telegram_message_id,
+                },
             )
 
             return update_id
@@ -390,8 +386,7 @@ class BreakEvenProcessor:
         """
         try:
             updates = await self.update_repo.get_updates_by_position(
-                position_id=position_id,
-                update_type=UpdateType.BREAK_EVEN
+                position_id=position_id, update_type=UpdateType.BREAK_EVEN
             )
 
             # Sort by timestamp descending (most recent first)
@@ -406,8 +401,8 @@ class BreakEvenProcessor:
         # This would be enhanced with actual metrics tracking
         # For now, return basic stats structure
         return {
-            'processor_initialized': True,
-            'patterns_loaded': len(self._compiled_patterns),
-            'correlation_engine_available': self.correlation_engine is not None,
-            'database_available': self.db_manager is not None
+            "processor_initialized": True,
+            "patterns_loaded": len(self._compiled_patterns),
+            "correlation_engine_available": self.correlation_engine is not None,
+            "database_available": self.db_manager is not None,
         }

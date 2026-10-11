@@ -58,9 +58,7 @@ class MessageHandler:
             metadata = await self._extract_message_metadata(message, event)
 
             # Prevent duplicate processing (an edit gets a new key so its new text is processed)
-            message_key = (
-                f"{metadata['telegram_chat_id']}_{metadata['telegram_message_id']}_{metadata['edit_date']}"
-            )
+            message_key = f"{metadata['telegram_chat_id']}_{metadata['telegram_message_id']}_{metadata['edit_date']}"
             if message_key in self._processed_messages:
                 return
 
@@ -112,19 +110,21 @@ class MessageHandler:
 
             # Get chat information
             chat = await event.get_chat()
-            chat_title = getattr(chat, 'title', getattr(chat, 'first_name', 'Unknown'))
+            chat_title = getattr(chat, "title", getattr(chat, "first_name", "Unknown"))
 
             metadata = {
-                'telegram_message_id': message.id,
-                'telegram_chat_id': get_peer_id(message.peer_id),
-                'sender': sender_info,
-                'timestamp': message.date if message.date else datetime.now(UTC),
-                'raw_text': message.text or '',
-                'reply_to_message_id': message.reply_to.reply_to_msg_id if message.reply_to else None,
-                'chat_title': chat_title,
-                'is_forwarded': message.forward is not None,
-                'message_type': 'text',
-                'edit_date': message.edit_date,
+                "telegram_message_id": message.id,
+                "telegram_chat_id": get_peer_id(message.peer_id),
+                "sender": sender_info,
+                "timestamp": message.date if message.date else datetime.now(UTC),
+                "raw_text": message.text or "",
+                "reply_to_message_id": (
+                    message.reply_to.reply_to_msg_id if message.reply_to else None
+                ),
+                "chat_title": chat_title,
+                "is_forwarded": message.forward is not None,
+                "message_type": "text",
+                "edit_date": message.edit_date,
             }
 
             return metadata
@@ -133,16 +133,16 @@ class MessageHandler:
             self.logger.error(f"Error extracting message metadata: {e}")
             # Return minimal metadata on error
             return {
-                'telegram_message_id': message.id,
-                'telegram_chat_id': 0,
-                'sender': 'unknown',
-                'timestamp': datetime.now(UTC),
-                'raw_text': message.text or '',
-                'reply_to_message_id': None,
-                'chat_title': 'unknown',
-                'is_forwarded': False,
-                'message_type': 'text',
-                'edit_date': getattr(message, 'edit_date', None),
+                "telegram_message_id": message.id,
+                "telegram_chat_id": 0,
+                "sender": "unknown",
+                "timestamp": datetime.now(UTC),
+                "raw_text": message.text or "",
+                "reply_to_message_id": None,
+                "chat_title": "unknown",
+                "is_forwarded": False,
+                "message_type": "text",
+                "edit_date": getattr(message, "edit_date", None),
             }
 
     async def _get_sender_info(self, message: Message) -> str:
@@ -159,9 +159,12 @@ class MessageHandler:
         try:
             if message.from_id:
                 # For privacy, we'll use the user ID instead of username
-                if hasattr(message.from_id, 'user_id') and message.from_id.user_id is not None:
+                if hasattr(message.from_id, "user_id") and message.from_id.user_id is not None:
                     return f"user_{message.from_id.user_id}"
-                elif hasattr(message.from_id, 'channel_id') and message.from_id.channel_id is not None:
+                elif (
+                    hasattr(message.from_id, "channel_id")
+                    and message.from_id.channel_id is not None
+                ):
                     return f"channel_{message.from_id.channel_id}"
                 else:
                     return "unknown_sender"
@@ -209,10 +212,10 @@ class MessageHandler:
         """
         try:
             # Format timestamp
-            timestamp = metadata['timestamp'].strftime('%Y-%m-%d %H:%M:%S')
+            timestamp = metadata["timestamp"].strftime("%Y-%m-%d %H:%M:%S")
 
             # Sanitize message content (first 100 chars)
-            message_preview = self._sanitize_message_content(metadata['raw_text'])
+            message_preview = self._sanitize_message_content(metadata["raw_text"])
 
             # Create formatted console output
             console_message = (
@@ -247,7 +250,7 @@ class MessageHandler:
 
         # Remove any potential sensitive patterns (basic sanitization)
         # This is a simple implementation - could be enhanced based on needs
-        preview = preview.replace('\n', ' ').replace('\r', ' ')
+        preview = preview.replace("\n", " ").replace("\r", " ")
 
         return preview
 
@@ -262,9 +265,13 @@ class MessageHandler:
         runtime_minutes = runtime.total_seconds() / 60
 
         return {
-            'messages_processed': self._message_counter,
-            'runtime_minutes': round(runtime_minutes, 1),
-            'messages_per_minute': round(self._message_counter / max(runtime_minutes, 1), 2) if runtime_minutes > 0 else 0,
-            'start_time': self._start_time.isoformat(),
-            'unique_messages_tracked': len(self._processed_messages)
+            "messages_processed": self._message_counter,
+            "runtime_minutes": round(runtime_minutes, 1),
+            "messages_per_minute": (
+                round(self._message_counter / max(runtime_minutes, 1), 2)
+                if runtime_minutes > 0
+                else 0
+            ),
+            "start_time": self._start_time.isoformat(),
+            "unique_messages_tracked": len(self._processed_messages),
         }

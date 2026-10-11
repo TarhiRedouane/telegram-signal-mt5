@@ -19,7 +19,7 @@ from src.utils.circuit_breaker import circuit_breaker
 class ReplyChainCache:
     """
     Simple TTL cache for reply chains with memory management.
-    
+
     Implements LRU-style eviction with TTL expiration to prevent
     memory bloat while caching frequently accessed chains.
     """
@@ -27,7 +27,7 @@ class ReplyChainCache:
     def __init__(self, max_entries: int = 1000, ttl_minutes: int = 5):
         """
         Initialize cache with size and TTL limits.
-        
+
         Args:
             max_entries: Maximum number of cached entries
             ttl_minutes: Time-to-live for cache entries in minutes
@@ -39,14 +39,11 @@ class ReplyChainCache:
 
     def _is_expired(self, entry: dict[str, Any]) -> bool:
         """Check if cache entry has expired."""
-        return time.time() - entry['timestamp'] > self.ttl_seconds
+        return time.time() - entry["timestamp"] > self.ttl_seconds
 
     def _cleanup_expired(self):
         """Remove expired entries from cache."""
-        expired_keys = [
-            key for key, entry in self._cache.items()
-            if self._is_expired(entry)
-        ]
+        expired_keys = [key for key, entry in self._cache.items() if self._is_expired(entry)]
         for key in expired_keys:
             del self._cache[key]
 
@@ -55,10 +52,9 @@ class ReplyChainCache:
         if len(self._cache) >= self.max_entries:
             # Remove 20% of oldest entries
             entries_to_remove = max(1, len(self._cache) // 5)
-            oldest_keys = sorted(
-                self._cache.keys(),
-                key=lambda k: self._cache[k]['timestamp']
-            )[:entries_to_remove]
+            oldest_keys = sorted(self._cache.keys(), key=lambda k: self._cache[k]["timestamp"])[
+                :entries_to_remove
+            ]
 
             for key in oldest_keys:
                 del self._cache[key]
@@ -68,11 +64,11 @@ class ReplyChainCache:
     def get(self, chat_id: int, message_id: int) -> int | None:
         """
         Get cached root message ID for message.
-        
+
         Args:
             chat_id: Telegram chat ID
             message_id: Telegram message ID
-            
+
         Returns:
             Root message ID if cached and valid, None otherwise
         """
@@ -81,8 +77,8 @@ class ReplyChainCache:
 
         if entry and not self._is_expired(entry):
             # Update access time for LRU behavior
-            entry['last_accessed'] = time.time()
-            return entry['root_message_id']
+            entry["last_accessed"] = time.time()
+            return entry["root_message_id"]
 
         # Remove expired entry
         if entry:
@@ -93,7 +89,7 @@ class ReplyChainCache:
     def put(self, chat_id: int, message_id: int, root_message_id: int):
         """
         Cache root message ID for message.
-        
+
         Args:
             chat_id: Telegram chat ID
             message_id: Telegram message ID
@@ -109,29 +105,26 @@ class ReplyChainCache:
 
         key = f"{chat_id}:{message_id}"
         self._cache[key] = {
-            'root_message_id': root_message_id,
-            'timestamp': time.time(),
-            'last_accessed': time.time()
+            "root_message_id": root_message_id,
+            "timestamp": time.time(),
+            "last_accessed": time.time(),
         }
 
     def get_stats(self) -> dict[str, int]:
         """Get cache statistics for monitoring."""
-        active_entries = sum(
-            1 for entry in self._cache.values()
-            if not self._is_expired(entry)
-        )
+        active_entries = sum(1 for entry in self._cache.values() if not self._is_expired(entry))
 
         return {
-            'total_entries': len(self._cache),
-            'active_entries': active_entries,
-            'expired_entries': len(self._cache) - active_entries
+            "total_entries": len(self._cache),
+            "active_entries": active_entries,
+            "expired_entries": len(self._cache) - active_entries,
         }
 
 
 class ReplyTracer:
     """
     Telegram reply chain traversal with caching and rate limiting.
-    
+
     Handles multi-level reply scenarios by traversing the reply chain
     until finding the root message, with proper error handling and
     API rate limiting compliance.
@@ -140,7 +133,7 @@ class ReplyTracer:
     def __init__(self, telegram_client, max_depth: int = 10):
         """
         Initialize reply tracer with Telegram client.
-        
+
         Args:
             telegram_client: Telegram client for message retrieval
             max_depth: Maximum reply chain depth to prevent infinite loops
@@ -151,10 +144,7 @@ class ReplyTracer:
 
         # Initialize cache and rate limiter
         self.cache = ReplyChainCache(max_entries=1000, ttl_minutes=5)
-        self.rate_limiter = RateLimiter(
-            base_delay_ms=2000.0,
-            std_dev_ms=500.0
-        )
+        self.rate_limiter = RateLimiter(base_delay_ms=2000.0, std_dev_ms=500.0)
 
         # Statistics for monitoring
         self._chain_requests = 0
@@ -165,11 +155,11 @@ class ReplyTracer:
     async def trace_reply_chain(self, message_id: int, chat_id: int) -> int | None:
         """
         Trace reply chain to find root message ID.
-        
+
         Args:
             message_id: Starting message ID
             chat_id: Telegram chat ID
-            
+
         Returns:
             Root message ID if found, None on failure
         """
@@ -180,11 +170,7 @@ class ReplyTracer:
 
             self.logger.info(
                 f"Starting reply chain trace for message {message_id}",
-                extra={
-                    'trace_id': trace_id,
-                    'message_id': message_id,
-                    'chat_id': chat_id
-                }
+                extra={"trace_id": trace_id, "message_id": message_id, "chat_id": chat_id},
             )
 
             # Check cache first
@@ -193,7 +179,7 @@ class ReplyTracer:
                 self._cache_hits += 1
                 self.logger.debug(
                     f"Cache hit for message {message_id} -> root {cached_root}",
-                    extra={'trace_id': trace_id}
+                    extra={"trace_id": trace_id},
                 )
                 return cached_root
 
@@ -207,10 +193,10 @@ class ReplyTracer:
                 self.logger.info(
                     f"Reply chain traced successfully: {message_id} -> {root_id}",
                     extra={
-                        'trace_id': trace_id,
-                        'root_message_id': root_id,
-                        'api_calls': self._api_calls - (self._chain_requests - 1)
-                    }
+                        "trace_id": trace_id,
+                        "root_message_id": root_id,
+                        "api_calls": self._api_calls - (self._chain_requests - 1),
+                    },
                 )
 
             return root_id
@@ -221,7 +207,7 @@ class ReplyTracer:
         except Exception as e:
             self.logger.error(
                 f"Error tracing reply chain for message {message_id}: {e}",
-                extra={'trace_id': trace_id}
+                extra={"trace_id": trace_id},
             )
             return None
 
@@ -229,12 +215,12 @@ class ReplyTracer:
     async def _traverse_chain(self, message_id: int, chat_id: int, trace_id: str) -> int | None:
         """
         Recursively traverse reply chain to find root.
-        
+
         Args:
             message_id: Current message ID
-            chat_id: Telegram chat ID  
+            chat_id: Telegram chat ID
             trace_id: Trace ID for logging
-            
+
         Returns:
             Root message ID if found
         """
@@ -247,7 +233,7 @@ class ReplyTracer:
             if current_id in visited:
                 self.logger.warning(
                     f"Circular reference detected in reply chain at message {current_id}",
-                    extra={'trace_id': trace_id}
+                    extra={"trace_id": trace_id},
                 )
                 break
 
@@ -261,20 +247,19 @@ class ReplyTracer:
                 message = await self._get_message_with_retry(chat_id, current_id, trace_id)
                 if not message:
                     self.logger.debug(
-                        f"Could not retrieve message {current_id}",
-                        extra={'trace_id': trace_id}
+                        f"Could not retrieve message {current_id}", extra={"trace_id": trace_id}
                     )
                     break
 
                 self._api_calls += 1
 
                 # Check if this message has a reply_to
-                if not hasattr(message, 'reply_to') or not message.reply_to:
+                if not hasattr(message, "reply_to") or not message.reply_to:
                     # This is the root message
                     self._chain_depths.append(depth)
                     self.logger.debug(
                         f"Found root message {current_id} at depth {depth}",
-                        extra={'trace_id': trace_id}
+                        extra={"trace_id": trace_id},
                     )
                     return current_id
 
@@ -282,7 +267,7 @@ class ReplyTracer:
                 parent_id = message.reply_to.reply_to_msg_id
                 self.logger.debug(
                     f"Following reply chain: {current_id} -> {parent_id}",
-                    extra={'trace_id': trace_id}
+                    extra={"trace_id": trace_id},
                 )
 
                 current_id = parent_id
@@ -290,31 +275,31 @@ class ReplyTracer:
 
             except Exception as e:
                 self.logger.error(
-                    f"Error retrieving message {current_id}: {e}",
-                    extra={'trace_id': trace_id}
+                    f"Error retrieving message {current_id}: {e}", extra={"trace_id": trace_id}
                 )
                 break
 
         if depth >= self.max_depth:
             self.logger.warning(
                 f"Maximum chain depth {self.max_depth} reached for message {message_id}",
-                extra={'trace_id': trace_id}
+                extra={"trace_id": trace_id},
             )
 
         # Return the deepest message we found if no root
         return current_id if current_id != message_id else None
 
-    async def _get_message_with_retry(self, chat_id: int, message_id: int,
-                                    trace_id: str, max_retries: int = 3) -> Any | None:
+    async def _get_message_with_retry(
+        self, chat_id: int, message_id: int, trace_id: str, max_retries: int = 3
+    ) -> Any | None:
         """
         Get message from Telegram with retry logic.
-        
+
         Args:
             chat_id: Telegram chat ID
             message_id: Message ID to retrieve
             trace_id: Trace ID for logging
             max_retries: Maximum retry attempts
-            
+
         Returns:
             Message object if successful, None otherwise
         """
@@ -325,33 +310,30 @@ class ReplyTracer:
                     return None
 
                 # Use Telethon's get_messages method
-                messages = await self.telegram_client.client.get_messages(
-                    chat_id,
-                    ids=[message_id]
-                )
+                messages = await self.telegram_client.client.get_messages(chat_id, ids=[message_id])
 
                 if messages and len(messages) > 0:
                     return messages[0]
                 else:
                     self.logger.debug(
                         f"Message {message_id} not found in chat {chat_id}",
-                        extra={'trace_id': trace_id}
+                        extra={"trace_id": trace_id},
                     )
                     return None
 
             except Exception as e:
                 if attempt < max_retries:
-                    wait_time = 2 ** attempt  # Exponential backoff
+                    wait_time = 2**attempt  # Exponential backoff
                     self.logger.warning(
                         f"Attempt {attempt + 1} failed for message {message_id}, "
                         f"retrying in {wait_time}s: {e}",
-                        extra={'trace_id': trace_id}
+                        extra={"trace_id": trace_id},
                     )
                     await asyncio.sleep(wait_time)
                 else:
                     self.logger.error(
                         f"All {max_retries + 1} attempts failed for message {message_id}: {e}",
-                        extra={'trace_id': trace_id}
+                        extra={"trace_id": trace_id},
                     )
                     return None
 
@@ -362,23 +344,19 @@ class ReplyTracer:
         cache_stats = self.cache.get_stats()
 
         cache_hit_rate = (
-            self._cache_hits / self._chain_requests
-            if self._chain_requests > 0 else 0.0
+            self._cache_hits / self._chain_requests if self._chain_requests > 0 else 0.0
         )
 
-        avg_depth = (
-            sum(self._chain_depths) / len(self._chain_depths)
-            if self._chain_depths else 0.0
-        )
+        avg_depth = sum(self._chain_depths) / len(self._chain_depths) if self._chain_depths else 0.0
 
         return {
-            'chain_requests': self._chain_requests,
-            'cache_hits': self._cache_hits,
-            'cache_hit_rate': round(cache_hit_rate, 3),
-            'api_calls': self._api_calls,
-            'average_chain_depth': round(avg_depth, 1),
-            'max_chain_depth': max(self._chain_depths) if self._chain_depths else 0,
-            'cache_stats': cache_stats
+            "chain_requests": self._chain_requests,
+            "cache_hits": self._cache_hits,
+            "cache_hit_rate": round(cache_hit_rate, 3),
+            "api_calls": self._api_calls,
+            "average_chain_depth": round(avg_depth, 1),
+            "max_chain_depth": max(self._chain_depths) if self._chain_depths else 0,
+            "cache_stats": cache_stats,
         }
 
     async def cleanup_cache(self):

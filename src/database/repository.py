@@ -41,16 +41,18 @@ from .models import (
 
 logger = logging.getLogger(__name__)
 
-ModelType = TypeVar('ModelType', bound=Base)
+ModelType = TypeVar("ModelType", bound=Base)
 
 
 class DatabaseError(Exception):
     """Base exception for database operations."""
+
     pass
 
 
 class RepositoryError(DatabaseError):
     """Exception for repository-specific errors."""
+
     pass
 
 
@@ -60,7 +62,7 @@ class DatabaseManager:
     def __init__(self, database_url: str):
         """
         Initialize database manager.
-        
+
         Args:
             database_url: SQLite database URL (e.g., 'sqlite+aiosqlite:///data/signal_ea.db')
         """
@@ -80,7 +82,7 @@ class DatabaseManager:
                 connect_args={
                     "check_same_thread": False,
                     "timeout": 30,
-                }
+                },
             )
 
             # Configure session factory
@@ -89,7 +91,7 @@ class DatabaseManager:
                 class_=AsyncSession,
                 expire_on_commit=False,
                 autoflush=True,
-                autocommit=False
+                autocommit=False,
             )
 
             # Apply SQLite optimizations
@@ -113,7 +115,7 @@ class DatabaseManager:
             "PRAGMA cache_size = -64000",  # 64MB cache
             "PRAGMA temp_store = MEMORY",
             "PRAGMA mmap_size = 268435456",  # 256MB memory-mapped I/O
-            "PRAGMA foreign_keys = ON"
+            "PRAGMA foreign_keys = ON",
         ]
 
         async with self.engine.connect() as conn:
@@ -161,7 +163,7 @@ class BaseRepository(Generic[ModelType], ABC):
     def __init__(self, db_manager: DatabaseManager, model_class: type[ModelType]):
         """
         Initialize repository.
-        
+
         Args:
             db_manager: Database manager instance
             model_class: SQLAlchemy model class
@@ -192,7 +194,9 @@ class BaseRepository(Generic[ModelType], ABC):
                 result = await session.get(self.model_class, record_id)
                 return result
         except SQLAlchemyError as e:
-            logger.error(f"Database error getting {self.model_class.__name__} by ID {record_id}: {e}")
+            logger.error(
+                f"Database error getting {self.model_class.__name__} by ID {record_id}: {e}"
+            )
             raise RepositoryError(f"Database error: {e}")
 
     async def update(self, record_id: int, **kwargs) -> ModelType | None:
@@ -322,14 +326,16 @@ class SignalRepository(BaseRepository[Signal]):
             logger.error(f"Database error finding signal by message ID {message_id}: {e}")
             raise RepositoryError(f"Database error: {e}")
 
-    async def get_recent_signals(self, minutes: int = 60, status: SignalStatus | None = None) -> list[Signal]:
+    async def get_recent_signals(
+        self, minutes: int = 60, status: SignalStatus | None = None
+    ) -> list[Signal]:
         """
         Get signals from recent time window for correlation.
-        
+
         Args:
             minutes: Time window in minutes
             status: Optional status filter
-            
+
         Returns:
             List of recent signals
         """
@@ -366,8 +372,9 @@ class SignalRepository(BaseRepository[Signal]):
             logger.error(f"Database error getting signals for symbol {symbol}: {e}")
             raise RepositoryError(f"Database error: {e}")
 
-    async def update_signal_status(self, signal_id: int, status: SignalStatus,
-                                 rejection_reason: str | None = None) -> bool:
+    async def update_signal_status(
+        self, signal_id: int, status: SignalStatus, rejection_reason: str | None = None
+    ) -> bool:
         """Update signal status with optional rejection reason."""
         try:
             update_data = {"status": status}
@@ -449,7 +456,9 @@ class PositionRepository(BaseRepository[Position]):
     async def update_position_status(self, position_id: int, status: PositionStatus) -> bool:
         """Status changes with timestamp."""
         try:
-            result = await self.update(position_id, status=status, last_sync=datetime.now(UTC).replace(tzinfo=None))
+            result = await self.update(
+                position_id, status=status, last_sync=datetime.now(UTC).replace(tzinfo=None)
+            )
             if result:
                 logger.info(f"Updated position {position_id} status to {status}")
                 return True
@@ -492,7 +501,7 @@ class PositionRepository(BaseRepository[Position]):
     async def update_position_mt5_data(self, position_id: int, mt5_data: dict[str, Any]) -> bool:
         """Update position with MT5 sync data."""
         try:
-            mt5_data['last_sync'] = datetime.now(UTC).replace(tzinfo=None)
+            mt5_data["last_sync"] = datetime.now(UTC).replace(tzinfo=None)
             result = await self.update(position_id, **mt5_data)
             return result is not None
         except Exception as e:
@@ -502,14 +511,15 @@ class PositionRepository(BaseRepository[Position]):
     async def get_positions_needing_sync(self, max_age_minutes: int = 5) -> list[Position]:
         """Get positions that need MT5 synchronization."""
         try:
-            cutoff_time = datetime.now(UTC).replace(tzinfo=None) - timedelta(minutes=max_age_minutes)
+            cutoff_time = datetime.now(UTC).replace(tzinfo=None) - timedelta(
+                minutes=max_age_minutes
+            )
             async with self.db_manager.get_session() as session:
                 stmt = (
                     select(Position)
                     .where(
                         and_(
-                            Position.status == PositionStatus.OPEN,
-                            Position.last_sync < cutoff_time
+                            Position.status == PositionStatus.OPEN, Position.last_sync < cutoff_time
                         )
                     )
                     .order_by(asc(Position.last_sync))
@@ -521,32 +531,28 @@ class PositionRepository(BaseRepository[Position]):
             raise RepositoryError(f"Database error: {e}")
 
     async def update_position_closed(
-        self,
-        position_id: int,
-        close_price: float,
-        profit: float,
-        close_time: datetime
+        self, position_id: int, close_price: float, profit: float, close_time: datetime
     ) -> bool:
         """
         Update position record for full closure.
-        
+
         Args:
             position_id: Position database ID
             close_price: Actual close price from MT5
             profit: Final profit/loss calculation
             close_time: Position close timestamp
-            
+
         Returns:
             True if update successful, False otherwise
         """
         try:
             close_data = {
-                'close_time': close_time,
-                'close_price': close_price,
-                'profit': profit,
-                'status': PositionStatus.CLOSED,
-                'last_sync': datetime.now(UTC).replace(tzinfo=None),
-                'volume': 0.0  # Position fully closed
+                "close_time": close_time,
+                "close_price": close_price,
+                "profit": profit,
+                "status": PositionStatus.CLOSED,
+                "last_sync": datetime.now(UTC).replace(tzinfo=None),
+                "volume": 0.0,  # Position fully closed
             }
 
             result = await self.update(position_id, **close_data)
@@ -554,11 +560,11 @@ class PositionRepository(BaseRepository[Position]):
                 logger.info(
                     f"Updated position {position_id} as CLOSED",
                     extra={
-                        'position_id': position_id,
-                        'close_price': close_price,
-                        'profit': profit,
-                        'close_time': close_time
-                    }
+                        "position_id": position_id,
+                        "close_price": close_price,
+                        "profit": profit,
+                        "close_time": close_time,
+                    },
                 )
                 return True
             return False
@@ -573,27 +579,27 @@ class PositionRepository(BaseRepository[Position]):
         close_price: float,
         profit_realized: float,
         volume_remaining: float,
-        close_time: datetime
+        close_time: datetime,
     ) -> bool:
         """
         Update position record for partial closure.
-        
+
         Args:
             position_id: Position database ID
             close_price: Close price for partial closure
             profit_realized: Profit from the closed portion
             volume_remaining: Remaining volume after partial close
             close_time: Partial close timestamp
-            
+
         Returns:
             True if update successful, False otherwise
         """
         try:
             # For partial closes, we keep the position open but update volume
             partial_data = {
-                'volume': volume_remaining,
-                'profit': profit_realized,  # Cumulative profit
-                'last_sync': datetime.now(UTC).replace(tzinfo=None)
+                "volume": volume_remaining,
+                "profit": profit_realized,  # Cumulative profit
+                "last_sync": datetime.now(UTC).replace(tzinfo=None),
             }
 
             result = await self.update(position_id, **partial_data)
@@ -601,12 +607,12 @@ class PositionRepository(BaseRepository[Position]):
                 logger.info(
                     f"Updated position {position_id} for partial close",
                     extra={
-                        'position_id': position_id,
-                        'close_price': close_price,
-                        'profit_realized': profit_realized,
-                        'volume_remaining': volume_remaining,
-                        'close_time': close_time
-                    }
+                        "position_id": position_id,
+                        "close_price": close_price,
+                        "profit_realized": profit_realized,
+                        "volume_remaining": volume_remaining,
+                        "close_time": close_time,
+                    },
                 )
                 return True
             return False
@@ -623,10 +629,7 @@ class PositionRepository(BaseRepository[Position]):
                     select(func.count())
                     .select_from(Position)
                     .where(
-                        and_(
-                            Position.status == PositionStatus.OPEN,
-                            Position.current_sl.is_(None)
-                        )
+                        and_(Position.status == PositionStatus.OPEN, Position.current_sl.is_(None))
                     )
                 )
                 result = await session.execute(stmt)
@@ -642,12 +645,7 @@ class PositionRepository(BaseRepository[Position]):
                 stmt = (
                     select(func.count())
                     .select_from(Position)
-                    .where(
-                        and_(
-                            Position.status == PositionStatus.OPEN,
-                            Position.profit > 0
-                        )
-                    )
+                    .where(and_(Position.status == PositionStatus.OPEN, Position.profit > 0))
                 )
                 result = await session.execute(stmt)
                 return result.scalar() or 0
@@ -660,19 +658,18 @@ class PositionRepository(BaseRepository[Position]):
         try:
             if date is None:
                 date = datetime.now(UTC)
-            
+
             start_of_day = date.replace(hour=0, minute=0, second=0, microsecond=0, tzinfo=None)
-            end_of_day = date.replace(hour=23, minute=59, second=59, microsecond=999999, tzinfo=None)
-            
+            end_of_day = date.replace(
+                hour=23, minute=59, second=59, microsecond=999999, tzinfo=None
+            )
+
             async with self.db_manager.get_session() as session:
-                stmt = (
-                    select(func.sum(Position.profit))
-                    .where(
-                        and_(
-                            Position.close_time >= start_of_day,
-                            Position.close_time <= end_of_day,
-                            Position.status == PositionStatus.CLOSED
-                        )
+                stmt = select(func.sum(Position.profit)).where(
+                    and_(
+                        Position.close_time >= start_of_day,
+                        Position.close_time <= end_of_day,
+                        Position.status == PositionStatus.CLOSED,
                     )
                 )
                 result = await session.execute(stmt)
@@ -688,24 +685,29 @@ class CorrelationRepository(BaseRepository[MessageCorrelation]):
     def __init__(self, db_manager: DatabaseManager):
         super().__init__(db_manager, MessageCorrelation)
 
-    async def link_messages(self, parent_id: int, child_id: int,
-                           correlation_type: CorrelationType,
-                           confidence: float = 1.0,
-                           position_id: int | None = None,
-                           extra_data: dict[str, Any] | None = None) -> int:
+    async def link_messages(
+        self,
+        parent_id: int,
+        child_id: int,
+        correlation_type: CorrelationType,
+        confidence: float = 1.0,
+        position_id: int | None = None,
+        extra_data: dict[str, Any] | None = None,
+    ) -> int:
         """Link parent-child messages for correlation."""
         try:
             correlation_data = {
-                'parent_message_id': parent_id,
-                'child_message_id': child_id,
-                'correlation_type': correlation_type,
-                'correlation_confidence': confidence,
-                'position_id': position_id,
+                "parent_message_id": parent_id,
+                "child_message_id": child_id,
+                "correlation_type": correlation_type,
+                "correlation_confidence": confidence,
+                "position_id": position_id,
             }
 
             if extra_data:
                 import json
-                correlation_data['extra_data'] = json.dumps(extra_data)
+
+                correlation_data["extra_data"] = json.dumps(extra_data)
 
             correlation = await self.create(**correlation_data)
             logger.info(f"Linked messages {parent_id} -> {child_id} with type {correlation_type}")
@@ -761,13 +763,18 @@ class CorrelationRepository(BaseRepository[MessageCorrelation]):
             logger.error(f"Failed to get correlation chain for message {message_id}: {e}")
             raise
 
-    async def store_correlation(self, parent_id: int, child_id: int,
-                               correlation_type: str, confidence: float,
-                               position_id: int | None = None,
-                               metadata: dict[str, Any] | None = None) -> int:
+    async def store_correlation(
+        self,
+        parent_id: int,
+        child_id: int,
+        correlation_type: str,
+        confidence: float,
+        position_id: int | None = None,
+        metadata: dict[str, Any] | None = None,
+    ) -> int:
         """
         Store correlation between parent and child messages.
-        
+
         Args:
             parent_id: Parent message ID
             child_id: Child message ID
@@ -775,7 +782,7 @@ class CorrelationRepository(BaseRepository[MessageCorrelation]):
             confidence: Confidence score (0.0-1.0)
             position_id: Associated position ID
             metadata: Additional correlation metadata
-            
+
         Returns:
             Created MessageCorrelation object
         """
@@ -792,19 +799,21 @@ class CorrelationRepository(BaseRepository[MessageCorrelation]):
                 correlation_type=correlation_type_enum,
                 confidence=confidence,
                 position_id=position_id,
-                extra_data=metadata
+                extra_data=metadata,
             )
         except Exception as e:
             logger.error(f"Failed to store correlation: {e}")
             raise
 
-    async def get_correlation_by_child_message(self, child_message_id: int) -> MessageCorrelation | None:
+    async def get_correlation_by_child_message(
+        self, child_message_id: int
+    ) -> MessageCorrelation | None:
         """
         Get correlation by child message ID.
-        
+
         Args:
             child_message_id: Child message ID
-            
+
         Returns:
             MessageCorrelation if found, None otherwise
         """
@@ -818,10 +827,10 @@ class CorrelationRepository(BaseRepository[MessageCorrelation]):
     async def get_correlations_by_position(self, position_id: int) -> list[MessageCorrelation]:
         """
         Get all correlations associated with a position.
-        
+
         Args:
             position_id: Position ID
-            
+
         Returns:
             List of MessageCorrelation objects
         """
@@ -841,22 +850,26 @@ class CorrelationRepository(BaseRepository[MessageCorrelation]):
     async def correlation_exists(self, parent_id: int, child_id: int) -> bool:
         """
         Check if correlation exists between parent and child messages.
-        
+
         Args:
             parent_id: Parent message ID
             child_id: Child message ID
-            
+
         Returns:
             True if correlation exists, False otherwise
         """
         try:
             async with self.db_manager.get_session() as session:
-                stmt = select(MessageCorrelation).where(
-                    and_(
-                        MessageCorrelation.parent_message_id == parent_id,
-                        MessageCorrelation.child_message_id == child_id
+                stmt = (
+                    select(MessageCorrelation)
+                    .where(
+                        and_(
+                            MessageCorrelation.parent_message_id == parent_id,
+                            MessageCorrelation.child_message_id == child_id,
+                        )
                     )
-                ).limit(1)
+                    .limit(1)
+                )
                 result = await session.execute(stmt)
                 return result.first() is not None
         except SQLAlchemyError as e:
@@ -871,10 +884,10 @@ class CorrelationRepository(BaseRepository[MessageCorrelation]):
                 total_stmt = select(func.count()).select_from(MessageCorrelation)
                 total_result = await session.execute(total_stmt)
                 total_count = total_result.scalar() or 0
-                
+
                 if total_count == 0:
                     return 100.0  # Assume success if no data
-                
+
                 # Successful correlations (above threshold)
                 success_stmt = (
                     select(func.count())
@@ -883,7 +896,7 @@ class CorrelationRepository(BaseRepository[MessageCorrelation]):
                 )
                 success_result = await session.execute(success_stmt)
                 success_count = success_result.scalar() or 0
-                
+
                 return (success_count / total_count) * 100.0
         except SQLAlchemyError as e:
             logger.error(f"Database error getting correlation success rate: {e}")
@@ -955,13 +968,10 @@ class LLMCacheRepository(BaseRepository[LLMCache]):
         """Get cached LLM response if not expired."""
         try:
             async with self.db_manager.get_session() as session:
-                stmt = (
-                    select(LLMCache)
-                    .where(
-                        and_(
-                            LLMCache.input_hash == input_hash,
-                            LLMCache.expires_at > datetime.now(UTC).replace(tzinfo=None)
-                        )
+                stmt = select(LLMCache).where(
+                    and_(
+                        LLMCache.input_hash == input_hash,
+                        LLMCache.expires_at > datetime.now(UTC).replace(tzinfo=None),
                     )
                 )
                 result = await session.execute(stmt)
@@ -970,10 +980,15 @@ class LLMCacheRepository(BaseRepository[LLMCache]):
             logger.error(f"Database error getting cached response: {e}")
             raise RepositoryError(f"Database error: {e}")
 
-    async def cache_response(self, input_hash: str, prompt_type: str,
-                           raw_message: str, parsed_response: str,
-                           confidence_score: float | None = None,
-                           expiry_hours: int = 24) -> int:
+    async def cache_response(
+        self,
+        input_hash: str,
+        prompt_type: str,
+        raw_message: str,
+        parsed_response: str,
+        confidence_score: float | None = None,
+        expiry_hours: int = 24,
+    ) -> int:
         """Cache LLM response with expiry."""
         try:
             cache_entry = LLMCache.create_with_expiry(
@@ -982,7 +997,7 @@ class LLMCacheRepository(BaseRepository[LLMCache]):
                 raw_message=raw_message,
                 parsed_response=parsed_response,
                 confidence_score=confidence_score,
-                expiry_hours=expiry_hours
+                expiry_hours=expiry_hours,
             )
 
             async with self.db_manager.get_transaction() as session:
@@ -998,7 +1013,9 @@ class LLMCacheRepository(BaseRepository[LLMCache]):
         """Clean up expired cache entries."""
         try:
             async with self.db_manager.get_transaction() as session:
-                stmt = delete(LLMCache).where(LLMCache.expires_at < datetime.now(UTC).replace(tzinfo=None))
+                stmt = delete(LLMCache).where(
+                    LLMCache.expires_at < datetime.now(UTC).replace(tzinfo=None)
+                )
                 result = await session.execute(stmt)
                 count = result.rowcount or 0
                 logger.info(f"Cleaned up {count} expired cache entries")
@@ -1026,18 +1043,18 @@ class PositionUpdateRepository(BaseRepository[PositionUpdate]):
                 telegram_message_id=position_update.telegram_message_id,
                 success=position_update.success,
                 error_message=position_update.error_message,
-                timestamp=position_update.timestamp
+                timestamp=position_update.timestamp,
             )
-            logger.info(f"Created position update {update.id} for position {position_update.position_id}")
+            logger.info(
+                f"Created position update {update.id} for position {position_update.position_id}"
+            )
             return update.id
         except Exception as e:
             logger.error(f"Failed to create position update: {e}")
             raise
 
     async def get_updates_by_position(
-        self,
-        position_id: int,
-        update_type: UpdateType | None = None
+        self, position_id: int, update_type: UpdateType | None = None
     ) -> list[PositionUpdate]:
         """Get all updates for a specific position, optionally filtered by type."""
         try:
@@ -1060,8 +1077,7 @@ class PositionUpdateRepository(BaseRepository[PositionUpdate]):
         """Check if successful break even update exists for position (idempotency check)."""
         try:
             updates = await self.get_updates_by_position(
-                position_id=position_id,
-                update_type=UpdateType.BREAK_EVEN
+                position_id=position_id, update_type=UpdateType.BREAK_EVEN
             )
 
             # Check if any successful break even updates exist
@@ -1080,7 +1096,7 @@ class PositionUpdateRepository(BaseRepository[PositionUpdate]):
         new_sl: float,
         telegram_message_id: int,
         success: bool,
-        error_msg: str | None = None
+        error_msg: str | None = None,
     ) -> int:
         """Record break even update for audit trail."""
         try:
@@ -1093,7 +1109,7 @@ class PositionUpdateRepository(BaseRepository[PositionUpdate]):
                 telegram_message_id=telegram_message_id,
                 success=success,
                 error_message=error_msg,
-                timestamp=datetime.now(UTC).replace(tzinfo=None)
+                timestamp=datetime.now(UTC).replace(tzinfo=None),
             )
 
             return await self.create_update(update_record)
@@ -1106,18 +1122,14 @@ class PositionUpdateRepository(BaseRepository[PositionUpdate]):
         """Get break even update history for a position."""
         try:
             return await self.get_updates_by_position(
-                position_id=position_id,
-                update_type=UpdateType.BREAK_EVEN
+                position_id=position_id, update_type=UpdateType.BREAK_EVEN
             )
         except Exception as e:
             logger.error(f"Error retrieving break even history: {e}")
             return []
 
     async def update_success_status(
-        self,
-        update_id: int,
-        success: bool,
-        error_message: str | None = None
+        self, update_id: int, success: bool, error_message: str | None = None
     ) -> bool:
         """Update success status of an existing position update."""
         try:
@@ -1140,23 +1152,25 @@ class PositionUpdateRepository(BaseRepository[PositionUpdate]):
         close_type: str,
         volume_closed: float,
         success: bool,
-        error_msg: str | None = None
+        error_msg: str | None = None,
     ) -> int:
         """
         Record close attempt audit trail.
-        
+
         Args:
             position_id: Position database ID
             close_type: Type of close ("FULL_CLOSE" or "PARTIAL_CLOSE")
             volume_closed: Volume that was closed
             success: Whether the close operation succeeded
             error_msg: Error message if operation failed
-            
+
         Returns:
             Position update record ID
         """
         try:
-            update_type = UpdateType.FULL_CLOSE if close_type == "FULL_CLOSE" else UpdateType.PARTIAL_CLOSE
+            update_type = (
+                UpdateType.FULL_CLOSE if close_type == "FULL_CLOSE" else UpdateType.PARTIAL_CLOSE
+            )
 
             update = await self.create(
                 position_id=position_id,
@@ -1166,18 +1180,18 @@ class PositionUpdateRepository(BaseRepository[PositionUpdate]):
                 new_value="0.0" if close_type == "FULL_CLOSE" else str(volume_closed),
                 success=success,
                 error_message=error_msg,
-                timestamp=datetime.now(UTC).replace(tzinfo=None)
+                timestamp=datetime.now(UTC).replace(tzinfo=None),
             )
 
             logger.info(
                 f"Recorded {close_type} attempt for position {position_id}",
                 extra={
-                    'position_id': position_id,
-                    'close_type': close_type,
-                    'volume_closed': volume_closed,
-                    'success': success,
-                    'update_id': update.id
-                }
+                    "position_id": position_id,
+                    "close_type": close_type,
+                    "volume_closed": volume_closed,
+                    "success": success,
+                    "update_id": update.id,
+                },
             )
 
             return update.id
@@ -1191,10 +1205,12 @@ class PositionUpdateRepository(BaseRepository[PositionUpdate]):
         try:
             if date is None:
                 date = datetime.now(UTC)
-            
+
             start_of_day = date.replace(hour=0, minute=0, second=0, microsecond=0, tzinfo=None)
-            end_of_day = date.replace(hour=23, minute=59, second=59, microsecond=999999, tzinfo=None)
-            
+            end_of_day = date.replace(
+                hour=23, minute=59, second=59, microsecond=999999, tzinfo=None
+            )
+
             async with self.db_manager.get_session() as session:
                 stmt = (
                     select(func.count())
@@ -1204,7 +1220,7 @@ class PositionUpdateRepository(BaseRepository[PositionUpdate]):
                             PositionUpdate.update_type == UpdateType.BREAK_EVEN,
                             PositionUpdate.success == True,
                             PositionUpdate.timestamp >= start_of_day,
-                            PositionUpdate.timestamp <= end_of_day
+                            PositionUpdate.timestamp <= end_of_day,
                         )
                     )
                 )
@@ -1219,20 +1235,24 @@ class PositionUpdateRepository(BaseRepository[PositionUpdate]):
         try:
             if date is None:
                 date = datetime.now(UTC)
-            
+
             start_of_day = date.replace(hour=0, minute=0, second=0, microsecond=0, tzinfo=None)
-            end_of_day = date.replace(hour=23, minute=59, second=59, microsecond=999999, tzinfo=None)
-            
+            end_of_day = date.replace(
+                hour=23, minute=59, second=59, microsecond=999999, tzinfo=None
+            )
+
             async with self.db_manager.get_session() as session:
                 stmt = (
                     select(func.count())
                     .select_from(PositionUpdate)
                     .where(
                         and_(
-                            PositionUpdate.update_type.in_([UpdateType.FULL_CLOSE, UpdateType.PARTIAL_CLOSE]),
+                            PositionUpdate.update_type.in_(
+                                [UpdateType.FULL_CLOSE, UpdateType.PARTIAL_CLOSE]
+                            ),
                             PositionUpdate.success == True,
                             PositionUpdate.timestamp >= start_of_day,
-                            PositionUpdate.timestamp <= end_of_day
+                            PositionUpdate.timestamp <= end_of_day,
                         )
                     )
                 )
@@ -1258,7 +1278,9 @@ class PositionUpdateRepository(BaseRepository[PositionUpdate]):
             logger.error(f"Database error getting recent BE updates: {e}")
             raise RepositoryError(f"Database error: {e}")
 
-    async def get_position_update_history(self, position_id: int, limit: int = 10) -> list[PositionUpdate]:
+    async def get_position_update_history(
+        self, position_id: int, limit: int = 10
+    ) -> list[PositionUpdate]:
         """Get last N modifications for a specific position."""
         try:
             async with self.db_manager.get_session() as session:
@@ -1281,21 +1303,27 @@ class HealthMetricsRepository(BaseRepository[HealthMetrics]):
     def __init__(self, db_manager: DatabaseManager):
         super().__init__(db_manager, HealthMetrics)
 
-    async def record_metric(self, component: str, metric_name: str,
-                          metric_value: float, status: HealthStatus,
-                          extra_data: dict[str, Any] | None = None) -> int:
+    async def record_metric(
+        self,
+        component: str,
+        metric_name: str,
+        metric_value: float,
+        status: HealthStatus,
+        extra_data: dict[str, Any] | None = None,
+    ) -> int:
         """Record health metric."""
         try:
             metric_data = {
-                'component': component,
-                'metric_name': metric_name,
-                'metric_value': metric_value,
-                'status': status,
+                "component": component,
+                "metric_name": metric_name,
+                "metric_value": metric_value,
+                "status": status,
             }
 
             if extra_data:
                 import json
-                metric_data['extra_data'] = json.dumps(extra_data)
+
+                metric_data["extra_data"] = json.dumps(extra_data)
 
             metric = await self.create(**metric_data)
             return metric.id
@@ -1307,11 +1335,7 @@ class HealthMetricsRepository(BaseRepository[HealthMetrics]):
         """Get latest health metrics, optionally filtered by component."""
         try:
             async with self.db_manager.get_session() as session:
-                stmt = (
-                    select(HealthMetrics)
-                    .order_by(desc(HealthMetrics.timestamp))
-                    .limit(100)
-                )
+                stmt = select(HealthMetrics).order_by(desc(HealthMetrics.timestamp)).limit(100)
                 if component:
                     stmt = stmt.where(HealthMetrics.component == component)
 
@@ -1332,42 +1356,42 @@ class RepositoryFactory:
 
     def get_signal_repository(self) -> SignalRepository:
         """Get signal repository instance."""
-        if 'signal' not in self._repositories:
-            self._repositories['signal'] = SignalRepository(self.db_manager)
-        return self._repositories['signal']
+        if "signal" not in self._repositories:
+            self._repositories["signal"] = SignalRepository(self.db_manager)
+        return self._repositories["signal"]
 
     def get_position_repository(self) -> PositionRepository:
         """Get position repository instance."""
-        if 'position' not in self._repositories:
-            self._repositories['position'] = PositionRepository(self.db_manager)
-        return self._repositories['position']
+        if "position" not in self._repositories:
+            self._repositories["position"] = PositionRepository(self.db_manager)
+        return self._repositories["position"]
 
     def get_correlation_repository(self) -> CorrelationRepository:
         """Get correlation repository instance."""
-        if 'correlation' not in self._repositories:
-            self._repositories['correlation'] = CorrelationRepository(self.db_manager)
-        return self._repositories['correlation']
+        if "correlation" not in self._repositories:
+            self._repositories["correlation"] = CorrelationRepository(self.db_manager)
+        return self._repositories["correlation"]
 
     def get_configuration_repository(self) -> ConfigurationRepository:
         """Get configuration repository instance."""
-        if 'config' not in self._repositories:
-            self._repositories['config'] = ConfigurationRepository(self.db_manager)
-        return self._repositories['config']
+        if "config" not in self._repositories:
+            self._repositories["config"] = ConfigurationRepository(self.db_manager)
+        return self._repositories["config"]
 
     def get_llm_cache_repository(self) -> LLMCacheRepository:
         """Get LLM cache repository instance."""
-        if 'llm_cache' not in self._repositories:
-            self._repositories['llm_cache'] = LLMCacheRepository(self.db_manager)
-        return self._repositories['llm_cache']
+        if "llm_cache" not in self._repositories:
+            self._repositories["llm_cache"] = LLMCacheRepository(self.db_manager)
+        return self._repositories["llm_cache"]
 
     def get_position_update_repository(self) -> PositionUpdateRepository:
         """Get position update repository instance."""
-        if 'position_update' not in self._repositories:
-            self._repositories['position_update'] = PositionUpdateRepository(self.db_manager)
-        return self._repositories['position_update']
+        if "position_update" not in self._repositories:
+            self._repositories["position_update"] = PositionUpdateRepository(self.db_manager)
+        return self._repositories["position_update"]
 
     def get_health_metrics_repository(self) -> HealthMetricsRepository:
         """Get health metrics repository instance."""
-        if 'health_metrics' not in self._repositories:
-            self._repositories['health_metrics'] = HealthMetricsRepository(self.db_manager)
-        return self._repositories['health_metrics']
+        if "health_metrics" not in self._repositories:
+            self._repositories["health_metrics"] = HealthMetricsRepository(self.db_manager)
+        return self._repositories["health_metrics"]

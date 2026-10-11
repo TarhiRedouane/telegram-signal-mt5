@@ -28,6 +28,7 @@ from src.utils.formatters import normalize_price
 @dataclass
 class MT5Result:
     """Result of MT5 operation with detailed status information."""
+
     success: bool
     ticket: int | None
     operation: str
@@ -47,7 +48,7 @@ class MT5Result:
 class PositionManager:
     """
     MT5 position manager for break even and other position modifications.
-    
+
     Provides secure position modification capabilities with proper error handling,
     circuit breaker protection, and comprehensive audit logging.
     """
@@ -55,7 +56,7 @@ class PositionManager:
     def __init__(self, connection_manager: MT5ConnectionManager | None = None):
         """
         Initialize position manager.
-        
+
         Args:
             connection_manager: MT5 connection manager (uses global if None)
         """
@@ -94,7 +95,9 @@ class PositionManager:
         resolve_symbol = getattr(self.connection_manager, "_resolve_broker_symbol_name", None)
         symbol = symbol.upper()
         for candidate in build_candidates(symbol) if callable(build_candidates) else [symbol]:
-            info = mt5.symbol_info(resolve_symbol(candidate) if callable(resolve_symbol) else candidate)
+            info = mt5.symbol_info(
+                resolve_symbol(candidate) if callable(resolve_symbol) else candidate
+            )
             if info is not None:
                 return info
         return None
@@ -120,10 +123,14 @@ class PositionManager:
                 if not p.sl or spec is None or not spec.trade_tick_size:
                     unprotected += 1
                     continue
-                distance = p.price_open - p.sl if p.type == mt5.POSITION_TYPE_BUY else p.sl - p.price_open
+                distance = (
+                    p.price_open - p.sl if p.type == mt5.POSITION_TYPE_BUY else p.sl - p.price_open
+                )
                 # SL at or beyond break-even risks nothing
-                open_risk += max(Decimal(0), Decimal(str(distance))) / Decimal(str(spec.trade_tick_size)) * (
-                    Decimal(str(spec.trade_tick_value)) * Decimal(str(p.volume))
+                open_risk += (
+                    max(Decimal(0), Decimal(str(distance)))
+                    / Decimal(str(spec.trade_tick_size))
+                    * (Decimal(str(spec.trade_tick_value)) * Decimal(str(p.volume)))
                 )
             # Server day: deal and tick times share the server clock, so no timezone conversion needed
             tick = mt5.symbol_info_tick(info.name)
@@ -132,8 +139,11 @@ class PositionManager:
             day_start = tick.time - tick.time % 86400 if tick is not None else None
             trades = (mt5.DEAL_TYPE_BUY, mt5.DEAL_TYPE_SELL)
             realized = sum(
-                (Decimal(str(d.profit + d.commission + d.swap + getattr(d, "fee", 0.0)))
-                 for d in deals if day_start is not None and d.time >= day_start and d.type in trades),
+                (
+                    Decimal(str(d.profit + d.commission + d.swap + getattr(d, "fee", 0.0)))
+                    for d in deals
+                    if day_start is not None and d.time >= day_start and d.type in trades
+                ),
                 Decimal(0),
             )
             terminal = mt5.terminal_info()
@@ -159,7 +169,11 @@ class PositionManager:
         async with self.connection_manager.get_connection() as connection:
             if not connection.connected or mt5.positions_get(ticket=ticket):
                 return None
-            exits = [d for d in (mt5.history_deals_get(position=ticket) or ()) if d.entry == mt5.DEAL_ENTRY_OUT]
+            exits = [
+                d
+                for d in (mt5.history_deals_get(position=ticket) or ())
+                if d.entry == mt5.DEAL_ENTRY_OUT
+            ]
             if not exits:
                 return None
             reasons = {d.reason for d in exits}
@@ -215,8 +229,12 @@ class PositionManager:
                     )
 
                 position = positions[0]
-                normalized_sl = normalize_price(new_sl, position.symbol) if new_sl is not None else position.sl
-                normalized_tp = normalize_price(new_tp, position.symbol) if new_tp is not None else position.tp
+                normalized_sl = (
+                    normalize_price(new_sl, position.symbol) if new_sl is not None else position.sl
+                )
+                normalized_tp = (
+                    normalize_price(new_tp, position.symbol) if new_tp is not None else position.tp
+                )
                 request = {
                     "action": mt5.TRADE_ACTION_SLTP,
                     "symbol": position.symbol,
@@ -284,7 +302,7 @@ class PositionManager:
                     success=False,
                     ticket=None,
                     operation="open_market_order",
-                    error_message="MT5 module not available"
+                    error_message="MT5 module not available",
                 )
 
             action = getattr(signal, "parsed_action", None)
@@ -295,7 +313,7 @@ class PositionManager:
                     success=False,
                     ticket=None,
                     operation="open_market_order",
-                    error_message=f"Unsupported action for MT5 order: {action_name or action}"
+                    error_message=f"Unsupported action for MT5 order: {action_name or action}",
                 )
 
             symbol = str(getattr(signal, "symbol", "")).upper()
@@ -304,7 +322,7 @@ class PositionManager:
                     success=False,
                     ticket=None,
                     operation="open_market_order",
-                    error_message="Signal has no symbol for MT5 execution"
+                    error_message="Signal has no symbol for MT5 execution",
                 )
 
             if volume <= 0:
@@ -312,7 +330,7 @@ class PositionManager:
                     success=False,
                     ticket=None,
                     operation="open_market_order",
-                    error_message=f"Invalid volume for MT5 order: {volume}"
+                    error_message=f"Invalid volume for MT5 order: {volume}",
                 )
 
             async with self.connection_manager.get_connection() as connection:
@@ -321,15 +339,21 @@ class PositionManager:
                         success=False,
                         ticket=None,
                         operation="open_market_order",
-                        error_message="MT5 connection not available"
+                        error_message="MT5 connection not available",
                     )
 
-                build_candidates = getattr(self.connection_manager, "_build_price_lookup_candidates", None)
-                resolve_symbol = getattr(self.connection_manager, "_resolve_broker_symbol_name", None)
+                build_candidates = getattr(
+                    self.connection_manager, "_build_price_lookup_candidates", None
+                )
+                resolve_symbol = getattr(
+                    self.connection_manager, "_resolve_broker_symbol_name", None
+                )
                 candidates = build_candidates(symbol) if callable(build_candidates) else [symbol]
                 tick = None
                 for candidate in candidates:
-                    broker_symbol = resolve_symbol(candidate) if callable(resolve_symbol) else candidate
+                    broker_symbol = (
+                        resolve_symbol(candidate) if callable(resolve_symbol) else candidate
+                    )
                     symbol_select = getattr(mt5, "symbol_select", None)
                     if callable(symbol_select):
                         symbol_select(broker_symbol, True)
@@ -343,7 +367,7 @@ class PositionManager:
                         success=False,
                         ticket=None,
                         operation="open_market_order",
-                        error_message=f"Unable to get market tick for broker symbol candidates {candidates}"
+                        error_message=f"Unable to get market tick for broker symbol candidates {candidates}",
                     )
 
                 order_type = mt5.ORDER_TYPE_BUY if action_name == "BUY" else mt5.ORDER_TYPE_SELL
@@ -365,13 +389,13 @@ class PositionManager:
                 self.logger.info(
                     f"Sending MT5 market order for {symbol} {action_name}",
                     extra={
-                        'symbol': symbol,
-                        'action': action_name,
-                        'volume': float(volume),
-                        'entry_price': float(getattr(signal, 'entry_price', 0) or 0),
-                        'stop_loss': float(getattr(signal, 'stop_loss', 0) or 0),
-                        'take_profit': float(getattr(signal, 'take_profit', 0) or 0),
-                    }
+                        "symbol": symbol,
+                        "action": action_name,
+                        "volume": float(volume),
+                        "entry_price": float(getattr(signal, "entry_price", 0) or 0),
+                        "stop_loss": float(getattr(signal, "stop_loss", 0) or 0),
+                        "take_profit": float(getattr(signal, "take_profit", 0) or 0),
+                    },
                 )
 
                 result = mt5.order_send(request)
@@ -382,7 +406,7 @@ class PositionManager:
                         ticket=None,
                         operation="open_market_order",
                         error_code=error[0] if error else None,
-                        error_message=f"MT5 order_send failed: {error[1] if error else 'Unknown error'}"
+                        error_message=f"MT5 order_send failed: {error[1] if error else 'Unknown error'}",
                     )
 
                 if result.retcode not in {mt5.TRADE_RETCODE_DONE, mt5.TRADE_RETCODE_DONE_PARTIAL}:
@@ -390,31 +414,31 @@ class PositionManager:
                     self.logger.error(
                         f"MT5 order execution failed for {symbol}",
                         extra={
-                            'symbol': symbol,
-                            'action': action_name,
-                            'retcode': result.retcode,
-                            'error_description': error_msg,
-                        }
+                            "symbol": symbol,
+                            "action": action_name,
+                            "retcode": result.retcode,
+                            "error_description": error_msg,
+                        },
                     )
                     return MT5Result(
                         success=False,
-                        ticket=getattr(result, 'order', None),
+                        ticket=getattr(result, "order", None),
                         operation="open_market_order",
                         retcode=result.retcode,
-                        error_message=error_msg
+                        error_message=error_msg,
                     )
 
                 ticket = getattr(result, "order", None) or getattr(result, "ticket", None)
                 self.logger.info(
                     f"MT5 market order executed for {symbol} ticket={ticket}",
-                    extra={'symbol': symbol, 'ticket': ticket, 'retcode': result.retcode}
+                    extra={"symbol": symbol, "ticket": ticket, "retcode": result.retcode},
                 )
                 return MT5Result(
                     success=True,
                     ticket=ticket,
                     operation="open_market_order",
                     retcode=result.retcode,
-                    execution_time_ms=0.0
+                    execution_time_ms=0.0,
                 )
 
         except asyncio.CancelledError:
@@ -426,26 +450,23 @@ class PositionManager:
                 success=False,
                 ticket=None,
                 operation="open_market_order",
-                error_message=f"Exception: {e!s}"
+                error_message=f"Exception: {e!s}",
             )
 
     @circuit_breaker(failure_threshold=3, recovery_timeout=30)
     @retry_on_failure(max_attempts=3, delay=1.0, backoff=2.0)
     @log_execution_time
     async def modify_stop_loss(
-        self,
-        ticket: int,
-        new_sl: float,
-        preserve_tp: bool = True
+        self, ticket: int, new_sl: float, preserve_tp: bool = True
     ) -> MT5Result:
         """
         Modify stop-loss for a position while preserving take-profit.
-        
+
         Args:
             ticket: MT5 position ticket number
             new_sl: New stop-loss price (normalized)
             preserve_tp: Whether to preserve existing take-profit (default: True)
-            
+
         Returns:
             MT5Result with operation outcome and details
         """
@@ -457,17 +478,17 @@ class PositionManager:
                     success=False,
                     ticket=ticket,
                     operation="modify_stop_loss",
-                    error_message="MT5 module not available"
+                    error_message="MT5 module not available",
                 )
 
             self.logger.info(
                 f"Starting SL modification for ticket {ticket}",
                 extra={
-                    'ticket': ticket,
-                    'new_sl': new_sl,
-                    'preserve_tp': preserve_tp,
-                    'operation': 'modify_stop_loss'
-                }
+                    "ticket": ticket,
+                    "new_sl": new_sl,
+                    "preserve_tp": preserve_tp,
+                    "operation": "modify_stop_loss",
+                },
             )
 
             # Get current position details
@@ -477,7 +498,7 @@ class PositionManager:
                         success=False,
                         ticket=ticket,
                         operation="modify_stop_loss",
-                        error_message="MT5 connection not available"
+                        error_message="MT5 connection not available",
                     )
 
                 # Get position info
@@ -487,7 +508,7 @@ class PositionManager:
                         success=False,
                         ticket=ticket,
                         operation="modify_stop_loss",
-                        error_message=f"Position {ticket} not found or already closed"
+                        error_message=f"Position {ticket} not found or already closed",
                     )
 
                 position = position_info[0]
@@ -503,7 +524,7 @@ class PositionManager:
                         success=False,
                         ticket=ticket,
                         operation="modify_stop_loss",
-                        error_message=f"Invalid SL price: {normalized_sl}"
+                        error_message=f"Invalid SL price: {normalized_sl}",
                     )
 
                 # Prepare modification request
@@ -514,23 +535,23 @@ class PositionManager:
                     "sl": normalized_sl,
                     "tp": old_tp if preserve_tp else 0.0,
                     "magic": position.magic,
-                    "comment": "Break Even SL Modification"
+                    "comment": "Break Even SL Modification",
                 }
 
                 self.logger.debug(
                     f"Sending MT5 modification request for ticket {ticket}",
                     extra={
-                        'request': {
-                            'action': 'TRADE_ACTION_SLTP',
-                            'symbol': position.symbol,
-                            'position': ticket,
-                            'sl': normalized_sl,
-                            'tp': old_tp,
-                            'magic': position.magic
+                        "request": {
+                            "action": "TRADE_ACTION_SLTP",
+                            "symbol": position.symbol,
+                            "position": ticket,
+                            "sl": normalized_sl,
+                            "tp": old_tp,
+                            "magic": position.magic,
                         },
-                        'old_sl': old_sl,
-                        'old_tp': old_tp
-                    }
+                        "old_sl": old_sl,
+                        "old_tp": old_tp,
+                    },
                 )
 
                 # Execute modification
@@ -548,7 +569,7 @@ class PositionManager:
                         old_tp=old_tp,
                         error_code=error[0] if error else None,
                         error_message=f"MT5 order_send failed: {error[1] if error else 'Unknown error'}",
-                        execution_time_ms=execution_time
+                        execution_time_ms=execution_time,
                     )
 
                 # Check result
@@ -558,11 +579,11 @@ class PositionManager:
                     self.logger.error(
                         f"MT5 modification failed for ticket {ticket}",
                         extra={
-                            'ticket': ticket,
-                            'retcode': result.retcode,
-                            'error_description': error_msg,
-                            'execution_time_ms': execution_time
-                        }
+                            "ticket": ticket,
+                            "retcode": result.retcode,
+                            "error_description": error_msg,
+                            "execution_time_ms": execution_time,
+                        },
                     )
 
                     return MT5Result(
@@ -574,20 +595,20 @@ class PositionManager:
                         old_tp=old_tp,
                         retcode=result.retcode,
                         error_message=error_msg,
-                        execution_time_ms=execution_time
+                        execution_time_ms=execution_time,
                     )
 
                 # Success - log details
                 self.logger.info(
                     f"SL modification successful for ticket {ticket}",
                     extra={
-                        'ticket': ticket,
-                        'old_sl': old_sl,
-                        'new_sl': normalized_sl,
-                        'tp_preserved': old_tp,
-                        'retcode': result.retcode,
-                        'execution_time_ms': execution_time
-                    }
+                        "ticket": ticket,
+                        "old_sl": old_sl,
+                        "new_sl": normalized_sl,
+                        "tp_preserved": old_tp,
+                        "retcode": result.retcode,
+                        "execution_time_ms": execution_time,
+                    },
                 )
 
                 return MT5Result(
@@ -599,7 +620,7 @@ class PositionManager:
                     old_tp=old_tp,
                     new_tp=old_tp,  # Preserved
                     retcode=result.retcode,
-                    execution_time_ms=execution_time
+                    execution_time_ms=execution_time,
                 )
 
         except asyncio.CancelledError:
@@ -611,11 +632,11 @@ class PositionManager:
             self.logger.error(
                 f"Exception during SL modification for ticket {ticket}: {e}",
                 extra={
-                    'ticket': ticket,
-                    'new_sl': new_sl,
-                    'error': str(e),
-                    'execution_time_ms': execution_time
-                }
+                    "ticket": ticket,
+                    "new_sl": new_sl,
+                    "error": str(e),
+                    "execution_time_ms": execution_time,
+                },
             )
 
             return MT5Result(
@@ -623,24 +644,21 @@ class PositionManager:
                 ticket=ticket,
                 operation="modify_stop_loss",
                 error_message=f"Exception: {e!s}",
-                execution_time_ms=execution_time
+                execution_time_ms=execution_time,
             )
 
     @circuit_breaker(failure_threshold=3, recovery_timeout=30)
     async def validate_modification_success(
-        self,
-        ticket: int,
-        expected_sl: float,
-        timeout_seconds: int = 10
+        self, ticket: int, expected_sl: float, timeout_seconds: int = 10
     ) -> bool:
         """
         Validate that stop-loss modification was applied successfully.
-        
+
         Args:
             ticket: MT5 position ticket
             expected_sl: Expected new stop-loss value
             timeout_seconds: Maximum time to wait for update
-            
+
         Returns:
             True if modification was applied successfully
         """
@@ -673,11 +691,13 @@ class PositionManager:
                         self.logger.info(
                             f"SL modification validated successfully for ticket {ticket}",
                             extra={
-                                'ticket': ticket,
-                                'expected_sl': expected_sl_normalized,
-                                'actual_sl': current_sl_normalized,
-                                'validation_time_seconds': (datetime.now() - start_time).total_seconds()
-                            }
+                                "ticket": ticket,
+                                "expected_sl": expected_sl_normalized,
+                                "actual_sl": current_sl_normalized,
+                                "validation_time_seconds": (
+                                    datetime.now() - start_time
+                                ).total_seconds(),
+                            },
                         )
                         return True
 
@@ -688,10 +708,10 @@ class PositionManager:
                 self.logger.error(
                     f"SL modification validation failed for ticket {ticket} - timeout",
                     extra={
-                        'ticket': ticket,
-                        'expected_sl': expected_sl_normalized,
-                        'timeout_seconds': timeout_seconds
-                    }
+                        "ticket": ticket,
+                        "expected_sl": expected_sl_normalized,
+                        "timeout_seconds": timeout_seconds,
+                    },
                 )
                 return False
 
@@ -702,10 +722,10 @@ class PositionManager:
     async def get_position_details(self, ticket: int) -> dict[str, Any] | None:
         """
         Get current position details from MT5.
-        
+
         Args:
             ticket: MT5 position ticket
-            
+
         Returns:
             Dictionary with position details or None if not found
         """
@@ -723,20 +743,20 @@ class PositionManager:
 
                 position = position_info[0]
                 return {
-                    'ticket': position.ticket,
-                    'symbol': position.symbol,
-                    'time': position.time,
-                    'type': position.type,
-                    'volume': position.volume,
-                    'price_open': position.price_open,
-                    'sl': position.sl,
-                    'tp': position.tp,
-                    'price_current': position.price_current,
-                    'profit': position.profit,
-                    'swap': position.swap,
-                    'commission': position.commission,
-                    'magic': position.magic,
-                    'comment': position.comment
+                    "ticket": position.ticket,
+                    "symbol": position.symbol,
+                    "time": position.time,
+                    "type": position.type,
+                    "volume": position.volume,
+                    "price_open": position.price_open,
+                    "sl": position.sl,
+                    "tp": position.tp,
+                    "price_current": position.price_current,
+                    "profit": position.profit,
+                    "swap": position.swap,
+                    "commission": position.commission,
+                    "magic": position.magic,
+                    "comment": position.comment,
                 }
 
         except Exception as e:
@@ -746,10 +766,10 @@ class PositionManager:
     def _get_retcode_description(self, retcode: int) -> str:
         """
         Get human-readable description for MT5 return code.
-        
+
         Args:
             retcode: MT5 return code
-            
+
         Returns:
             Description of the return code
         """
@@ -785,36 +805,29 @@ class PositionManager:
             mt5.TRADE_RETCODE_LIMIT_ORDERS: "Number of pending orders reached limit",
             mt5.TRADE_RETCODE_LIMIT_VOLUME: "Volume of orders and positions reached limit",
             mt5.TRADE_RETCODE_INVALID_ORDER: "Incorrect or prohibited order type",
-            mt5.TRADE_RETCODE_POSITION_CLOSED: "Position with specified POSITION_IDENTIFIER already closed"
+            mt5.TRADE_RETCODE_POSITION_CLOSED: "Position with specified POSITION_IDENTIFIER already closed",
         }
 
         return retcode_descriptions.get(retcode, f"Unknown return code: {retcode}")
 
     async def rollback_modification(
-        self,
-        ticket: int,
-        original_sl: float | None,
-        original_tp: float | None
+        self, ticket: int, original_sl: float | None, original_tp: float | None
     ) -> MT5Result:
         """
         Rollback position modification to original values.
-        
+
         Args:
             ticket: MT5 position ticket
             original_sl: Original stop-loss value
             original_tp: Original take-profit value
-            
+
         Returns:
             MT5Result with rollback outcome
         """
         try:
             self.logger.warning(
                 f"Attempting rollback for ticket {ticket}",
-                extra={
-                    'ticket': ticket,
-                    'original_sl': original_sl,
-                    'original_tp': original_tp
-                }
+                extra={"ticket": ticket, "original_sl": original_sl, "original_tp": original_tp},
             )
 
             if mt5 is None:
@@ -822,7 +835,7 @@ class PositionManager:
                     success=False,
                     ticket=ticket,
                     operation="rollback_modification",
-                    error_message="MT5 module not available for rollback"
+                    error_message="MT5 module not available for rollback",
                 )
 
             async with self.connection_manager.get_connection() as connection:
@@ -831,7 +844,7 @@ class PositionManager:
                         success=False,
                         ticket=ticket,
                         operation="rollback_modification",
-                        error_message="MT5 connection not available for rollback"
+                        error_message="MT5 connection not available for rollback",
                     )
 
                 # Get current position
@@ -841,7 +854,7 @@ class PositionManager:
                         success=False,
                         ticket=ticket,
                         operation="rollback_modification",
-                        error_message=f"Position {ticket} not found for rollback"
+                        error_message=f"Position {ticket} not found for rollback",
                     )
 
                 position = position_info[0]
@@ -854,20 +867,22 @@ class PositionManager:
                     "sl": original_sl if original_sl else 0.0,
                     "tp": original_tp if original_tp else 0.0,
                     "magic": position.magic,
-                    "comment": "Break Even Rollback"
+                    "comment": "Break Even Rollback",
                 }
 
                 # Execute rollback
                 result = mt5.order_send(request)
 
                 if result is None or result.retcode != mt5.TRADE_RETCODE_DONE:
-                    error_msg = self._get_retcode_description(result.retcode) if result else "Unknown error"
+                    error_msg = (
+                        self._get_retcode_description(result.retcode) if result else "Unknown error"
+                    )
                     return MT5Result(
                         success=False,
                         ticket=ticket,
                         operation="rollback_modification",
                         error_message=f"Rollback failed: {error_msg}",
-                        retcode=result.retcode if result else None
+                        retcode=result.retcode if result else None,
                     )
 
                 self.logger.info(f"Rollback successful for ticket {ticket}")
@@ -879,7 +894,7 @@ class PositionManager:
                     new_sl=original_sl,
                     old_tp=position.tp,
                     new_tp=original_tp,
-                    retcode=result.retcode
+                    retcode=result.retcode,
                 )
 
         except Exception as e:
@@ -888,7 +903,7 @@ class PositionManager:
                 success=False,
                 ticket=ticket,
                 operation="rollback_modification",
-                error_message=f"Rollback exception: {e!s}"
+                error_message=f"Rollback exception: {e!s}",
             )
 
     @circuit_breaker(failure_threshold=3, recovery_timeout=30)
@@ -897,10 +912,10 @@ class PositionManager:
     async def close_position_full(self, ticket: int) -> MT5Result:
         """
         Close position completely using MT5 OrderSend function.
-        
+
         Args:
             ticket: MT5 position ticket number
-            
+
         Returns:
             MT5Result with close operation outcome and details
         """
@@ -912,15 +927,12 @@ class PositionManager:
                     success=False,
                     ticket=ticket,
                     operation="close_position_full",
-                    error_message="MT5 module not available"
+                    error_message="MT5 module not available",
                 )
 
             self.logger.info(
                 f"Starting full close for ticket {ticket}",
-                extra={
-                    'ticket': ticket,
-                    'operation': 'close_position_full'
-                }
+                extra={"ticket": ticket, "operation": "close_position_full"},
             )
 
             # Get current position details
@@ -930,7 +942,7 @@ class PositionManager:
                         success=False,
                         ticket=ticket,
                         operation="close_position_full",
-                        error_message="MT5 connection not available"
+                        error_message="MT5 connection not available",
                     )
 
                 # Get position info
@@ -940,7 +952,7 @@ class PositionManager:
                         success=False,
                         ticket=ticket,
                         operation="close_position_full",
-                        error_message=f"Position {ticket} not found or already closed"
+                        error_message=f"Position {ticket} not found or already closed",
                     )
 
                 position = position_info[0]
@@ -958,7 +970,7 @@ class PositionManager:
                         success=False,
                         ticket=ticket,
                         operation="close_position_full",
-                        error_message=f"Unable to get current price for {position.symbol}"
+                        error_message=f"Unable to get current price for {position.symbol}",
                     )
 
                 # Prepare close request
@@ -978,17 +990,17 @@ class PositionManager:
                 self.logger.debug(
                     f"Sending MT5 close request for ticket {ticket}",
                     extra={
-                        'request': {
-                            'action': 'TRADE_ACTION_DEAL',
-                            'symbol': position.symbol,
-                            'volume': position.volume,
-                            'type': 'SELL' if order_type == mt5.ORDER_TYPE_SELL else 'BUY',
-                            'position': ticket,
-                            'price': price,
-                            'magic': position.magic
+                        "request": {
+                            "action": "TRADE_ACTION_DEAL",
+                            "symbol": position.symbol,
+                            "volume": position.volume,
+                            "type": "SELL" if order_type == mt5.ORDER_TYPE_SELL else "BUY",
+                            "position": ticket,
+                            "price": price,
+                            "magic": position.magic,
                         },
-                        'original_volume': position.volume
-                    }
+                        "original_volume": position.volume,
+                    },
                 )
 
                 # Execute close
@@ -1003,7 +1015,7 @@ class PositionManager:
                         operation="close_position_full",
                         error_code=error[0] if error else None,
                         error_message=f"MT5 order_send failed: {error[1] if error else 'Unknown error'}",
-                        execution_time_ms=execution_time
+                        execution_time_ms=execution_time,
                     )
 
                 # Check result
@@ -1013,11 +1025,11 @@ class PositionManager:
                     self.logger.error(
                         f"MT5 close failed for ticket {ticket}",
                         extra={
-                            'ticket': ticket,
-                            'retcode': result.retcode,
-                            'error_description': error_msg,
-                            'execution_time_ms': execution_time
-                        }
+                            "ticket": ticket,
+                            "retcode": result.retcode,
+                            "error_description": error_msg,
+                            "execution_time_ms": execution_time,
+                        },
                     )
 
                     return MT5Result(
@@ -1026,19 +1038,19 @@ class PositionManager:
                         operation="close_position_full",
                         retcode=result.retcode,
                         error_message=error_msg,
-                        execution_time_ms=execution_time
+                        execution_time_ms=execution_time,
                     )
 
                 # Success - log details
                 self.logger.info(
                     f"Full close successful for ticket {ticket}",
                     extra={
-                        'ticket': ticket,
-                        'volume_closed': position.volume,
-                        'close_price': price,
-                        'retcode': result.retcode,
-                        'execution_time_ms': execution_time
-                    }
+                        "ticket": ticket,
+                        "volume_closed": position.volume,
+                        "close_price": price,
+                        "retcode": result.retcode,
+                        "execution_time_ms": execution_time,
+                    },
                 )
 
                 return MT5Result(
@@ -1049,7 +1061,7 @@ class PositionManager:
                     close_price=price,
                     profit=position.profit,
                     retcode=result.retcode,
-                    execution_time_ms=execution_time
+                    execution_time_ms=execution_time,
                 )
 
         except asyncio.CancelledError:
@@ -1060,11 +1072,7 @@ class PositionManager:
 
             self.logger.error(
                 f"Exception during full close for ticket {ticket}: {e}",
-                extra={
-                    'ticket': ticket,
-                    'error': str(e),
-                    'execution_time_ms': execution_time
-                }
+                extra={"ticket": ticket, "error": str(e), "execution_time_ms": execution_time},
             )
 
             return MT5Result(
@@ -1072,7 +1080,7 @@ class PositionManager:
                 ticket=ticket,
                 operation="close_position_full",
                 error_message=f"Exception: {e!s}",
-                execution_time_ms=execution_time
+                execution_time_ms=execution_time,
             )
 
     @circuit_breaker(failure_threshold=3, recovery_timeout=30)
@@ -1081,11 +1089,11 @@ class PositionManager:
     async def close_position_partial(self, ticket: int, percentage: float) -> MT5Result:
         """
         Close position partially based on percentage.
-        
+
         Args:
             ticket: MT5 position ticket number
             percentage: Percentage to close (0.0-1.0)
-            
+
         Returns:
             MT5Result with partial close operation outcome and details
         """
@@ -1097,7 +1105,7 @@ class PositionManager:
                     success=False,
                     ticket=ticket,
                     operation="close_position_partial",
-                    error_message="MT5 module not available"
+                    error_message="MT5 module not available",
                 )
 
             if not (0.0 < percentage < 1.0):
@@ -1105,16 +1113,16 @@ class PositionManager:
                     success=False,
                     ticket=ticket,
                     operation="close_position_partial",
-                    error_message=f"Invalid percentage: {percentage}. Must be between 0.0 and 1.0"
+                    error_message=f"Invalid percentage: {percentage}. Must be between 0.0 and 1.0",
                 )
 
             self.logger.info(
                 f"Starting partial close for ticket {ticket} ({percentage:.1%})",
                 extra={
-                    'ticket': ticket,
-                    'percentage': percentage,
-                    'operation': 'close_position_partial'
-                }
+                    "ticket": ticket,
+                    "percentage": percentage,
+                    "operation": "close_position_partial",
+                },
             )
 
             # Get current position details
@@ -1124,7 +1132,7 @@ class PositionManager:
                         success=False,
                         ticket=ticket,
                         operation="close_position_partial",
-                        error_message="MT5 connection not available"
+                        error_message="MT5 connection not available",
                     )
 
                 # Get position info
@@ -1134,20 +1142,22 @@ class PositionManager:
                         success=False,
                         ticket=ticket,
                         operation="close_position_partial",
-                        error_message=f"Position {ticket} not found or already closed"
+                        error_message=f"Position {ticket} not found or already closed",
                     )
 
                 position = position_info[0]
 
                 # Calculate close volume with proper lot normalization
-                close_volume = self._calculate_partial_volume(position.volume, percentage, position.symbol)
+                close_volume = self._calculate_partial_volume(
+                    position.volume, percentage, position.symbol
+                )
 
                 if close_volume <= 0:
                     return MT5Result(
                         success=False,
                         ticket=ticket,
                         operation="close_position_partial",
-                        error_message=f"Calculated close volume too small: {close_volume}"
+                        error_message=f"Calculated close volume too small: {close_volume}",
                     )
 
                 # Determine opposite order type for closing
@@ -1163,7 +1173,7 @@ class PositionManager:
                         success=False,
                         ticket=ticket,
                         operation="close_position_partial",
-                        error_message=f"Unable to get current price for {position.symbol}"
+                        error_message=f"Unable to get current price for {position.symbol}",
                     )
 
                 # Prepare partial close request
@@ -1183,18 +1193,18 @@ class PositionManager:
                 self.logger.debug(
                     f"Sending MT5 partial close request for ticket {ticket}",
                     extra={
-                        'request': {
-                            'action': 'TRADE_ACTION_DEAL',
-                            'symbol': position.symbol,
-                            'volume': close_volume,
-                            'type': 'SELL' if order_type == mt5.ORDER_TYPE_SELL else 'BUY',
-                            'position': ticket,
-                            'price': price,
-                            'magic': position.magic
+                        "request": {
+                            "action": "TRADE_ACTION_DEAL",
+                            "symbol": position.symbol,
+                            "volume": close_volume,
+                            "type": "SELL" if order_type == mt5.ORDER_TYPE_SELL else "BUY",
+                            "position": ticket,
+                            "price": price,
+                            "magic": position.magic,
                         },
-                        'original_volume': position.volume,
-                        'percentage': percentage
-                    }
+                        "original_volume": position.volume,
+                        "percentage": percentage,
+                    },
                 )
 
                 # Execute partial close
@@ -1209,7 +1219,7 @@ class PositionManager:
                         operation="close_position_partial",
                         error_code=error[0] if error else None,
                         error_message=f"MT5 order_send failed: {error[1] if error else 'Unknown error'}",
-                        execution_time_ms=execution_time
+                        execution_time_ms=execution_time,
                     )
 
                 # Check result
@@ -1219,13 +1229,13 @@ class PositionManager:
                     self.logger.error(
                         f"MT5 partial close failed for ticket {ticket}",
                         extra={
-                            'ticket': ticket,
-                            'percentage': percentage,
-                            'close_volume': close_volume,
-                            'retcode': result.retcode,
-                            'error_description': error_msg,
-                            'execution_time_ms': execution_time
-                        }
+                            "ticket": ticket,
+                            "percentage": percentage,
+                            "close_volume": close_volume,
+                            "retcode": result.retcode,
+                            "error_description": error_msg,
+                            "execution_time_ms": execution_time,
+                        },
                     )
 
                     return MT5Result(
@@ -1234,7 +1244,7 @@ class PositionManager:
                         operation="close_position_partial",
                         retcode=result.retcode,
                         error_message=error_msg,
-                        execution_time_ms=execution_time
+                        execution_time_ms=execution_time,
                     )
 
                 # Calculate profit for closed portion (approximate)
@@ -1244,15 +1254,15 @@ class PositionManager:
                 self.logger.info(
                     f"Partial close successful for ticket {ticket}",
                     extra={
-                        'ticket': ticket,
-                        'percentage': percentage,
-                        'volume_closed': close_volume,
-                        'original_volume': position.volume,
-                        'close_price': price,
-                        'partial_profit': partial_profit,
-                        'retcode': result.retcode,
-                        'execution_time_ms': execution_time
-                    }
+                        "ticket": ticket,
+                        "percentage": percentage,
+                        "volume_closed": close_volume,
+                        "original_volume": position.volume,
+                        "close_price": price,
+                        "partial_profit": partial_profit,
+                        "retcode": result.retcode,
+                        "execution_time_ms": execution_time,
+                    },
                 )
 
                 return MT5Result(
@@ -1263,7 +1273,7 @@ class PositionManager:
                     close_price=price,
                     profit=partial_profit,
                     retcode=result.retcode,
-                    execution_time_ms=execution_time
+                    execution_time_ms=execution_time,
                 )
 
         except asyncio.CancelledError:
@@ -1275,11 +1285,11 @@ class PositionManager:
             self.logger.error(
                 f"Exception during partial close for ticket {ticket}: {e}",
                 extra={
-                    'ticket': ticket,
-                    'percentage': percentage,
-                    'error': str(e),
-                    'execution_time_ms': execution_time
-                }
+                    "ticket": ticket,
+                    "percentage": percentage,
+                    "error": str(e),
+                    "execution_time_ms": execution_time,
+                },
             )
 
             return MT5Result(
@@ -1287,18 +1297,20 @@ class PositionManager:
                 ticket=ticket,
                 operation="close_position_partial",
                 error_message=f"Exception: {e!s}",
-                execution_time_ms=execution_time
+                execution_time_ms=execution_time,
             )
 
-    def _calculate_partial_volume(self, current_volume: float, percentage: float, symbol: str) -> float:
+    def _calculate_partial_volume(
+        self, current_volume: float, percentage: float, symbol: str
+    ) -> float:
         """
         Calculate partial close volume with proper lot normalization.
-        
+
         Args:
             current_volume: Current position volume
             percentage: Percentage to close (0.0-1.0)
             symbol: Trading symbol for lot size validation
-            
+
         Returns:
             Normalized volume for partial close
         """

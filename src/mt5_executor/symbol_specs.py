@@ -18,6 +18,7 @@ from src.utils.circuit_breaker import circuit_breaker
 
 class SymbolSpec(NamedTuple):
     """Symbol specification structure."""
+
     symbol: str
     description: str
     currency_base: str
@@ -45,6 +46,7 @@ class SymbolSpec(NamedTuple):
 
 class MarketHours(NamedTuple):
     """Market session hours."""
+
     symbol: str
     session_name: str
     start_time: str
@@ -61,7 +63,7 @@ class SymbolValidator:
     def __init__(self, connection_manager):
         """
         Initialize symbol validator.
-        
+
         Args:
             connection_manager: MT5ConnectionManager instance
         """
@@ -70,9 +72,9 @@ class SymbolValidator:
 
         # Symbol name mappings for different brokers
         self.symbol_mappings = {
-            'GOLD': ['XAUUSD', 'GOLD', 'XAU/USD', 'XAUUSD.', 'XAUUSD#'],
-            'XAUUSD': ['XAUUSD', 'GOLD', 'XAU/USD', 'XAUUSD.', 'XAUUSD#'],
-            'XAU': ['XAUUSD', 'GOLD', 'XAU/USD', 'XAUUSD.', 'XAUUSD#']
+            "GOLD": ["XAUUSD", "GOLD", "XAU/USD", "XAUUSD.", "XAUUSD#"],
+            "XAUUSD": ["XAUUSD", "GOLD", "XAU/USD", "XAUUSD.", "XAUUSD#"],
+            "XAU": ["XAUUSD", "GOLD", "XAU/USD", "XAUUSD.", "XAUUSD#"],
         }
 
         # Cached symbol specifications
@@ -83,17 +85,17 @@ class SymbolValidator:
     def normalize_symbol_name(self, symbol: str) -> list[str]:
         """
         Normalize symbol name to possible broker variations.
-        
+
         Args:
             symbol: Input symbol name (GOLD, XAUUSD, etc.)
-            
+
         Returns:
             List of possible symbol names to try
         """
         symbol_upper = symbol.upper().strip()
 
         # Remove common suffixes and prefixes
-        cleaned_symbol = symbol_upper.replace('/', '').replace('.', '').replace('#', '')
+        cleaned_symbol = symbol_upper.replace("/", "").replace(".", "").replace("#", "")
 
         if cleaned_symbol in self.symbol_mappings:
             return self.symbol_mappings[cleaned_symbol]
@@ -101,21 +103,21 @@ class SymbolValidator:
         # If not in mappings, return the original with common variations
         return [
             symbol_upper,
-            symbol_upper + '.',
-            symbol_upper + '#',
-            symbol_upper.replace('/', ''),
-            'XAU/USD' if 'XAU' in symbol_upper else symbol_upper,
-            'XAUUSD' if 'GOLD' in symbol_upper else symbol_upper
+            symbol_upper + ".",
+            symbol_upper + "#",
+            symbol_upper.replace("/", ""),
+            "XAU/USD" if "XAU" in symbol_upper else symbol_upper,
+            "XAUUSD" if "GOLD" in symbol_upper else symbol_upper,
         ]
 
     @circuit_breaker(failure_threshold=3, recovery_timeout=30)
     async def get_symbol_info(self, symbol: str) -> SymbolSpec | None:
         """
         Get symbol information from MT5 with circuit breaker protection.
-        
+
         Args:
             symbol: Symbol name to query
-            
+
         Returns:
             SymbolSpec if found, None otherwise
         """
@@ -151,7 +153,7 @@ class SymbolValidator:
                     session_deals=info.session_deals,
                     session_buy_orders=info.session_buy_orders,
                     session_sell_orders=info.session_sell_orders,
-                    time=info.time
+                    time=info.time,
                 )
 
             except Exception as e:
@@ -161,10 +163,10 @@ class SymbolValidator:
     async def find_symbol(self, symbol: str) -> SymbolSpec | None:
         """
         Find symbol by trying different broker variations.
-        
+
         Args:
             symbol: Symbol name to find
-            
+
         Returns:
             SymbolSpec if found, None otherwise
         """
@@ -186,18 +188,20 @@ class SymbolValidator:
     async def validate_symbol(self, symbol: str) -> dict[str, Any]:
         """
         Validate symbol and return comprehensive information.
-        
+
         Args:
             symbol: Symbol to validate
-            
+
         Returns:
             Dictionary with validation results and specifications
         """
         # Check cache first
         cache_key = symbol.upper()
-        if (cache_key in self.cache and
-            cache_key in self.cache_expiry and
-            datetime.now(UTC) < self.cache_expiry[cache_key]):
+        if (
+            cache_key in self.cache
+            and cache_key in self.cache_expiry
+            and datetime.now(UTC) < self.cache_expiry[cache_key]
+        ):
 
             self.logger.debug(f"Returning cached symbol spec for {symbol}")
             return self.cache[cache_key]
@@ -208,18 +212,18 @@ class SymbolValidator:
 
             if spec is None:
                 result = {
-                    'valid': False,
-                    'symbol': symbol,
-                    'error': f'Symbol {symbol} not found on broker',
-                    'possible_names': self.normalize_symbol_name(symbol),
-                    'specifications': None,
-                    'trading_info': None,
-                    'market_hours': None
+                    "valid": False,
+                    "symbol": symbol,
+                    "error": f"Symbol {symbol} not found on broker",
+                    "possible_names": self.normalize_symbol_name(symbol),
+                    "specifications": None,
+                    "trading_info": None,
+                    "market_hours": None,
                 }
             else:
                 # Get current tick for spread info
                 tick_info = await self._get_current_tick(spec.symbol)
-                current_spread = tick_info.get('spread', 0) if tick_info else spec.spread
+                current_spread = tick_info.get("spread", 0) if tick_info else spec.spread
 
                 # Calculate pip information
                 pip_info = self._calculate_pip_info(spec)
@@ -231,36 +235,36 @@ class SymbolValidator:
                 trading_validation = self._validate_trading_conditions(spec)
 
                 result = {
-                    'valid': True,
-                    'symbol': spec.symbol,
-                    'original_symbol': symbol,
-                    'error': None,
-                    'specifications': {
-                        'description': spec.description,
-                        'currency_base': spec.currency_base,
-                        'currency_profit': spec.currency_profit,
-                        'digits': spec.digits,
-                        'point': spec.point,
-                        'tick_size': spec.tick_size,
-                        'tick_value': spec.tick_value,
-                        'pip_size': pip_info['pip_size'],
-                        'pip_value': pip_info['pip_value'],
-                        'spread_points': current_spread,
-                        'spread_pips': current_spread * pip_info['pip_size'],
+                    "valid": True,
+                    "symbol": spec.symbol,
+                    "original_symbol": symbol,
+                    "error": None,
+                    "specifications": {
+                        "description": spec.description,
+                        "currency_base": spec.currency_base,
+                        "currency_profit": spec.currency_profit,
+                        "digits": spec.digits,
+                        "point": spec.point,
+                        "tick_size": spec.tick_size,
+                        "tick_value": spec.tick_value,
+                        "pip_size": pip_info["pip_size"],
+                        "pip_value": pip_info["pip_value"],
+                        "spread_points": current_spread,
+                        "spread_pips": current_spread * pip_info["pip_size"],
                     },
-                    'trading_info': {
-                        'min_volume': spec.volume_min,
-                        'max_volume': spec.volume_max,
-                        'volume_step': spec.volume_step,
-                        'stops_level': spec.trade_stops_level,
-                        'freeze_level': spec.trade_freeze_level,
-                        'trade_allowed': spec.trade_allowed and trading_validation['allowed'],
-                        'margin_initial': spec.margin_initial,
-                        'margin_maintenance': spec.margin_maintenance,
-                        'validation_errors': trading_validation['errors']
+                    "trading_info": {
+                        "min_volume": spec.volume_min,
+                        "max_volume": spec.volume_max,
+                        "volume_step": spec.volume_step,
+                        "stops_level": spec.trade_stops_level,
+                        "freeze_level": spec.trade_freeze_level,
+                        "trade_allowed": spec.trade_allowed and trading_validation["allowed"],
+                        "margin_initial": spec.margin_initial,
+                        "margin_maintenance": spec.margin_maintenance,
+                        "validation_errors": trading_validation["errors"],
                     },
-                    'market_hours': market_hours,
-                    'cached_at': datetime.now(UTC).isoformat()
+                    "market_hours": market_hours,
+                    "cached_at": datetime.now(UTC).isoformat(),
                 }
 
                 self.logger.info(
@@ -278,13 +282,13 @@ class SymbolValidator:
         except Exception as e:
             self.logger.error(f"Symbol validation failed for {symbol}: {e}")
             error_result = {
-                'valid': False,
-                'symbol': symbol,
-                'error': f'Validation error: {e!s}',
-                'possible_names': self.normalize_symbol_name(symbol),
-                'specifications': None,
-                'trading_info': None,
-                'market_hours': None
+                "valid": False,
+                "symbol": symbol,
+                "error": f"Validation error: {e!s}",
+                "possible_names": self.normalize_symbol_name(symbol),
+                "specifications": None,
+                "trading_info": None,
+                "market_hours": None,
             }
 
             # Cache error for short time to avoid repeated failures
@@ -296,10 +300,10 @@ class SymbolValidator:
     def _calculate_pip_info(self, spec: SymbolSpec) -> dict[str, float]:
         """
         Calculate pip size and value for the symbol.
-        
+
         Args:
             spec: Symbol specification
-            
+
         Returns:
             Dictionary with pip information
         """
@@ -313,7 +317,7 @@ class SymbolValidator:
             pip_size = spec.point
 
         # For GOLD, pip size is typically 0.01
-        if 'XAU' in spec.symbol or 'GOLD' in spec.symbol:
+        if "XAU" in spec.symbol or "GOLD" in spec.symbol:
             pip_size = 0.01
 
         # Calculate pip value (how much 1 pip movement is worth)
@@ -324,19 +328,19 @@ class SymbolValidator:
             pip_value = spec.tick_value
 
         return {
-            'pip_size': pip_size,
-            'pip_value': pip_value,
-            'point': spec.point,
-            'digits': spec.digits
+            "pip_size": pip_size,
+            "pip_value": pip_value,
+            "point": spec.point,
+            "digits": spec.digits,
         }
 
     def _validate_trading_conditions(self, spec: SymbolSpec) -> dict[str, Any]:
         """
         Validate if symbol can be traded.
-        
+
         Args:
             spec: Symbol specification
-            
+
         Returns:
             Dictionary with validation results
         """
@@ -354,18 +358,15 @@ class SymbolValidator:
         if spec.trade_mode == 0:  # TRADE_DISABLED
             errors.append("Trading disabled by broker")
 
-        return {
-            'allowed': len(errors) == 0,
-            'errors': errors
-        }
+        return {"allowed": len(errors) == 0, "errors": errors}
 
     async def _get_current_tick(self, symbol: str) -> dict[str, Any] | None:
         """
         Get current tick information for symbol.
-        
+
         Args:
             symbol: Symbol name
-            
+
         Returns:
             Tick information dictionary or None
         """
@@ -379,12 +380,12 @@ class SymbolValidator:
                     return None
 
                 return {
-                    'bid': tick.bid,
-                    'ask': tick.ask,
-                    'spread': tick.ask - tick.bid,
-                    'time': tick.time,
-                    'volume': tick.volume,
-                    'last': tick.last
+                    "bid": tick.bid,
+                    "ask": tick.ask,
+                    "spread": tick.ask - tick.bid,
+                    "time": tick.time,
+                    "volume": tick.volume,
+                    "last": tick.last,
                 }
 
         except Exception as e:
@@ -394,10 +395,10 @@ class SymbolValidator:
     async def _get_market_hours(self, symbol: str) -> list[MarketHours]:
         """
         Get market hours for symbol.
-        
+
         Args:
             symbol: Symbol name
-            
+
         Returns:
             List of market session hours
         """
@@ -411,7 +412,7 @@ class SymbolValidator:
                     session_name="Main Session",
                     start_time="00:01",
                     end_time="23:59",
-                    is_active=True  # Simplified - should check actual broker sessions
+                    is_active=True,  # Simplified - should check actual broker sessions
                 )
             ]
 
@@ -425,10 +426,7 @@ class SymbolValidator:
 
         # Clear expired entries
         current_time = datetime.now(UTC)
-        expired_keys = [
-            key for key, expiry in self.cache_expiry.items()
-            if current_time >= expiry
-        ]
+        expired_keys = [key for key, expiry in self.cache_expiry.items() if current_time >= expiry]
 
         for key in expired_keys:
             del self.cache[key]
@@ -439,18 +437,18 @@ class SymbolValidator:
     def get_cache_status(self) -> dict[str, Any]:
         """
         Get current cache status.
-        
+
         Returns:
             Dictionary with cache information
         """
         current_time = datetime.now(UTC)
 
         return {
-            'total_entries': len(self.cache),
-            'expired_entries': sum(1 for exp in self.cache_expiry.values() if current_time >= exp),
-            'cache_duration_minutes': self.cache_duration.total_seconds() / 60,
-            'cached_symbols': list(self.cache.keys()),
-            'last_refresh': current_time.isoformat()
+            "total_entries": len(self.cache),
+            "expired_entries": sum(1 for exp in self.cache_expiry.values() if current_time >= exp),
+            "cache_duration_minutes": self.cache_duration.total_seconds() / 60,
+            "cached_symbols": list(self.cache.keys()),
+            "last_refresh": current_time.isoformat(),
         }
 
 

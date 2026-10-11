@@ -25,6 +25,7 @@ from telethon.errors import (
 @dataclass
 class ErrorInfo:
     """Error information with user-friendly message and retry capability."""
+
     user_message: str
     technical_message: str
     is_retryable: bool
@@ -124,7 +125,9 @@ class TelegramErrorHandler:
             retry_delay_seconds=5,
         )
 
-    def handle_error(self, error: Exception, operation: str = "Telegram operation") -> tuple[str, bool]:
+    def handle_error(
+        self, error: Exception, operation: str = "Telegram operation"
+    ) -> tuple[str, bool]:
         """
         Handle an error and provide user-friendly feedback.
 
@@ -138,12 +141,16 @@ class TelegramErrorHandler:
         error_info = self.get_error_info(error)
 
         # Log technical details
-        self.logger.error(f"{operation} failed: {error_info.technical_message} ({type(error).__name__})")
+        self.logger.error(
+            f"{operation} failed: {error_info.technical_message} ({type(error).__name__})"
+        )
 
         # Log retry information
         if error_info.is_retryable:
             if error_info.retry_delay_seconds:
-                self.logger.info(f"Error is retryable after {error_info.retry_delay_seconds} seconds")
+                self.logger.info(
+                    f"Error is retryable after {error_info.retry_delay_seconds} seconds"
+                )
             else:
                 self.logger.info("Error is retryable")
         else:
@@ -156,7 +163,7 @@ class TelegramErrorHandler:
         operation_func,
         max_retries: int = 3,
         base_delay: float = 1.0,
-        operation_name: str = "operation"
+        operation_name: str = "operation",
     ) -> tuple[bool, Exception | None]:
         """
         Retry an async operation with exponential backoff.
@@ -184,7 +191,9 @@ class TelegramErrorHandler:
                 error_info = self.get_error_info(e)
 
                 if not error_info.is_retryable:
-                    self.logger.error(f"{operation_name} failed with non-retryable error: {error_info.technical_message}")
+                    self.logger.error(
+                        f"{operation_name} failed with non-retryable error: {error_info.technical_message}"
+                    )
                     break
 
                 if attempt < max_retries:
@@ -192,7 +201,7 @@ class TelegramErrorHandler:
                     if error_info.retry_delay_seconds:
                         delay = error_info.retry_delay_seconds
                     else:
-                        delay = base_delay * (2 ** attempt)  # Exponential backoff
+                        delay = base_delay * (2**attempt)  # Exponential backoff
 
                     self.logger.warning(
                         f"{operation_name} failed on attempt {attempt + 1}/{max_retries + 1}, "
@@ -228,7 +237,9 @@ class TelegramErrorHandler:
 
         if error_info.is_retryable:
             if error_info.retry_delay_seconds:
-                print(f"   Please wait {error_info.retry_delay_seconds} seconds before trying again.")
+                print(
+                    f"   Please wait {error_info.retry_delay_seconds} seconds before trying again."
+                )
             else:
                 print("   Please try again.")
         else:
@@ -255,14 +266,16 @@ class TelegramErrorHandler:
 
             except (RPCError, ConnectionError, TimeoutError) as e:
                 if attempt < max_attempts - 1:
-                    delay = min(5 * (2 ** attempt), 60)  # Cap at 60 seconds
+                    delay = min(5 * (2**attempt), 60)  # Cap at 60 seconds
                     self.logger.warning(
                         f"Network connectivity issue (attempt {attempt + 1}/{max_attempts}), "
                         f"retrying in {delay} seconds: {e!s}"
                     )
                     await asyncio.sleep(delay)
                 else:
-                    self.logger.error(f"Failed to establish network connectivity after {max_attempts} attempts")
+                    self.logger.error(
+                        f"Failed to establish network connectivity after {max_attempts} attempts"
+                    )
                     self.print_user_friendly_error(e, "Network connection")
                     return False
 

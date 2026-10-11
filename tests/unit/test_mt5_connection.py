@@ -578,7 +578,9 @@ class TestMT5ConnectionManager:
             assert price == Decimal(str((2600.10 + 2600.30) / 2))
 
     @pytest.mark.asyncio
-    async def test_get_current_price_case_sensitive_broker_symbol_resolution(self, connection_manager, mock_mt5_module):
+    async def test_get_current_price_case_sensitive_broker_symbol_resolution(
+        self, connection_manager, mock_mt5_module
+    ):
         """Test get_current_price resolves case/format from MT5 symbols list before tick lookup."""
         mock_connection = Mock()
         mock_connection.connected = True

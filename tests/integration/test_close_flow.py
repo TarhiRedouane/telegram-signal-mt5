@@ -18,10 +18,10 @@ from src.database.repository import RepositoryFactory, DatabaseManager
 from src.database.models import Position, Signal, PositionStatus, UpdateType
 
 
-
 SKIP_UNWIRED = pytest.mark.skip(
     reason="CloseProcessor not wired in production; keep/delete decided in roadmap step 19"
 )
+
 
 @pytest.fixture
 async def database_manager():
@@ -56,7 +56,7 @@ def close_processor(mock_correlation_engine, mock_position_manager, repo_factory
     return CloseProcessor(
         correlation_engine=mock_correlation_engine,
         position_manager=mock_position_manager,
-        repo_factory=repo_factory
+        repo_factory=repo_factory,
     )
 
 
@@ -65,38 +65,38 @@ async def test_signal_and_position(repo_factory):
     """Create test signal and position in database."""
     signal_repo = repo_factory.get_signal_repository()
     position_repo = repo_factory.get_position_repository()
-    
+
     # Create signal
     signal_data = {
-        'telegram_message_id': 12345,
-        'telegram_chat_id': 67890,
-        'sender': 'test_trader',
-        'timestamp': datetime.now(timezone.utc).replace(tzinfo=None),
-        'raw_text': 'BUY GOLD at 1950',
-        'parsed_action': 'BUY',
-        'symbol': 'GOLD',
-        'entry_price': 1950.0,
-        'confidence_score': 0.9,
-        'parser_type': 'LLM',
-        'status': 'EXECUTED'
+        "telegram_message_id": 12345,
+        "telegram_chat_id": 67890,
+        "sender": "test_trader",
+        "timestamp": datetime.now(timezone.utc).replace(tzinfo=None),
+        "raw_text": "BUY GOLD at 1950",
+        "parsed_action": "BUY",
+        "symbol": "GOLD",
+        "entry_price": 1950.0,
+        "confidence_score": 0.9,
+        "parser_type": "LLM",
+        "status": "EXECUTED",
     }
     signal_id = await signal_repo.save_signal(signal_data)
-    
+
     # Create position
     position_data = {
-        'signal_id': signal_id,
-        'mt5_ticket': 123456,
-        'open_time': datetime.now(timezone.utc).replace(tzinfo=None),
-        'open_price': 1950.0,
-        'volume': 1.0,
-        'status': PositionStatus.OPEN
+        "signal_id": signal_id,
+        "mt5_ticket": 123456,
+        "open_time": datetime.now(timezone.utc).replace(tzinfo=None),
+        "open_price": 1950.0,
+        "volume": 1.0,
+        "status": PositionStatus.OPEN,
     }
     position = await position_repo.create(**position_data)
-    
+
     # Load signal relationship
     signal = await signal_repo.get_by_id(signal_id)
     position.signal = signal
-    
+
     return signal, position
 
 
@@ -111,24 +111,24 @@ class TestFullCloseIntegration:
         mock_correlation_engine,
         mock_position_manager,
         test_signal_and_position,
-        repo_factory
+        repo_factory,
     ):
         """Test successful full close from message to database update."""
         signal, position = test_signal_and_position
-        
+
         # Create close message
         close_message = TelegramMessage(
             telegram_message_id=54321,
             telegram_chat_id=67890,
-            sender='test_trader',
+            sender="test_trader",
             timestamp=datetime.now(),
-            raw_text='CLÔTUREZ position',
-            reply_to_message_id=12345
+            raw_text="CLÔTUREZ position",
+            reply_to_message_id=12345,
         )
-        
+
         # Mock correlation engine to find position
         mock_correlation_engine.correlate_message.return_value = position
-        
+
         # Mock successful MT5 close
         mock_close_result = MT5Result(
             success=True,
@@ -137,25 +137,25 @@ class TestFullCloseIntegration:
             volume_closed=1.0,
             close_price=1955.0,
             profit=50.0,
-            retcode=10009  # TRADE_RETCODE_DONE
+            retcode=10009,  # TRADE_RETCODE_DONE
         )
         mock_position_manager.close_position_full.return_value = mock_close_result
-        
+
         # Process close signal
         result = await close_processor.process_close_signal(close_message)
-        
+
         # Verify processing result
-        assert result['success'] is True
-        assert result['position_id'] == position.id
-        assert result['ticket'] == 123456
-        assert result['volume_closed'] == 1.0
-        assert result['close_price'] == 1955.0
-        assert result['profit'] == 50.0
-        assert 'execution_time_ms' in result
-        
+        assert result["success"] is True
+        assert result["position_id"] == position.id
+        assert result["ticket"] == 123456
+        assert result["volume_closed"] == 1.0
+        assert result["close_price"] == 1955.0
+        assert result["profit"] == 50.0
+        assert "execution_time_ms" in result
+
         # Verify MT5 operation was called correctly
         mock_position_manager.close_position_full.assert_called_once_with(123456)
-        
+
         # Verify database was updated
         position_repo = repo_factory.get_position_repository()
         updated_position = await position_repo.get_by_id(position.id)
@@ -164,12 +164,12 @@ class TestFullCloseIntegration:
         assert updated_position.profit == 50.0
         assert updated_position.volume == 0.0
         assert updated_position.close_time is not None
-        
+
         # Verify audit trail was created
         update_repo = repo_factory.get_position_update_repository()
         updates = await update_repo.find_by_filters(position_id=position.id)
         assert len(updates) > 0
-        
+
         close_update = next((u for u in updates if u.update_type == UpdateType.FULL_CLOSE), None)
         assert close_update is not None
         assert close_update.success is True
@@ -184,43 +184,43 @@ class TestFullCloseIntegration:
         mock_correlation_engine,
         mock_position_manager,
         test_signal_and_position,
-        repo_factory
+        repo_factory,
     ):
         """Test full close handling when MT5 operation fails."""
         signal, position = test_signal_and_position
-        
+
         # Create close message
         close_message = TelegramMessage(
             telegram_message_id=54321,
             telegram_chat_id=67890,
-            sender='test_trader',
+            sender="test_trader",
             timestamp=datetime.now(),
-            raw_text='FERMEZ position',
-            reply_to_message_id=12345
+            raw_text="FERMEZ position",
+            reply_to_message_id=12345,
         )
-        
+
         # Mock correlation engine to find position
         mock_correlation_engine.correlate_message.return_value = position
-        
+
         # Mock failed MT5 close
         mock_close_result = MT5Result(
             success=False,
             ticket=123456,
             operation="close_position_full",
             error_message="Market is closed",
-            retcode=10018  # TRADE_RETCODE_MARKET_CLOSED
+            retcode=10018,  # TRADE_RETCODE_MARKET_CLOSED
         )
         mock_position_manager.close_position_full.return_value = mock_close_result
-        
+
         # Process close signal
         result = await close_processor.process_close_signal(close_message)
-        
+
         # Verify processing result shows failure
-        assert result['success'] is False
-        assert result['error'] == "Market is closed"
-        assert result['position_id'] == position.id
-        assert result['ticket'] == 123456
-        
+        assert result["success"] is False
+        assert result["error"] == "Market is closed"
+        assert result["position_id"] == position.id
+        assert result["ticket"] == 123456
+
         # Verify database position was NOT updated
         position_repo = repo_factory.get_position_repository()
         updated_position = await position_repo.get_by_id(position.id)
@@ -240,24 +240,24 @@ class TestPartialCloseIntegration:
         mock_correlation_engine,
         mock_position_manager,
         test_signal_and_position,
-        repo_factory
+        repo_factory,
     ):
         """Test successful partial close from message to database update."""
         signal, position = test_signal_and_position
-        
+
         # Create partial close message
         close_message = TelegramMessage(
             telegram_message_id=54321,
             telegram_chat_id=67890,
-            sender='test_trader',
+            sender="test_trader",
             timestamp=datetime.now(),
-            raw_text='FERMEZ 50% de la position',
-            reply_to_message_id=12345
+            raw_text="FERMEZ 50% de la position",
+            reply_to_message_id=12345,
         )
-        
+
         # Mock correlation engine to find position
         mock_correlation_engine.correlate_message.return_value = position
-        
+
         # Mock successful MT5 partial close
         mock_close_result = MT5Result(
             success=True,
@@ -266,38 +266,40 @@ class TestPartialCloseIntegration:
             volume_closed=0.5,
             close_price=1955.0,
             profit=25.0,
-            retcode=10009  # TRADE_RETCODE_DONE
+            retcode=10009,  # TRADE_RETCODE_DONE
         )
         mock_position_manager.close_position_partial.return_value = mock_close_result
-        
+
         # Process close signal
         result = await close_processor.process_close_signal(close_message)
-        
+
         # Verify processing result
-        assert result['success'] is True
-        assert result['position_id'] == position.id
-        assert result['ticket'] == 123456
-        assert result['percentage'] == 0.5
-        assert result['volume_closed'] == 0.5
-        assert result['close_price'] == 1955.0
-        assert result['profit'] == 25.0
-        
+        assert result["success"] is True
+        assert result["position_id"] == position.id
+        assert result["ticket"] == 123456
+        assert result["percentage"] == 0.5
+        assert result["volume_closed"] == 0.5
+        assert result["close_price"] == 1955.0
+        assert result["profit"] == 25.0
+
         # Verify MT5 operation was called correctly
         mock_position_manager.close_position_partial.assert_called_once_with(123456, 0.5)
-        
+
         # Verify database was updated for partial close
         position_repo = repo_factory.get_position_repository()
         updated_position = await position_repo.get_by_id(position.id)
         assert updated_position.status == PositionStatus.OPEN  # Still open
         assert updated_position.volume == 0.5  # Reduced volume
         assert updated_position.profit == 25.0  # Updated profit
-        
+
         # Verify audit trail was created
         update_repo = repo_factory.get_position_update_repository()
         updates = await update_repo.find_by_filters(position_id=position.id)
         assert len(updates) > 0
-        
-        partial_update = next((u for u in updates if u.update_type == UpdateType.PARTIAL_CLOSE), None)
+
+        partial_update = next(
+            (u for u in updates if u.update_type == UpdateType.PARTIAL_CLOSE), None
+        )
         assert partial_update is not None
         assert partial_update.success is True
         assert partial_update.field_name == "volume"
@@ -309,58 +311,54 @@ class TestCloseAllIntegration:
     @SKIP_UNWIRED
     @pytest.mark.asyncio
     async def test_close_all_gold_success(
-        self,
-        close_processor,
-        mock_correlation_engine,
-        mock_position_manager,
-        repo_factory
+        self, close_processor, mock_correlation_engine, mock_position_manager, repo_factory
     ):
         """Test successful close all GOLD positions."""
         # Create multiple GOLD positions
         signal_repo = repo_factory.get_signal_repository()
         position_repo = repo_factory.get_position_repository()
-        
+
         # Create signals and positions
         positions = []
         for i in range(3):
             signal_data = {
-                'telegram_message_id': 12345 + i,
-                'telegram_chat_id': 67890,
-                'sender': 'test_trader',
-                'timestamp': datetime.now(timezone.utc).replace(tzinfo=None),
-                'raw_text': f'BUY GOLD at {1950 + i}',
-                'parsed_action': 'BUY',
-                'symbol': 'GOLD',
-                'entry_price': 1950.0 + i,
-                'confidence_score': 0.9,
-                'parser_type': 'LLM',
-                'status': 'EXECUTED'
+                "telegram_message_id": 12345 + i,
+                "telegram_chat_id": 67890,
+                "sender": "test_trader",
+                "timestamp": datetime.now(timezone.utc).replace(tzinfo=None),
+                "raw_text": f"BUY GOLD at {1950 + i}",
+                "parsed_action": "BUY",
+                "symbol": "GOLD",
+                "entry_price": 1950.0 + i,
+                "confidence_score": 0.9,
+                "parser_type": "LLM",
+                "status": "EXECUTED",
             }
             signal_id = await signal_repo.save_signal(signal_data)
-            
+
             position_data = {
-                'signal_id': signal_id,
-                'mt5_ticket': 123456 + i,
-                'open_time': datetime.now(timezone.utc).replace(tzinfo=None),
-                'open_price': 1950.0 + i,
-                'volume': 1.0,
-                'status': PositionStatus.OPEN
+                "signal_id": signal_id,
+                "mt5_ticket": 123456 + i,
+                "open_time": datetime.now(timezone.utc).replace(tzinfo=None),
+                "open_price": 1950.0 + i,
+                "volume": 1.0,
+                "status": PositionStatus.OPEN,
             }
             position = await position_repo.create(**position_data)
             signal = await signal_repo.get_by_id(signal_id)
             position.signal = signal
             positions.append(position)
-        
+
         # Create close all message
         close_message = TelegramMessage(
             telegram_message_id=99999,
             telegram_chat_id=67890,
-            sender='test_trader',
+            sender="test_trader",
             timestamp=datetime.now(),
-            raw_text='CLOSE ALL GOLD positions',
-            reply_to_message_id=None
+            raw_text="CLOSE ALL GOLD positions",
+            reply_to_message_id=None,
         )
-        
+
         # Mock successful MT5 closes for all positions
         def mock_close_full(ticket):
             return MT5Result(
@@ -370,21 +368,21 @@ class TestCloseAllIntegration:
                 volume_closed=1.0,
                 close_price=1955.0,
                 profit=50.0,
-                retcode=10009
+                retcode=10009,
             )
-        
+
         mock_position_manager.close_position_full.side_effect = mock_close_full
-        
+
         # Process close all signal
         result = await close_processor.process_close_signal(close_message)
-        
+
         # Verify processing result
-        assert result['success'] is True
-        assert result['positions_closed'] == 3
-        assert result['total_positions'] == 3
-        assert result['success_rate'] == 1.0
-        assert len(result['failures']) == 0
-        
+        assert result["success"] is True
+        assert result["positions_closed"] == 3
+        assert result["total_positions"] == 3
+        assert result["success_rate"] == 1.0
+        assert len(result["failures"]) == 0
+
         # Verify all positions were closed
         for position in positions:
             updated_position = await position_repo.get_by_id(position.id)
@@ -392,57 +390,53 @@ class TestCloseAllIntegration:
 
     @pytest.mark.asyncio
     async def test_close_all_with_partial_failures(
-        self,
-        close_processor,
-        mock_correlation_engine,
-        mock_position_manager,
-        repo_factory
+        self, close_processor, mock_correlation_engine, mock_position_manager, repo_factory
     ):
         """Test close all with some positions failing to close."""
         # Create multiple positions (similar setup as above)
         signal_repo = repo_factory.get_signal_repository()
         position_repo = repo_factory.get_position_repository()
-        
+
         positions = []
         for i in range(3):
             signal_data = {
-                'telegram_message_id': 12345 + i,
-                'telegram_chat_id': 67890,
-                'sender': 'test_trader',
-                'timestamp': datetime.now(timezone.utc).replace(tzinfo=None),
-                'raw_text': f'BUY GOLD at {1950 + i}',
-                'parsed_action': 'BUY',
-                'symbol': 'GOLD',
-                'entry_price': 1950.0 + i,
-                'confidence_score': 0.9,
-                'parser_type': 'LLM',
-                'status': 'EXECUTED'
+                "telegram_message_id": 12345 + i,
+                "telegram_chat_id": 67890,
+                "sender": "test_trader",
+                "timestamp": datetime.now(timezone.utc).replace(tzinfo=None),
+                "raw_text": f"BUY GOLD at {1950 + i}",
+                "parsed_action": "BUY",
+                "symbol": "GOLD",
+                "entry_price": 1950.0 + i,
+                "confidence_score": 0.9,
+                "parser_type": "LLM",
+                "status": "EXECUTED",
             }
             signal_id = await signal_repo.save_signal(signal_data)
-            
+
             position_data = {
-                'signal_id': signal_id,
-                'mt5_ticket': 123456 + i,
-                'open_time': datetime.now(timezone.utc).replace(tzinfo=None),
-                'open_price': 1950.0 + i,
-                'volume': 1.0,
-                'status': PositionStatus.OPEN
+                "signal_id": signal_id,
+                "mt5_ticket": 123456 + i,
+                "open_time": datetime.now(timezone.utc).replace(tzinfo=None),
+                "open_price": 1950.0 + i,
+                "volume": 1.0,
+                "status": PositionStatus.OPEN,
             }
             position = await position_repo.create(**position_data)
             signal = await signal_repo.get_by_id(signal_id)
             position.signal = signal
             positions.append(position)
-        
+
         # Create close all message
         close_message = TelegramMessage(
             telegram_message_id=99999,
             telegram_chat_id=67890,
-            sender='test_trader',
+            sender="test_trader",
             timestamp=datetime.now(),
-            raw_text='FERMEZ TOUT GOLD',
-            reply_to_message_id=None
+            raw_text="FERMEZ TOUT GOLD",
+            reply_to_message_id=None,
         )
-        
+
         # Mock mixed success/failure MT5 closes
         def mock_close_full(ticket):
             if ticket == 123456:  # First position fails
@@ -451,7 +445,7 @@ class TestCloseAllIntegration:
                     ticket=ticket,
                     operation="close_position_full",
                     error_message="Position locked",
-                    retcode=10031
+                    retcode=10031,
                 )
             else:  # Other positions succeed
                 return MT5Result(
@@ -461,22 +455,22 @@ class TestCloseAllIntegration:
                     volume_closed=1.0,
                     close_price=1955.0,
                     profit=50.0,
-                    retcode=10009
+                    retcode=10009,
                 )
-        
+
         mock_position_manager.close_position_full.side_effect = mock_close_full
-        
+
         # Process close all signal
         result = await close_processor.process_close_signal(close_message)
-        
+
         # Verify processing result shows partial success
-        assert result['success'] is False  # Less than 80% success rate
-        assert result['positions_closed'] == 2
-        assert result['total_positions'] == 3
-        assert result['success_rate'] == 2/3
-        assert len(result['failures']) == 1
-        assert result['failures'][0]['ticket'] == 123456
-        assert "Position locked" in result['failures'][0]['error']
+        assert result["success"] is False  # Less than 80% success rate
+        assert result["positions_closed"] == 2
+        assert result["total_positions"] == 3
+        assert result["success_rate"] == 2 / 3
+        assert len(result["failures"]) == 1
+        assert result["failures"][0]["ticket"] == 123456
+        assert "Position locked" in result["failures"][0]["error"]
 
 
 class TestPerformanceRequirements:
@@ -488,21 +482,21 @@ class TestPerformanceRequirements:
         close_processor,
         mock_correlation_engine,
         mock_position_manager,
-        test_signal_and_position
+        test_signal_and_position,
     ):
         """Test that close processing completes within 3 seconds."""
         signal, position = test_signal_and_position
-        
+
         # Create close message
         close_message = TelegramMessage(
             telegram_message_id=54321,
             telegram_chat_id=67890,
-            sender='test_trader',
+            sender="test_trader",
             timestamp=datetime.now(),
-            raw_text='CLÔTUREZ',
-            reply_to_message_id=12345
+            raw_text="CLÔTUREZ",
+            reply_to_message_id=12345,
         )
-        
+
         # Mock correlation and MT5 operations
         mock_correlation_engine.correlate_message.return_value = position
         mock_position_manager.close_position_full.return_value = MT5Result(
@@ -511,20 +505,20 @@ class TestPerformanceRequirements:
             operation="close_position_full",
             volume_closed=1.0,
             close_price=1955.0,
-            profit=50.0
+            profit=50.0,
         )
-        
+
         # Measure processing time
         start_time = datetime.now()
         result = await close_processor.process_close_signal(close_message)
         end_time = datetime.now()
-        
+
         execution_time_ms = (end_time - start_time).total_seconds() * 1000
-        
+
         # Verify performance requirement (< 3 seconds = 3000ms)
         assert execution_time_ms < 3000
-        assert result['success'] is True
-        assert 'execution_time_ms' in result
-        
+        assert result["success"] is True
+        assert "execution_time_ms" in result
+
         # The processor should also report its own execution time
-        assert result['execution_time_ms'] < 3000
+        assert result["execution_time_ms"] < 3000

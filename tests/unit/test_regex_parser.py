@@ -31,33 +31,33 @@ class TestRegexParser:
         assert parser.patterns is not None
         assert parser.main_patterns is not None
         assert len(parser.main_patterns) > 0
-        assert 'buy_actions' in parser.patterns
-        assert 'sell_actions' in parser.patterns
-        assert 'instruments' in parser.patterns
+        assert "buy_actions" in parser.patterns
+        assert "sell_actions" in parser.patterns
+        assert "instruments" in parser.patterns
 
     def test_valid_signal_parsing(self, parser, sample_signals):
         """Test parsing of all valid signal formats."""
-        for signal_data in sample_signals['valid_signals']:
-            text = signal_data['text']
-            expected = signal_data['expected']
+        for signal_data in sample_signals["valid_signals"]:
+            text = signal_data["text"]
+            expected = signal_data["expected"]
 
             result = parser.parse(text)
 
             assert result is not None, f"Failed to parse valid signal: {text}"
             assert isinstance(result, ParsedSignal)
-            assert result.parsed_action.value == expected['action']
-            assert result.symbol == expected['symbol']
-            assert result.entry_price == Decimal(expected['entry_price'])
+            assert result.parsed_action.value == expected["action"]
+            assert result.symbol == expected["symbol"]
+            assert result.entry_price == Decimal(expected["entry_price"])
 
             # Check SL if expected
-            if expected['stop_loss']:
-                assert result.stop_loss == Decimal(expected['stop_loss'])
+            if expected["stop_loss"]:
+                assert result.stop_loss == Decimal(expected["stop_loss"])
             else:
                 assert result.stop_loss is None
 
             # Check TP if expected
-            if expected['take_profit']:
-                assert result.take_profit == Decimal(expected['take_profit'])
+            if expected["take_profit"]:
+                assert result.take_profit == Decimal(expected["take_profit"])
             else:
                 assert result.take_profit is None
 
@@ -68,40 +68,42 @@ class TestRegexParser:
 
     def test_invalid_signal_rejection(self, parser, sample_signals):
         """Test that invalid signals are rejected."""
-        for signal_data in sample_signals['invalid_signals']:
-            text = signal_data['text']
-            reason = signal_data['reason']
+        for signal_data in sample_signals["invalid_signals"]:
+            text = signal_data["text"]
+            reason = signal_data["reason"]
 
             result = parser.parse(text)
 
             # Signals with validation errors might parse but fail validation
-            if reason in ['price_out_of_range', 'invalid_sl_logic']:
+            if reason in ["price_out_of_range", "invalid_sl_logic"]:
                 # These might parse but should be rejected in validation
                 if result is not None:
                     validation = parser._validate_signal(result)
-                    assert not validation.is_valid, f"Signal should fail validation: {text} ({reason})"
+                    assert (
+                        not validation.is_valid
+                    ), f"Signal should fail validation: {text} ({reason})"
             else:
                 # These should fail to parse entirely
                 assert result is None, f"Invalid signal should not parse: {text} ({reason})"
 
     def test_edge_cases(self, parser, sample_signals):
         """Test edge case handling."""
-        for case_data in sample_signals['edge_cases']:
-            text = case_data['text']
-            description = case_data['description']
+        for case_data in sample_signals["edge_cases"]:
+            text = case_data["text"]
+            description = case_data["description"]
 
             # These should generally fail to parse or return None
             result = parser.parse(text)
 
-            if description in ['empty_string', 'whitespace_only', 'invalid_price_format']:
+            if description in ["empty_string", "whitespace_only", "invalid_price_format"]:
                 assert result is None, f"Edge case should return None: {description}"
-            elif description == 'no_spaces':
+            elif description == "no_spaces":
                 # This might still work if regex is flexible enough
                 pass  # Allow either success or failure
-            elif description == 'extra_spaces_and_decimals':
+            elif description == "extra_spaces_and_decimals":
                 # Should handle extra spaces and normalize decimals
                 if result:
-                    assert result.entry_price == Decimal('3362.00')
+                    assert result.entry_price == Decimal("3362.00")
 
     def test_french_action_patterns(self, parser):
         """Test specific French action pattern recognition."""
@@ -115,7 +117,7 @@ class TestRegexParser:
             ("JE VENDS GOLD 3362", ParsedAction.SELL),
             ("SELL GOLD 3362", ParsedAction.SELL),
             ("SHORT GOLD 3362", ParsedAction.SELL),
-            ("VENDRE OR 3362", ParsedAction.SELL)
+            ("VENDRE OR 3362", ParsedAction.SELL),
         ]
 
         for text, expected_action in test_cases:
@@ -126,11 +128,11 @@ class TestRegexParser:
     def test_symbol_normalization(self, parser):
         """Test symbol normalization from French/variations."""
         test_cases = [
-            ("BUY OR 3362", "GOLD"),        # French 'OR' → 'GOLD'
-            ("BUY GOLD 3362", "GOLD"),       # Standard
-            ("BUY XAUUSD 3362", "XAUUSD"),   # Standard
-            ("BUY XAU 3362", "XAUUSD"),      # XAU → XAUUSD
-            ("BUY XAU/USD 3362", "XAUUSD")   # XAU/USD → XAUUSD
+            ("BUY OR 3362", "GOLD"),  # French 'OR' → 'GOLD'
+            ("BUY GOLD 3362", "GOLD"),  # Standard
+            ("BUY XAUUSD 3362", "XAUUSD"),  # Standard
+            ("BUY XAU 3362", "XAUUSD"),  # XAU → XAUUSD
+            ("BUY XAU/USD 3362", "XAUUSD"),  # XAU/USD → XAUUSD
         ]
 
         for text, expected_symbol in test_cases:
@@ -141,11 +143,11 @@ class TestRegexParser:
     def test_price_format_variations(self, parser):
         """Test different price format handling."""
         test_cases = [
-            ("BUY GOLD 3362", Decimal('3362')),
-            ("BUY GOLD 3362.50", Decimal('3362.50')),
-            ("BUY GOLD @ 3362", Decimal('3362')),
-            ("BUY GOLD @ 3362.25", Decimal('3362.25')),
-            ("BUY GOLD @3362", Decimal('3362')),  # No space after @
+            ("BUY GOLD 3362", Decimal("3362")),
+            ("BUY GOLD 3362.50", Decimal("3362.50")),
+            ("BUY GOLD @ 3362", Decimal("3362")),
+            ("BUY GOLD @ 3362.25", Decimal("3362.25")),
+            ("BUY GOLD @3362", Decimal("3362")),  # No space after @
         ]
 
         for text, expected_price in test_cases:
@@ -156,13 +158,13 @@ class TestRegexParser:
     def test_sl_tp_extraction(self, parser):
         """Test stop loss and take profit extraction."""
         test_cases = [
-            ("BUY GOLD 3362 SL 3350", Decimal('3350'), None),
-            ("BUY GOLD 3362 TP 3375", None, Decimal('3375')),
-            ("BUY GOLD 3362 SL 3350 TP 3375", Decimal('3350'), Decimal('3375')),
-            ("SELL GOLD 3362 STOP 3375", Decimal('3375'), None),
-            ("SELL GOLD 3362 TARGET 3350", None, Decimal('3350')),
-            ("BUY GOLD 3362 SL: 3350 TP: 3375", Decimal('3350'), Decimal('3375')),
-            ("BUY GOLD 3362 STOP LOSS 3350 TAKE PROFIT 3375", Decimal('3350'), Decimal('3375'))
+            ("BUY GOLD 3362 SL 3350", Decimal("3350"), None),
+            ("BUY GOLD 3362 TP 3375", None, Decimal("3375")),
+            ("BUY GOLD 3362 SL 3350 TP 3375", Decimal("3350"), Decimal("3375")),
+            ("SELL GOLD 3362 STOP 3375", Decimal("3375"), None),
+            ("SELL GOLD 3362 TARGET 3350", None, Decimal("3350")),
+            ("BUY GOLD 3362 SL: 3350 TP: 3375", Decimal("3350"), Decimal("3375")),
+            ("BUY GOLD 3362 STOP LOSS 3350 TAKE PROFIT 3375", Decimal("3350"), Decimal("3375")),
         ]
 
         for text, expected_sl, expected_tp in test_cases:
@@ -283,7 +285,7 @@ class TestRegexParser:
 
         # Component parsing should have 0.90 confidence
         # This is harder to test directly, but we can verify the logic exists
-        assert hasattr(parser, '_try_component_parsing')
+        assert hasattr(parser, "_try_component_parsing")
 
     def test_empty_and_none_inputs(self, parser):
         """Test handling of empty and None inputs."""
@@ -294,19 +296,14 @@ class TestRegexParser:
 
     def test_case_insensitive_parsing(self, parser):
         """Test that parsing is case insensitive."""
-        test_cases = [
-            "buy gold 3362",
-            "BUY GOLD 3362",
-            "Buy Gold 3362",
-            "bUy GoLd 3362"
-        ]
+        test_cases = ["buy gold 3362", "BUY GOLD 3362", "Buy Gold 3362", "bUy GoLd 3362"]
 
         for text in test_cases:
             result = parser.parse(text)
             if result:  # All should parse if main one does
                 assert result.parsed_action == ParsedAction.BUY
                 assert result.symbol == "GOLD"
-                assert result.entry_price == Decimal('3362')
+                assert result.entry_price == Decimal("3362")
 
     def test_component_parsing_fallback(self, parser):
         """Test component-based parsing as fallback."""
@@ -318,5 +315,5 @@ class TestRegexParser:
         if result:
             assert result.parsed_action == ParsedAction.BUY
             assert result.symbol == "GOLD"
-            assert result.entry_price == Decimal('3365')
+            assert result.entry_price == Decimal("3365")
             assert result.confidence_score == 0.90  # Component parsing confidence

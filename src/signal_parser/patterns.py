@@ -10,13 +10,21 @@ from .symbol_policy import symbol_policy
 _START, _END = r"(?<![^\W_])", r"(?![^\W_])"
 _CANDLE_CLOSE = re.compile(_START + r"(?:CL[ÔO]TURE|BOUGIE|CANDLE)" + _END, re.IGNORECASE)
 _TIMEFRAME = re.compile(
-    _START + r"(?:M(\d{1,3})|H(\d{1,2})|(\d{1,3})\s*(?:MN|MINS?|MINUTES?)|(\d{1,2})\s*H(?:EURES?)?)" + _END,
+    _START
+    + r"(?:M(\d{1,3})|H(\d{1,2})|(\d{1,3})\s*(?:MN|MINS?|MINUTES?)|(\d{1,2})\s*H(?:EURES?)?)"
+    + _END,
     re.IGNORECASE,
 )
 # "Clôture dans 5", "clôture M30", "clôture de la bougie": a candle close, not "close the trade"
 _CANDLE_CLOSE_REMARK = re.compile(
-    _START + r"CL[ÔO]TURE" + _END + r"[^\n]{0,20}?(?:"
-    + _START + r"(?:DANS|DNS|D['’]ICI|EN)\s*\d|" + _START + r"[MH]\d|BOUGIE|CANDLE)",
+    _START
+    + r"CL[ÔO]TURE"
+    + _END
+    + r"[^\n]{0,20}?(?:"
+    + _START
+    + r"(?:DANS|DNS|D['’]ICI|EN)\s*\d|"
+    + _START
+    + r"[MH]\d|BOUGIE|CANDLE)",
     re.IGNORECASE,
 )
 SUPPORTED_CLOSE_TIMEFRAMES = (1, 3, 5, 15, 30, 60, 240)
@@ -50,7 +58,10 @@ def tp_levels(text: str) -> tuple[list[Decimal], dict[int, Decimal]]:
     plain: list[Decimal] = []
     slots: dict[int, Decimal] = {}
     for line in FrenchSignalPatterns.TP_LINE.finditer(text):
-        levels = [Decimal(m.group(1).replace(",", ".")) for m in FrenchSignalPatterns.TP_LEVEL.finditer(line.group(2))]
+        levels = [
+            Decimal(m.group(1).replace(",", "."))
+            for m in FrenchSignalPatterns.TP_LEVEL.finditer(line.group(2))
+        ]
         if not levels:
             continue
         if line.group(1):
@@ -74,7 +85,7 @@ class FrenchSignalPatterns:
         r"BUY",
         r"ACHETER",
         r"J'ACH(?:È|E|Ãˆ)TE",
-        r"LONG"
+        r"LONG",
     ]
 
     SELL_ACTIONS: ClassVar[list[str]] = [
@@ -82,7 +93,7 @@ class FrenchSignalPatterns:
         r"SELL",
         r"SHORT",
         r"VENDRE",
-        r"JE\s+VENDS"
+        r"JE\s+VENDS",
     ]
 
     # Instrument patterns are driven by enabled symbol aliases.
@@ -94,7 +105,7 @@ class FrenchSignalPatterns:
     # Price patterns with various formats
     PRICE_PATTERNS: ClassVar[list[str]] = [
         r"@\s*(\d{4}(?:\.\d{1,2})?)",  # @ 3362 or @ 3362.50
-        r"(\d{4}(?:\.\d{1,2})?)",      # 3362 or 3362.50
+        r"(\d{4}(?:\.\d{1,2})?)",  # 3362 or 3362.50
     ]
 
     # Stop loss patterns
@@ -109,7 +120,7 @@ class FrenchSignalPatterns:
     TP_PATTERNS: ClassVar[list[str]] = [
         r"TP\s*(?:[1-9](?!\d)\s*)?:?\s*(\d{4}(?:\.\d{1,2})?)",  # "TP 4115", "TP1 4115", "TP 2 : 4128"
         r"TARGET\s*:?\s*(\d{4}(?:\.\d{1,2})?)",
-        r"TAKE\s+PROFIT\s*:?\s*(\d{4}(?:\.\d{1,2})?)"
+        r"TAKE\s+PROFIT\s*:?\s*(\d{4}(?:\.\d{1,2})?)",
     ]
 
     # Multi-message setup follow-ups (matched against original-case text, IGNORECASE)
@@ -151,7 +162,9 @@ class FrenchSignalPatterns:
         r"^(?=[^\n]*(?:→|->|\bOBJECTIFS?\b|\bR[ÉE]ACTION\b|\bCIBLES?\b|\bTARGETS?\b|\bTP\d?\b))[^\n]*$",
         re.IGNORECASE | re.MULTILINE,
     )
-    FOLLOWUP_NOW: ClassVar[re.Pattern] = re.compile(r"(?<!NOT\s)(?<!PAS\s)\b(?:NOW|MAINTENANT)\b", re.IGNORECASE)
+    FOLLOWUP_NOW: ClassVar[re.Pattern] = re.compile(
+        r"(?<!NOT\s)(?<!PAS\s)\b(?:NOW|MAINTENANT)\b", re.IGNORECASE
+    )
     SETUP_CANCEL: ClassVar[re.Pattern] = re.compile(
         r"\b(?:ANNUL\w*|CANCEL\w*|OUBLI\w*|LAISSE[SZ]?\s+TOMBER|PAS\s+DE\s+TRADE|"
         r"SETUP\s+(?:INVALID\w*|ANNUL\w*))",
@@ -164,12 +177,14 @@ class FrenchSignalPatterns:
         # Note: Patterns are compiled once per process and reused
         if cls._compiled_patterns_cache is None:
             cls._compiled_patterns_cache = {
-                'buy_actions': [re.compile(pattern, re.IGNORECASE) for pattern in cls.BUY_ACTIONS],
-                'sell_actions': [re.compile(pattern, re.IGNORECASE) for pattern in cls.SELL_ACTIONS],
-                'instruments': [re.compile(pattern, re.IGNORECASE) for pattern in cls.INSTRUMENTS],
-                'prices': [re.compile(pattern, re.IGNORECASE) for pattern in cls.PRICE_PATTERNS],
-                'stop_losses': [re.compile(pattern, re.IGNORECASE) for pattern in cls.SL_PATTERNS],
-                'take_profits': [re.compile(pattern, re.IGNORECASE) for pattern in cls.TP_PATTERNS]
+                "buy_actions": [re.compile(pattern, re.IGNORECASE) for pattern in cls.BUY_ACTIONS],
+                "sell_actions": [
+                    re.compile(pattern, re.IGNORECASE) for pattern in cls.SELL_ACTIONS
+                ],
+                "instruments": [re.compile(pattern, re.IGNORECASE) for pattern in cls.INSTRUMENTS],
+                "prices": [re.compile(pattern, re.IGNORECASE) for pattern in cls.PRICE_PATTERNS],
+                "stop_losses": [re.compile(pattern, re.IGNORECASE) for pattern in cls.SL_PATTERNS],
+                "take_profits": [re.compile(pattern, re.IGNORECASE) for pattern in cls.TP_PATTERNS],
             }
         return cls._compiled_patterns_cache
 
@@ -185,7 +200,9 @@ class FrenchSignalPatterns:
                 for action_pattern in action_patterns:
                     for instrument in cls.INSTRUMENTS:
                         # Pattern: ACTION INSTRUMENT PRICE
-                        pattern = f"({action_pattern})\\s+({instrument})\\s+(\\d{{4}}(?:\\.\\d{{1,2}})?)"
+                        pattern = (
+                            f"({action_pattern})\\s+({instrument})\\s+(\\d{{4}}(?:\\.\\d{{1,2}})?)"
+                        )
                         patterns.append(re.compile(pattern, re.IGNORECASE))
 
                         # Pattern: ACTION INSTRUMENT @ PRICE

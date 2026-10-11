@@ -139,7 +139,9 @@ def _menu(brokers: dict[str, dict]) -> list[str]:
     print("Configured brokers:")
     for i, key in enumerate(keys, start=1):
         profile = brokers[key]
-        print(f"  {i}) {profile.get('label', key)}  [{key}, {profile.get('mode', '?').upper()} {profile.get('login', '?')}]")
+        print(
+            f"  {i}) {profile.get('label', key)}  [{key}, {profile.get('mode', '?').upper()} {profile.get('login', '?')}]"
+        )
     while True:
         try:
             return parse_selection(input("Start which? (e.g. 1  or  1,3  or  all): "), keys)
@@ -151,7 +153,9 @@ def _targets(names: list[str], brokers: dict[str, dict], command: str) -> list[s
     """Instances a command applies to. No broker profiles -> the single legacy instance (None)."""
     if not brokers:
         if names:
-            raise ValueError("No brokers configured: copy config/brokers.example.json to config/brokers.json")
+            raise ValueError(
+                "No brokers configured: copy config/brokers.example.json to config/brokers.json"
+            )
         return [None]
     if names:
         return parse_selection(" ".join(names), list(brokers))

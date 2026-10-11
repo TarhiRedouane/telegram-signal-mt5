@@ -25,7 +25,7 @@ class OpenAIClient:
         self._api_key = api_key or settings.openai_api_key
         self._client: Optional[AsyncOpenAI] = None
         self._model = settings.get_openai_model()
-        
+
         if not self._api_key:
             logger.error("OpenAI API key not configured")
             raise ValueError("OPENAI_API_KEY environment variable is required")
@@ -44,19 +44,19 @@ class OpenAIClient:
                 timeout=30.0,  # 30 second timeout
             )
             logger.info(
-                "OpenAI client initialized", 
+                "OpenAI client initialized",
                 extra={
                     "context": {
                         "service_context": "OpenAIClient.client:property",
                         "model": self._model,
                         "reasoning_level": settings.llm_reasoning_level,
-                        "verbosity": settings.llm_verbosity
+                        "verbosity": settings.llm_verbosity,
                     }
-                }
+                },
             )
         return self._client
 
-    @property 
+    @property
     def model(self) -> str:
         """Get configured model name."""
         return self._model
@@ -70,7 +70,7 @@ class OpenAIClient:
         """
         config = {
             "model": self._model,
-            "response_format": {"type": "json_object"}  # Structured JSON output
+            "response_format": {"type": "json_object"},  # Structured JSON output
         }
 
         # Add reasoning configuration and token limits for o1/gpt-5 series models
@@ -82,7 +82,7 @@ class OpenAIClient:
         else:
             config["temperature"] = 0.1  # Low temperature for consistent parsing
             config["max_tokens"] = 1000  # Use legacy parameter for older models
-            
+
         return config
 
     async def close(self):

@@ -19,7 +19,7 @@ class TestMessageHandler:
     def setup_method(self):
         """Set up test fixtures."""
         self.handler = MessageHandler()
-        
+
     def test_init(self):
         """Test MessageHandler initialization."""
         assert self.handler._message_counter == 0
@@ -45,34 +45,34 @@ class TestMessageHandler:
         mock_message.edit_date = None
         mock_message.from_id = Mock(user_id=67890)
         mock_message.peer_id = PeerChannel(111222)
-        
+
         mock_event = AsyncMock()
         mock_event.message = mock_message
         mock_chat = Mock(title="Test Signal Group")
         mock_event.get_chat.return_value = mock_chat
-        
+
         # Set up callback
         callback = Mock()
         self.handler.set_message_callback(callback)
-        
+
         # Handle message
         await self.handler.handle_new_message(mock_event)
-        
+
         # Verify message was processed
         assert self.handler._message_counter == 1
         assert len(self.handler._processed_messages) == 1
-        
+
         # Verify callback was called
         callback.assert_called_once()
         call_args = callback.call_args[0][0]
-        
-        assert call_args['telegram_message_id'] == 12345
-        assert call_args['raw_text'] == "Test trading signal"
-        assert call_args['sender'] == "user_67890"
-        assert call_args['telegram_chat_id'] == -1000000111222  # marked channel id (get_peer_id)
-        assert call_args['chat_title'] == "Test Signal Group"
-        assert call_args['message_type'] == 'text'
-        assert call_args['is_forwarded'] is False
+
+        assert call_args["telegram_message_id"] == 12345
+        assert call_args["raw_text"] == "Test trading signal"
+        assert call_args["sender"] == "user_67890"
+        assert call_args["telegram_chat_id"] == -1000000111222  # marked channel id (get_peer_id)
+        assert call_args["chat_title"] == "Test Signal Group"
+        assert call_args["message_type"] == "text"
+        assert call_args["is_forwarded"] is False
 
     @pytest.mark.asyncio
     async def test_handle_new_message_non_text_ignored(self):
@@ -80,17 +80,17 @@ class TestMessageHandler:
         # Mock message without text
         mock_message = Mock(spec=Message)
         mock_message.text = None  # Non-text message
-        
+
         mock_event = AsyncMock()
         mock_event.message = mock_message
-        
+
         # Set up callback
         callback = Mock()
         self.handler.set_message_callback(callback)
-        
+
         # Handle message
         await self.handler.handle_new_message(mock_event)
-        
+
         # Verify message was ignored
         assert self.handler._message_counter == 0
         assert len(self.handler._processed_messages) == 0
@@ -108,20 +108,20 @@ class TestMessageHandler:
         mock_message.forward = None
         mock_message.from_id = Mock(user_id=98765)
         mock_message.peer_id = Mock(channel_id=333444)
-        
+
         mock_event = AsyncMock()
         mock_event.message = mock_message
         mock_chat = Mock(title="Test Group")
         mock_event.get_chat.return_value = mock_chat
-        
+
         # Set up callback
         callback = Mock()
         self.handler.set_message_callback(callback)
-        
+
         # Handle same message twice
         await self.handler.handle_new_message(mock_event)
         await self.handler.handle_new_message(mock_event)
-        
+
         # Verify message was only processed once
         assert self.handler._message_counter == 1
         assert len(self.handler._processed_messages) == 1
@@ -139,19 +139,19 @@ class TestMessageHandler:
         mock_message.forward = None
         mock_message.from_id = Mock(user_id=11111)
         mock_message.peer_id = Mock(channel_id=22222)
-        
+
         mock_event = AsyncMock()
         mock_event.message = mock_message
         mock_chat = Mock(title="Async Test Group")
         mock_event.get_chat.return_value = mock_chat
-        
+
         # Set up async callback
         async_callback = AsyncMock()
         self.handler.set_message_callback(async_callback)
-        
+
         # Handle message
         await self.handler.handle_new_message(mock_event)
-        
+
         # Verify async callback was awaited
         async_callback.assert_called_once()
 
@@ -167,19 +167,19 @@ class TestMessageHandler:
         mock_message.forward = None
         mock_message.from_id = Mock(user_id=33333)
         mock_message.peer_id = Mock(channel_id=44444)
-        
+
         mock_event = AsyncMock()
         mock_event.message = mock_message
         mock_chat = Mock(title="Error Test Group")
         mock_event.get_chat.return_value = mock_chat
-        
+
         # Set up callback that raises exception
         error_callback = Mock(side_effect=Exception("Callback error"))
         self.handler.set_message_callback(error_callback)
-        
+
         # Handle message (should not raise exception)
         await self.handler.handle_new_message(mock_event)
-        
+
         # Verify message was still processed despite callback error
         assert self.handler._message_counter == 1
         error_callback.assert_called_once()
@@ -188,7 +188,7 @@ class TestMessageHandler:
         """Test sender info extraction for user ID."""
         mock_message = Mock(spec=Message)
         mock_message.from_id = Mock(user_id=12345)
-        
+
         # Test with asyncio.run since it's a sync method calling async
         result = asyncio.run(self.handler._get_sender_info(mock_message))
         assert result == "user_12345"
@@ -198,7 +198,7 @@ class TestMessageHandler:
         mock_message = Mock(spec=Message)
         mock_message.from_id = Mock(channel_id=67890)
         mock_message.from_id.user_id = None  # No user_id attribute
-        
+
         result = asyncio.run(self.handler._get_sender_info(mock_message))
         assert result == "channel_67890"
 
@@ -206,7 +206,7 @@ class TestMessageHandler:
         """Test sender info extraction for anonymous messages."""
         mock_message = Mock(spec=Message)
         mock_message.from_id = None
-        
+
         result = asyncio.run(self.handler._get_sender_info(mock_message))
         assert result == "anonymous"
 
@@ -240,13 +240,13 @@ class TestMessageHandler:
     def test_create_event_handler(self):
         """Test event handler creation."""
         mock_entities = [Mock(), Mock(), Mock()]
-        
-        with patch('src.telegram_client.message_handler.events.NewMessage') as mock_new_message:
+
+        with patch("src.telegram_client.message_handler.events.NewMessage") as mock_new_message:
             mock_handler = Mock()
             mock_new_message.return_value = mock_handler
-            
+
             result = self.handler.create_event_handler(mock_entities)
-            
+
             # Verify NewMessage was called with correct parameters
             mock_new_message.assert_called_once_with(chats=mock_entities)
             assert result == mock_handler
@@ -254,31 +254,31 @@ class TestMessageHandler:
     def test_get_monitoring_stats_initial(self):
         """Test monitoring stats with initial values."""
         stats = self.handler.get_monitoring_stats()
-        
-        assert stats['messages_processed'] == 0
-        assert stats['runtime_minutes'] >= 0
-        assert stats['messages_per_minute'] == 0
-        assert stats['unique_messages_tracked'] == 0
-        assert 'start_time' in stats
+
+        assert stats["messages_processed"] == 0
+        assert stats["runtime_minutes"] >= 0
+        assert stats["messages_per_minute"] == 0
+        assert stats["unique_messages_tracked"] == 0
+        assert "start_time" in stats
 
     def test_get_monitoring_stats_with_messages(self):
         """Test monitoring stats after processing messages."""
         # Simulate processed messages
         self.handler._message_counter = 5
-        self.handler._processed_messages = ['msg1', 'msg2', 'msg3']
-        
+        self.handler._processed_messages = ["msg1", "msg2", "msg3"]
+
         stats = self.handler.get_monitoring_stats()
-        
-        assert stats['messages_processed'] == 5
-        assert stats['unique_messages_tracked'] == 3
-        assert stats['messages_per_minute'] >= 0
+
+        assert stats["messages_processed"] == 5
+        assert stats["unique_messages_tracked"] == 3
+        assert stats["messages_per_minute"] >= 0
 
     def test_processed_messages_limit(self):
         """Test that processed messages list is limited to prevent memory issues."""
         # Add more than 1000 messages
         test_messages = [f"msg_{i}" for i in range(1200)]
         self.handler._processed_messages = test_messages
-        
+
         # Simulate adding one more message (triggers cleanup)
         mock_message = Mock(spec=Message)
         mock_message.text = "Cleanup test"
@@ -288,14 +288,14 @@ class TestMessageHandler:
         mock_message.forward = None
         mock_message.from_id = Mock(user_id=11111)
         mock_message.peer_id = Mock(channel_id=22222)
-        
+
         mock_event = AsyncMock()
         mock_event.message = mock_message
         mock_chat = Mock(title="Cleanup Test")
         mock_event.get_chat.return_value = mock_chat
-        
+
         # Run the handler
         asyncio.run(self.handler.handle_new_message(mock_event))
-        
+
         # Verify list was trimmed
         assert len(self.handler._processed_messages) <= 501  # 500 kept + 1 new message

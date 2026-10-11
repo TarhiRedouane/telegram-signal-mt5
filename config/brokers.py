@@ -29,7 +29,9 @@ def get_broker(key: str, brokers: dict[str, dict] | None = None) -> dict:
     """Validated profile for `key`; raises ValueError with a readable reason."""
     brokers = load_brokers() if brokers is None else brokers
     if key not in brokers:
-        raise ValueError(f"Unknown broker '{key}'. Configured: {', '.join(brokers) or 'none'} ({BROKERS_FILE})")
+        raise ValueError(
+            f"Unknown broker '{key}'. Configured: {', '.join(brokers) or 'none'} ({BROKERS_FILE})"
+        )
     profile = brokers[key]
     missing = [name for name in _REQUIRED if not profile.get(name)]
     if missing:

@@ -55,9 +55,9 @@ class RegexParser:
                 "signal_data": {
                     "raw_text_hash": self._hash_text(text),
                     "text_length": len(text),
-                    "parser": "REGEX"
+                    "parser": "REGEX",
                 }
-            }
+            },
         )
 
         # Try main combined patterns first (most specific)
@@ -79,9 +79,9 @@ class RegexParser:
                                         "entry": str(signal.entry_price),
                                         "confidence": signal.confidence_score,
                                         "parser": "REGEX",
-                                        "raw_text_hash": self._hash_text(text)
+                                        "raw_text_hash": self._hash_text(text),
                                     }
-                                }
+                                },
                             )
                             return signal
                         else:
@@ -91,9 +91,9 @@ class RegexParser:
                                     "signal_data": {
                                         "validation_errors": validation.errors,
                                         "parser": "REGEX",
-                                        "raw_text_hash": self._hash_text(text)
+                                        "raw_text_hash": self._hash_text(text),
                                     }
-                                }
+                                },
                             )
                 except Exception as e:
                     self.logger.error(
@@ -102,9 +102,9 @@ class RegexParser:
                             "signal_data": {
                                 "parser": "REGEX",
                                 "raw_text_hash": self._hash_text(text),
-                                "error": str(e)
+                                "error": str(e),
                             }
-                        }
+                        },
                     )
 
         # Try component-based parsing as fallback
@@ -119,14 +119,16 @@ class RegexParser:
                 "signal_data": {
                     "parser": "REGEX",
                     "raw_text_hash": self._hash_text(text),
-                    "patterns_attempted": len(self.main_patterns) + 1  # +1 for component parsing
+                    "patterns_attempted": len(self.main_patterns) + 1,  # +1 for component parsing
                 }
-            }
+            },
         )
 
         return None
 
-    def _extract_signal_from_match(self, match: re.Match, original_text: str, _correlation_id: str) -> ParsedSignal | None:
+    def _extract_signal_from_match(
+        self, match: re.Match, original_text: str, _correlation_id: str
+    ) -> ParsedSignal | None:
         """Extract ParsedSignal from regex match."""
         try:
             groups = match.groups()
@@ -155,14 +157,16 @@ class RegexParser:
             take_profit = self._extract_take_profit(original_text)
 
             entry_price, entry_price_high = self._entry_range(match, entry_price)
-            take_profits = self._extract_take_profits(original_text, parsed_action, entry_price, take_profit)
+            take_profits = self._extract_take_profits(
+                original_text, parsed_action, entry_price, take_profit
+            )
             take_profit = take_profits[0] if take_profits else take_profit
 
             # Create signal object
             signal = ParsedSignal(
                 telegram_message_id=0,  # Will be set by caller
-                telegram_chat_id=0,     # Will be set by caller
-                sender="",              # Will be set by caller
+                telegram_chat_id=0,  # Will be set by caller
+                sender="",  # Will be set by caller
                 timestamp=datetime.now(),
                 raw_text=original_text,
                 parsed_action=parsed_action,
@@ -183,18 +187,20 @@ class RegexParser:
             self.logger.error(f"Error extracting signal from match: {e}")
             return None
 
-    def _try_component_parsing(self, cleaned_text: str, original_text: str, _correlation_id: str) -> ParsedSignal | None:
+    def _try_component_parsing(
+        self, cleaned_text: str, original_text: str, _correlation_id: str
+    ) -> ParsedSignal | None:
         """Try parsing by extracting components individually."""
         try:
             # Extract action
             action = None
-            for pattern in self.patterns['buy_actions']:
+            for pattern in self.patterns["buy_actions"]:
                 if pattern.search(cleaned_text):
                     action = ParsedAction.BUY
                     break
 
             if not action:
-                for pattern in self.patterns['sell_actions']:
+                for pattern in self.patterns["sell_actions"]:
                     if pattern.search(cleaned_text):
                         action = ParsedAction.SELL
                         break
@@ -204,7 +210,7 @@ class RegexParser:
 
             # Extract instrument
             symbol = None
-            for pattern in self.patterns['instruments']:
+            for pattern in self.patterns["instruments"]:
                 match = pattern.search(cleaned_text)
                 if match:
                     symbol = self._normalize_symbol(match.group(0))
@@ -216,7 +222,7 @@ class RegexParser:
             # Extract price
             entry_price = None
             entry_price_high = None
-            for pattern in self.patterns['prices']:
+            for pattern in self.patterns["prices"]:
                 match = pattern.search(cleaned_text)
                 if match:
                     try:
@@ -232,7 +238,9 @@ class RegexParser:
             # Extract SL/TP
             stop_loss = self._extract_stop_loss(original_text)
             take_profit = self._extract_take_profit(original_text)
-            take_profits = self._extract_take_profits(original_text, action, entry_price, take_profit)
+            take_profits = self._extract_take_profits(
+                original_text, action, entry_price, take_profit
+            )
             take_profit = take_profits[0] if take_profits else take_profit
 
             # Create signal
@@ -266,9 +274,9 @@ class RegexParser:
                             "entry": str(signal.entry_price),
                             "confidence": signal.confidence_score,
                             "parser": "REGEX_COMPONENT",
-                            "raw_text_hash": self._hash_text(original_text)
+                            "raw_text_hash": self._hash_text(original_text),
                         }
-                    }
+                    },
                 )
                 return signal
             else:
@@ -278,9 +286,9 @@ class RegexParser:
                         "signal_data": {
                             "validation_errors": validation.errors,
                             "parser": "REGEX_COMPONENT",
-                            "raw_text_hash": self._hash_text(original_text)
+                            "raw_text_hash": self._hash_text(original_text),
                         }
-                    }
+                    },
                 )
 
         except Exception as e:
@@ -322,7 +330,7 @@ class RegexParser:
 
     def _extract_stop_loss(self, text: str) -> Decimal | None:
         """Extract stop loss from text."""
-        for pattern in self.patterns['stop_losses']:
+        for pattern in self.patterns["stop_losses"]:
             match = pattern.search(text)
             if match:
                 try:
@@ -333,7 +341,7 @@ class RegexParser:
 
     def _extract_take_profit(self, text: str) -> Decimal | None:
         """Extract take profit from text."""
-        for pattern in self.patterns['take_profits']:
+        for pattern in self.patterns["take_profits"]:
             match = pattern.search(text)
             if match:
                 try:
@@ -387,16 +395,16 @@ class RegexParser:
             if signal.parsed_action == ParsedAction.BUY:
                 if signal.stop_loss >= signal.entry_price:
                     errors.append("SL for BUY order must be below entry price")
-                elif signal.entry_price - signal.stop_loss > Decimal('5.0'):
+                elif signal.entry_price - signal.stop_loss > Decimal("5.0"):
                     warnings.append("SL distance > 500 pips, high risk")
-                elif signal.entry_price - signal.stop_loss < Decimal('0.05'):
+                elif signal.entry_price - signal.stop_loss < Decimal("0.05"):
                     warnings.append("SL distance < 5 pips, very tight")
             elif signal.parsed_action == ParsedAction.SELL:
                 if signal.stop_loss <= signal.entry_price:
                     errors.append("SL for SELL order must be above entry price")
-                elif signal.stop_loss - signal.entry_price > Decimal('5.0'):
+                elif signal.stop_loss - signal.entry_price > Decimal("5.0"):
                     warnings.append("SL distance > 500 pips, high risk")
-                elif signal.stop_loss - signal.entry_price < Decimal('0.05'):
+                elif signal.stop_loss - signal.entry_price < Decimal("0.05"):
                     warnings.append("SL distance < 5 pips, very tight")
 
         # Validate TP logic
@@ -404,20 +412,16 @@ class RegexParser:
             if signal.parsed_action == ParsedAction.BUY:
                 if signal.take_profit <= signal.entry_price:
                     errors.append("TP for BUY order must be above entry price")
-                elif signal.take_profit - signal.entry_price < Decimal('0.10'):
+                elif signal.take_profit - signal.entry_price < Decimal("0.10"):
                     warnings.append("TP distance < 10 pips, minimum recommended")
             elif signal.parsed_action == ParsedAction.SELL:
                 if signal.take_profit >= signal.entry_price:
                     errors.append("TP for SELL order must be below entry price")
-                elif signal.entry_price - signal.take_profit < Decimal('0.10'):
+                elif signal.entry_price - signal.take_profit < Decimal("0.10"):
                     warnings.append("TP distance < 10 pips, minimum recommended")
 
-        return ValidationResult(
-            is_valid=len(errors) == 0,
-            errors=errors,
-            warnings=warnings
-        )
+        return ValidationResult(is_valid=len(errors) == 0, errors=errors, warnings=warnings)
 
     def _hash_text(self, text: str) -> str:
         """Hash text for logging without exposing content."""
-        return hashlib.sha256(text.encode('utf-8')).hexdigest()[:16]
+        return hashlib.sha256(text.encode("utf-8")).hexdigest()[:16]

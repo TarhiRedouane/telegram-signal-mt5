@@ -11,7 +11,9 @@ def account_mode_name(trade_mode: int | None) -> str | None:
     return "real" if trade_mode == 2 else "demo"
 
 
-def order_risk(sl_distance: Decimal | None, volume: Decimal, tick_size: Decimal, tick_value: Decimal) -> Decimal | None:
+def order_risk(
+    sl_distance: Decimal | None, volume: Decimal, tick_size: Decimal, tick_value: Decimal
+) -> Decimal | None:
     """Money lost if this order's SL is hit; None when it has no SL or the specs are missing."""
     if sl_distance is None or not tick_size:
         return None
@@ -34,7 +36,11 @@ def refusal(snapshot: dict[str, Any] | None, new_risk: Decimal | None, settings:
     if expected_mode and snapshot.get("account_mode") not in (None, expected_mode):
         return f"terminal is on a {snapshot['account_mode'].upper()} account but MT5_ACCOUNT_MODE={expected_mode}"
     expected_login = str(getattr(settings, "mt5_login", "") or "")
-    if expected_login and snapshot.get("login") not in (None, 0) and str(snapshot["login"]) != expected_login:
+    if (
+        expected_login
+        and snapshot.get("login") not in (None, 0)
+        and str(snapshot["login"]) != expected_login
+    ):
         return f"terminal is on account {snapshot['login']}, expected {expected_login}"
     if snapshot.get("trade_allowed") is False:
         return "AutoTrading is OFF in the MT5 terminal (turn on the Algo Trading button, Ctrl+E)"
@@ -56,7 +62,11 @@ def refusal(snapshot: dict[str, Any] | None, new_risk: Decimal | None, settings:
             f"{settings.daily_loss_limit_percent}% (blocked until next server day)"
         )
 
-    total = snapshot["open_risk"] + snapshot["unprotected"] * standard + (standard if new_risk is None else new_risk)
+    total = (
+        snapshot["open_risk"]
+        + snapshot["unprotected"] * standard
+        + (standard if new_risk is None else new_risk)
+    )
     if total / balance * 100 > settings.max_open_risk_percent:
         return (
             f"open risk would be {total / balance * 100:.2f}% of balance "

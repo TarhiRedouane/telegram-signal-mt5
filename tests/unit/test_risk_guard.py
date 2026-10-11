@@ -29,8 +29,14 @@ def _settings(tmp_path: Path, **overrides):
 
 def _snapshot(**overrides):
     values = {
-        "balance": D("10000"), "equity": D("10000"), "open_legs": 0, "open_risk": D(0), "unprotected": 0,
-        "realized_today": D(0), "tick_size": D("0.01"), "tick_value": D("1"),
+        "balance": D("10000"),
+        "equity": D("10000"),
+        "open_legs": 0,
+        "open_risk": D(0),
+        "unprotected": 0,
+        "realized_today": D(0),
+        "tick_size": D("0.01"),
+        "tick_value": D("1"),
     }
     values.update(overrides)
     return values
@@ -48,11 +54,15 @@ def test_regular_order_under_limits_passes(tmp_path):
 
 def test_each_limit_refuses(tmp_path):
     s = _settings(tmp_path)
-    assert "TRADING_ENABLED" in refusal(_snapshot(), D("1"), _settings(tmp_path, trading_enabled=False))
+    assert "TRADING_ENABLED" in refusal(
+        _snapshot(), D("1"), _settings(tmp_path, trading_enabled=False)
+    )
     assert "6 legs open" in refusal(_snapshot(open_legs=6), D("1"), s)
     assert "open risk would be 6.01%" in refusal(_snapshot(open_risk=D("300")), D("301"), s)
     # Closed -400 today + floating -200 = 6 % of the 10 000 start-of-day balance
-    assert "daily loss 6.00%" in refusal(_snapshot(balance=D("9600"), equity=D("9400"), realized_today=D("-400")), D("1"), s)
+    assert "daily loss 6.00%" in refusal(
+        _snapshot(balance=D("9600"), equity=D("9400"), realized_today=D("-400")), D("1"), s
+    )
     assert "unavailable" in refusal(None, D("1"), s)
 
 
@@ -93,11 +103,16 @@ async def test_main_refused_order_never_reaches_mt5_and_signal_is_rejected(tmp_p
 
     assert await app._execute_signal_on_mt5(signal, volume=0.1) is None
     app.position_manager.open_market_order.assert_not_awaited()
-    assert "risk guard" in app._signal_repository.update_signal_status.await_args.kwargs["rejection_reason"]
+    assert (
+        "risk guard"
+        in app._signal_repository.update_signal_status.await_args.kwargs["rejection_reason"]
+    )
 
     # Under the limits the same order goes to MT5
     app.position_manager.get_risk_snapshot.return_value = _snapshot()
-    app.position_manager.open_market_order.return_value = SimpleNamespace(success=False, error_message="x")
+    app.position_manager.open_market_order.return_value = SimpleNamespace(
+        success=False, error_message="x"
+    )
     await app._execute_signal_on_mt5(signal, volume=0.1)
     app.position_manager.open_market_order.assert_awaited_once()
 
@@ -111,20 +126,30 @@ async def test_snapshot_sums_sl_risk_and_only_today_server_deals(monkeypatch):
     day = 86400 * 20000
     gold = SimpleNamespace(name="Gold", trade_tick_size=0.01, trade_tick_value=1.0)
     fake = SimpleNamespace(
-        POSITION_TYPE_BUY=0, DEAL_TYPE_BUY=0, DEAL_TYPE_SELL=1,
+        POSITION_TYPE_BUY=0,
+        DEAL_TYPE_BUY=0,
+        DEAL_TYPE_SELL=1,
         account_info=lambda: SimpleNamespace(balance=10000.0, equity=9950.0),
         terminal_info=lambda: SimpleNamespace(trade_allowed=True),
         symbol_info=lambda _: gold,
         symbol_info_tick=lambda _: SimpleNamespace(time=day + 3600),
         positions_get=lambda: [
-            SimpleNamespace(symbol="Gold", type=0, price_open=4140.0, sl=4130.0, volume=0.1),  # $100
-            SimpleNamespace(symbol="Gold", type=1, price_open=4140.0, sl=4135.0, volume=0.1),  # past BE: $0
-            SimpleNamespace(symbol="Gold", type=0, price_open=4140.0, sl=0.0, volume=0.1),     # no SL
+            SimpleNamespace(
+                symbol="Gold", type=0, price_open=4140.0, sl=4130.0, volume=0.1
+            ),  # $100
+            SimpleNamespace(
+                symbol="Gold", type=1, price_open=4140.0, sl=4135.0, volume=0.1
+            ),  # past BE: $0
+            SimpleNamespace(symbol="Gold", type=0, price_open=4140.0, sl=0.0, volume=0.1),  # no SL
         ],
         history_deals_get=lambda *_: [
-            SimpleNamespace(time=day - 60, type=0, profit=-500.0, commission=0.0, swap=0.0),  # yesterday
+            SimpleNamespace(
+                time=day - 60, type=0, profit=-500.0, commission=0.0, swap=0.0
+            ),  # yesterday
             SimpleNamespace(time=day + 60, type=1, profit=-80.0, commission=-2.0, swap=0.0),
-            SimpleNamespace(time=day + 90, type=2, profit=1000.0, commission=0.0, swap=0.0),  # deposit
+            SimpleNamespace(
+                time=day + 90, type=2, profit=1000.0, commission=0.0, swap=0.0
+            ),  # deposit
         ],
     )
     monkeypatch.setattr(pm, "mt5", fake)
@@ -152,14 +177,24 @@ async def test_health_check_flags_autotrading_off_once_and_dashboard_shows_it(ca
     from src.monitoring.health_checker import HealthMonitor, HealthStatus
 
     monitor = HealthMonitor()
-    status = {"pool_size": 1, "active_connections": 1, "healthy_connections": 1, "trade_allowed": False}
-    monitor.set_mt5_connection(SimpleNamespace(check_connection_health=AsyncMock(return_value=status)))
+    status = {
+        "pool_size": 1,
+        "active_connections": 1,
+        "healthy_connections": 1,
+        "trade_allowed": False,
+    }
+    monitor.set_mt5_connection(
+        SimpleNamespace(check_connection_health=AsyncMock(return_value=status))
+    )
 
     await monitor._check_mt5_health()
     await monitor._check_mt5_health()
     health = monitor.get_component_health("mt5")
     assert health.status == HealthStatus.DEGRADED and health.details["trade_allowed"] is False
-    assert sum(r.levelname == "ERROR" and "AutoTrading is OFF" in r.message for r in caplog.records) == 1
+    assert (
+        sum(r.levelname == "ERROR" and "AutoTrading is OFF" in r.message for r in caplog.records)
+        == 1
+    )
     panel = ConsoleDashboard(monitor)._build_connections_panel()
     assert "AUTOTRADING OFF" in str(panel.renderable.columns[1]._cells)
 

@@ -75,12 +75,10 @@ class EmergencyStopManager:
             "stop_time": self._stop_time.isoformat() if self._stop_time else None,
             "stop_reason": self._stop_reason,
             "duration_seconds": (
-                (datetime.now(UTC) - self._stop_time).total_seconds()
-                if self._stop_time else None
-            )
+                (datetime.now(UTC) - self._stop_time).total_seconds() if self._stop_time else None
+            ),
         }
 
 
 # Global instance for use across the application
 emergency_stop_manager = EmergencyStopManager()
-

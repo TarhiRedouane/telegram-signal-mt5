@@ -31,7 +31,7 @@ class ConsoleDashboard:
     def __init__(self, health_monitor: HealthMonitor, refresh_interval: int = 2):
         """
         Initialize console dashboard.
-        
+
         Args:
             health_monitor: Health monitor instance for status data
             refresh_interval: Dashboard refresh interval in seconds
@@ -51,32 +51,20 @@ class ConsoleDashboard:
 
         # Statistics tracking
         self._message_stats = {
-            'messages_today': 0,
-            'last_message_time': None,
-            'success_rate': 0.0,
-            'processing_latency_ms': 0
+            "messages_today": 0,
+            "last_message_time": None,
+            "success_rate": 0.0,
+            "processing_latency_ms": 0,
         }
 
-        self._position_stats = {
-            'open_positions': 0,
-            'today_pnl': 0.0,
-            'break_evens_applied': 0
-        }
+        self._position_stats = {"open_positions": 0, "today_pnl": 0.0, "break_evens_applied": 0}
 
-        self._queue_stats = {
-            'raw_queue': 0,
-            'parsed_queue': 0,
-            'priority_queue': 0
-        }
+        self._queue_stats = {"raw_queue": 0, "parsed_queue": 0, "priority_queue": 0}
 
         self._recent_signals: list[dict[str, Any]] = []
 
         # Emergency stop status tracking
-        self._emergency_stop_status = {
-            'is_stopped': False,
-            'stop_reason': None,
-            'stop_time': None
-        }
+        self._emergency_stop_status = {"is_stopped": False, "stop_reason": None, "stop_time": None}
 
         self.logger.info("Console dashboard initialized")
 
@@ -85,40 +73,34 @@ class ConsoleDashboard:
         messages_today: int = 0,
         last_message_time: datetime | None = None,
         success_rate: float = 0.0,
-        processing_latency_ms: int = 0
+        processing_latency_ms: int = 0,
     ) -> None:
         """Update message processing statistics."""
         self._message_stats = {
-            'messages_today': messages_today,
-            'last_message_time': last_message_time,
-            'success_rate': success_rate,
-            'processing_latency_ms': processing_latency_ms
+            "messages_today": messages_today,
+            "last_message_time": last_message_time,
+            "success_rate": success_rate,
+            "processing_latency_ms": processing_latency_ms,
         }
 
     def set_position_stats(
-        self,
-        open_positions: int = 0,
-        today_pnl: float = 0.0,
-        break_evens_applied: int = 0
+        self, open_positions: int = 0, today_pnl: float = 0.0, break_evens_applied: int = 0
     ) -> None:
         """Update position/trading statistics."""
         self._position_stats = {
-            'open_positions': open_positions,
-            'today_pnl': today_pnl,
-            'break_evens_applied': break_evens_applied
+            "open_positions": open_positions,
+            "today_pnl": today_pnl,
+            "break_evens_applied": break_evens_applied,
         }
 
     def set_queue_stats(
-        self,
-        raw_queue: int = 0,
-        parsed_queue: int = 0,
-        priority_queue: int = 0
+        self, raw_queue: int = 0, parsed_queue: int = 0, priority_queue: int = 0
     ) -> None:
         """Update queue statistics."""
         self._queue_stats = {
-            'raw_queue': raw_queue,
-            'parsed_queue': parsed_queue,
-            'priority_queue': priority_queue
+            "raw_queue": raw_queue,
+            "parsed_queue": parsed_queue,
+            "priority_queue": priority_queue,
         }
 
     def add_recent_signal(
@@ -128,16 +110,16 @@ class ConsoleDashboard:
         action: str,
         price: float,
         ticket_id: str | None = None,
-        timestamp: datetime | None = None
+        timestamp: datetime | None = None,
     ) -> None:
         """Add a recent signal to the display."""
         signal = {
-            'timestamp': timestamp or datetime.now(UTC),
-            'type': signal_type,
-            'symbol': symbol,
-            'action': action,
-            'price': price,
-            'ticket_id': ticket_id
+            "timestamp": timestamp or datetime.now(UTC),
+            "type": signal_type,
+            "symbol": symbol,
+            "action": action,
+            "price": price,
+            "ticket_id": ticket_id,
         }
 
         self._recent_signals.append(signal)
@@ -149,15 +131,15 @@ class ConsoleDashboard:
     async def handle_command(self, command: str) -> bool:
         """
         Handle console commands.
-        
+
         Args:
             command: Command string to process
-            
+
         Returns:
             True if command was handled, False otherwise
         """
         command = command.strip().upper()
-        
+
         if command == "STOP ALL":
             await self._handle_emergency_stop()
             return True
@@ -189,8 +171,10 @@ class ConsoleDashboard:
     async def _handle_status_command(self) -> None:
         """Handle status inquiry command."""
         stop_info = emergency_stop_manager.get_stop_info()
-        if stop_info['is_stopped']:
-            self.logger.info(f"Emergency stop active: {stop_info['stop_reason']} (since {stop_info['stop_time']})")
+        if stop_info["is_stopped"]:
+            self.logger.info(
+                f"Emergency stop active: {stop_info['stop_reason']} (since {stop_info['stop_time']})"
+            )
         else:
             self.logger.info("System operational - no emergency stop active")
 
@@ -215,12 +199,16 @@ Available commands:
         self._is_running = True
 
         try:
-            with Live(self._build_layout(), refresh_per_second=1/self.refresh_interval, console=self.console) as live:
+            with Live(
+                self._build_layout(),
+                refresh_per_second=1 / self.refresh_interval,
+                console=self.console,
+            ) as live:
                 while self._is_running:
                     try:
                         # Update emergency stop status
                         self._emergency_stop_status = emergency_stop_manager.get_stop_info()
-                        
+
                         live.update(self._build_layout())
                         await asyncio.sleep(self.refresh_interval)
                     except asyncio.CancelledError:
@@ -264,13 +252,13 @@ Available commands:
         layout.split_column(
             Layout(self._build_header(), name="header", size=3),
             Layout(name="main"),
-            Layout(self._build_footer(), name="footer", size=3)
+            Layout(self._build_footer(), name="footer", size=3),
         )
 
         # Split main content into sections
         layout["main"].split_column(
             Layout(self._build_status_section(), name="status", size=8),
-            Layout(self._build_signals_section(), name="signals")
+            Layout(self._build_signals_section(), name="signals"),
         )
 
         return layout
@@ -287,7 +275,7 @@ Available commands:
             cpu_percent, ram_mb = "?", "?"
 
         # Check for emergency stop first
-        if self._emergency_stop_status.get('is_stopped', False):
+        if self._emergency_stop_status.get("is_stopped", False):
             status_color = "red"
             status_icon = "⏹"
             status_text = "EMERGENCY STOP"
@@ -312,17 +300,19 @@ Available commands:
         header_text.append(" | ")
         header_text.append("Status: ", style="white")
         header_text.append(f"{status_icon} {status_text}", style=f"bold {status_color}")
-        header_text.append(f" | Uptime: {uptime} | CPU: {cpu_percent}% | RAM: {ram_mb}MB", style="white")
+        header_text.append(
+            f" | Uptime: {uptime} | CPU: {cpu_percent}% | RAM: {ram_mb}MB", style="white"
+        )
 
         return Panel(header_text, style="bold")
 
     def _build_footer(self) -> Panel:
         """Build the dashboard footer with commands and emergency stop info."""
         footer_text = Text()
-        
+
         # Emergency stop status
-        if self._emergency_stop_status.get('is_stopped', False):
-            stop_reason = self._emergency_stop_status.get('stop_reason', 'Unknown')
+        if self._emergency_stop_status.get("is_stopped", False):
+            stop_reason = self._emergency_stop_status.get("stop_reason", "Unknown")
             footer_text.append("⚠️  EMERGENCY STOP ACTIVE", style="bold red")
             footer_text.append(f" - {stop_reason}", style="red")
             footer_text.append(" | Type 'RESUME' to restart operations", style="yellow")
@@ -335,7 +325,7 @@ Available commands:
             footer_text.append("STATUS", style="bold cyan")
             footer_text.append(" | ", style="white")
             footer_text.append("HELP", style="bold yellow")
-        
+
         return Panel(footer_text, style="dim")
 
     def _build_status_section(self) -> Layout:
@@ -346,22 +336,19 @@ Available commands:
         status_layout.split_row(
             Layout(self._build_connections_panel(), name="connections"),
             Layout(self._build_signals_panel(), name="signals"),
-            Layout(self._build_positions_panel(), name="positions")
+            Layout(self._build_positions_panel(), name="positions"),
         )
 
         # Add bottom row for queues and performance
         bottom_layout = Layout()
         bottom_layout.split_row(
             Layout(self._build_queues_panel(), name="queues"),
-            Layout(self._build_performance_panel(), name="performance")
+            Layout(self._build_performance_panel(), name="performance"),
         )
 
         # Combine top and bottom
         combined_layout = Layout()
-        combined_layout.split_column(
-            status_layout,
-            bottom_layout
-        )
+        combined_layout.split_column(status_layout, bottom_layout)
 
         return combined_layout
 
@@ -375,7 +362,7 @@ Available commands:
         component_healths = self.health_monitor.get_all_component_healths()
 
         # Telegram status
-        telegram_health = component_healths.get('telegram')
+        telegram_health = component_healths.get("telegram")
         if telegram_health:
             if telegram_health.status == HealthStatus.HEALTHY:
                 telegram_status = "[green]UP[/green]"
@@ -389,7 +376,7 @@ Available commands:
         table.add_row("TG", telegram_status)
 
         # MT5 status
-        mt5_health = component_healths.get('mt5')
+        mt5_health = component_healths.get("mt5")
         if mt5_health and mt5_health.status == HealthStatus.HEALTHY:
             account = (mt5_health.details or {}).get("account")
             mt5_status = f"[green]UP {account}[/green]" if account else "[green]UP[/green]"
@@ -401,7 +388,7 @@ Available commands:
         table.add_row("MT5", mt5_status)
 
         # OpenAI status
-        openai_health = component_healths.get('openai')
+        openai_health = component_healths.get("openai")
         if openai_health and openai_health.status == HealthStatus.HEALTHY:
             openai_status = "[green]UP[/green]"
         else:
@@ -419,7 +406,7 @@ Available commands:
         table.add_column("Value", justify="left")
 
         # Last signal time
-        last_msg = self._message_stats['last_message_time']
+        last_msg = self._message_stats["last_message_time"]
         if last_msg:
             time_diff = datetime.now(UTC) - last_msg
             if time_diff.total_seconds() < 60:
@@ -432,7 +419,7 @@ Available commands:
             last_signal = "Never"
 
         table.add_row("Last:", last_signal)
-        table.add_row("Today:", str(self._message_stats['messages_today']))
+        table.add_row("Today:", str(self._message_stats["messages_today"]))
         table.add_row("Success:", f"{self._message_stats['success_rate']:.1f}%")
 
         return Panel(table, title="[bold green]SIGNALS[/bold green]", border_style="green")
@@ -443,9 +430,9 @@ Available commands:
         table.add_column("Metric", style="cyan")
         table.add_column("Value", justify="left")
 
-        open_positions = self._position_stats['open_positions']
-        today_pnl = self._position_stats['today_pnl']
-        be_applied = self._position_stats['break_evens_applied']
+        open_positions = self._position_stats["open_positions"]
+        today_pnl = self._position_stats["today_pnl"]
+        be_applied = self._position_stats["break_evens_applied"]
 
         # Color P&L based on value
         if today_pnl > 0:
@@ -467,9 +454,9 @@ Available commands:
         table.add_column("Queue", style="cyan")
         table.add_column("Count", justify="left")
 
-        raw_count = self._queue_stats['raw_queue']
-        parsed_count = self._queue_stats['parsed_queue']
-        priority_count = self._queue_stats['priority_queue']
+        raw_count = self._queue_stats["raw_queue"]
+        parsed_count = self._queue_stats["parsed_queue"]
+        priority_count = self._queue_stats["priority_queue"]
 
         table.add_row("Raw:", str(raw_count))
         table.add_row("Parsed:", str(parsed_count))
@@ -483,8 +470,8 @@ Available commands:
         table.add_column("Metric", style="cyan")
         table.add_column("Value", justify="left")
 
-        parse_latency = self._message_stats['processing_latency_ms']
-        success_rate = self._message_stats['success_rate']
+        parse_latency = self._message_stats["processing_latency_ms"]
+        success_rate = self._message_stats["success_rate"]
 
         table.add_row("Parse Latency:", f"{parse_latency}ms")
         table.add_row("Execution Latency:", "N/A")  # Placeholder for future implementation
@@ -500,24 +487,24 @@ Available commands:
             content = Text()
 
             for signal in reversed(self._recent_signals[-5:]):  # Show last 5 signals
-                timestamp = signal['timestamp'].strftime("%H:%M:%S")
-                symbol = signal['symbol']
-                action = signal['action']
-                price = signal['price']
-                ticket = signal.get('ticket_id', 'N/A')
+                timestamp = signal["timestamp"].strftime("%H:%M:%S")
+                symbol = signal["symbol"]
+                action = signal["action"]
+                price = signal["price"]
+                ticket = signal.get("ticket_id", "N/A")
 
                 line = f"{timestamp} [{symbol}] {action} @ {price:.2f}"
-                if ticket and ticket != 'N/A':
+                if ticket and ticket != "N/A":
                     line += f" → {signal['type']} #{ticket}"
-                elif signal['type'] == "NOT FILLED":
+                elif signal["type"] == "NOT FILLED":
                     line += " → NOT FILLED"
 
                 # Color code by action type
-                if 'BUY' in action.upper():
+                if "BUY" in action.upper():
                     style = "green"
-                elif 'SELL' in action.upper():
+                elif "SELL" in action.upper():
                     style = "red"
-                elif 'CLOSE' in action.upper():
+                elif "CLOSE" in action.upper():
                     style = "yellow"
                 else:
                     style = "white"

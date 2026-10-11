@@ -16,6 +16,7 @@ from src.signal_parser.context_analyzer import ContextAnalysisResult, TelegramMe
 
 class ExecutionResult(Enum):
     """Result of context processing execution."""
+
     EXECUTED = "EXECUTED"
     QUEUED_FOR_REVIEW = "QUEUED_FOR_REVIEW"
     FAILED = "FAILED"
@@ -25,7 +26,7 @@ class ExecutionResult(Enum):
 class ContextProcessor:
     """
     Processes LLM context analysis results and routes to appropriate processors.
-    
+
     Implements confidence-based execution with automatic routing for high-confidence
     updates and manual review queuing for low-confidence results.
     """
@@ -42,16 +43,16 @@ class ContextProcessor:
         self,
         analysis_result: ContextAnalysisResult,
         message: TelegramMessage,
-        positions: list[Position]
+        positions: list[Position],
     ) -> tuple[ExecutionResult, dict[str, Any] | None]:
         """
         Process LLM context analysis result and execute or queue for review.
-        
+
         Args:
             analysis_result: Result from ContextAnalyzer
             message: Original update message
             positions: List of open positions
-            
+
         Returns:
             Tuple of (ExecutionResult, execution_details)
         """
@@ -71,16 +72,18 @@ class ContextProcessor:
                     "confidence": analysis_result.confidence,
                     "target_position": analysis_result.target_position,
                     "correlation_id": correlation_id,
-                    "above_threshold": analysis_result.confidence >= self.CONFIDENCE_THRESHOLD
+                    "above_threshold": analysis_result.confidence >= self.CONFIDENCE_THRESHOLD,
                 }
-            }
+            },
         )
 
         try:
             # Validate analysis result
             validation_result = self._validate_analysis_result(analysis_result, positions)
             if not validation_result["is_valid"]:
-                await self._log_validation_failure(analysis_result, message, validation_result["errors"])
+                await self._log_validation_failure(
+                    analysis_result, message, validation_result["errors"]
+                )
                 return ExecutionResult.INVALID_ACTION, validation_result
 
             # Check confidence threshold (AC: 4, 5)
@@ -105,24 +108,22 @@ class ContextProcessor:
                         "error": str(e),
                         "correlation_id": correlation_id,
                         "action": analysis_result.action,
-                        "confidence": analysis_result.confidence
+                        "confidence": analysis_result.confidence,
                     }
-                }
+                },
             )
             return ExecutionResult.FAILED, {"error": str(e)}
 
     def _validate_analysis_result(
-        self,
-        analysis_result: ContextAnalysisResult,
-        positions: list[Position]
+        self, analysis_result: ContextAnalysisResult, positions: list[Position]
     ) -> dict[str, Any]:
         """
         Validate analysis result for execution readiness.
-        
+
         Args:
             analysis_result: Result to validate
             positions: Available positions
-            
+
         Returns:
             Validation result with is_valid flag and errors
         """
@@ -145,7 +146,9 @@ class ContextProcessor:
                     break
 
             if not target_found:
-                errors.append(f"Target position {analysis_result.target_position} not found in open positions")
+                errors.append(
+                    f"Target position {analysis_result.target_position} not found in open positions"
+                )
         else:
             if analysis_result.action in ["breakeven", "close", "modify"]:
                 errors.append("Target position required for action but not specified")
@@ -163,27 +166,24 @@ class ContextProcessor:
             if new_sl is None and new_tp is None:
                 errors.append("Modify action requires new_sl or new_tp parameter")
 
-        return {
-            "is_valid": len(errors) == 0,
-            "errors": errors
-        }
+        return {"is_valid": len(errors) == 0, "errors": errors}
 
     async def _execute_high_confidence_update(
         self,
         analysis_result: ContextAnalysisResult,
         message: TelegramMessage,
         positions: list[Position],
-        correlation_id: str
+        correlation_id: str,
     ) -> tuple[ExecutionResult, dict[str, Any]]:
         """
         Execute high-confidence update by routing to appropriate processor.
-        
+
         Args:
             analysis_result: High-confidence analysis result
             message: Original message
             positions: Open positions
             correlation_id: Correlation ID for tracking
-            
+
         Returns:
             Tuple of execution result and details
         """
@@ -204,7 +204,7 @@ class ContextProcessor:
             "parameters": analysis_result.parameters,
             "confidence": analysis_result.confidence,
             "correlation_id": correlation_id,
-            "execution_time": datetime.now().isoformat()
+            "execution_time": datetime.now().isoformat(),
         }
 
         try:
@@ -221,7 +221,9 @@ class ContextProcessor:
                     target_position, analysis_result, message, correlation_id
                 )
             else:
-                return ExecutionResult.INVALID_ACTION, {"error": f"Unsupported action: {analysis_result.action}"}
+                return ExecutionResult.INVALID_ACTION, {
+                    "error": f"Unsupported action: {analysis_result.action}"
+                }
 
             # Log successful execution
             if result["success"]:
@@ -232,9 +234,7 @@ class ContextProcessor:
 
                 self.logger.info(
                     "High-confidence context update executed successfully",
-                    extra_fields={
-                        "context_processing": execution_details
-                    }
+                    extra_fields={"context_processing": execution_details},
                 )
 
                 return ExecutionResult.EXECUTED, execution_details
@@ -247,42 +247,33 @@ class ContextProcessor:
 
                 self.logger.error(
                     "High-confidence context update execution failed",
-                    extra_fields={
-                        "context_processing": execution_details
-                    }
+                    extra_fields={"context_processing": execution_details},
                 )
 
                 return ExecutionResult.FAILED, execution_details
 
         except Exception as e:
-            await self._create_audit_trail(
-                target_position, analysis_result, message, False, str(e)
-            )
+            await self._create_audit_trail(target_position, analysis_result, message, False, str(e))
             execution_details["error"] = str(e)
 
             self.logger.error(
                 f"Exception during high-confidence update execution: {e}",
-                extra_fields={
-                    "context_processing": execution_details
-                }
+                extra_fields={"context_processing": execution_details},
             )
 
             return ExecutionResult.FAILED, execution_details
 
     async def _queue_for_manual_review(
-        self,
-        analysis_result: ContextAnalysisResult,
-        message: TelegramMessage,
-        correlation_id: str
+        self, analysis_result: ContextAnalysisResult, message: TelegramMessage, correlation_id: str
     ) -> dict[str, Any]:
         """
         Queue low-confidence update for manual review without execution.
-        
+
         Args:
             analysis_result: Low-confidence analysis result
             message: Original message
             correlation_id: Correlation ID for tracking
-            
+
         Returns:
             Review queue details
         """
@@ -295,16 +286,13 @@ class ContextProcessor:
             "correlation_id": correlation_id,
             "message_text": message.raw_text,
             "queued_at": datetime.now().isoformat(),
-            "review_required": True
+            "review_required": True,
         }
 
         # Log for manual review (AC: 5)
         self.logger.warning(
             "Context update queued for manual review - LOW CONFIDENCE",
-            extra_fields={
-                "context_processing": review_details,
-                "manual_review_required": True
-            }
+            extra_fields={"context_processing": review_details, "manual_review_required": True},
         )
 
         # Create audit trail for manual review
@@ -321,8 +309,11 @@ class ContextProcessor:
 
                 if target_position:
                     await self._create_audit_trail(
-                        target_position, analysis_result, message, False,
-                        f"Low confidence ({analysis_result.confidence}) - queued for manual review"
+                        target_position,
+                        analysis_result,
+                        message,
+                        False,
+                        f"Low confidence ({analysis_result.confidence}) - queued for manual review",
                     )
 
         return review_details
@@ -332,7 +323,7 @@ class ContextProcessor:
         position: Position,
         analysis_result: ContextAnalysisResult,
         message: TelegramMessage,
-        correlation_id: str
+        correlation_id: str,
     ) -> dict[str, Any]:
         """Route break even request to break_even.py processor."""
         # Import here to avoid circular imports
@@ -344,14 +335,14 @@ class ContextProcessor:
         result = await break_even_processor.process_break_even_request(
             position=position,
             telegram_message_id=message.telegram_message_id,
-            correlation_id=correlation_id
+            correlation_id=correlation_id,
         )
 
         return {
             "success": result.get("success", False),
             "processor": "break_even",
             "new_sl": position.open_price,
-            "error": result.get("error")
+            "error": result.get("error"),
         }
 
     async def _route_to_close_processor(
@@ -359,7 +350,7 @@ class ContextProcessor:
         position: Position,
         analysis_result: ContextAnalysisResult,
         message: TelegramMessage,
-        correlation_id: str
+        correlation_id: str,
     ) -> dict[str, Any]:
         """Route close request to close_processor.py."""
         # Import here to avoid circular imports
@@ -374,14 +365,14 @@ class ContextProcessor:
             position=position,
             close_percentage=percentage,
             telegram_message_id=message.telegram_message_id,
-            correlation_id=correlation_id
+            correlation_id=correlation_id,
         )
 
         return {
             "success": result.get("success", False),
             "processor": "close",
             "close_percentage": percentage,
-            "error": result.get("error")
+            "error": result.get("error"),
         }
 
     async def _route_to_modify_processor(
@@ -389,7 +380,7 @@ class ContextProcessor:
         position: Position,
         analysis_result: ContextAnalysisResult,
         message: TelegramMessage,
-        correlation_id: str
+        correlation_id: str,
     ) -> dict[str, Any]:
         """Route modify request to position modifier."""
         # Import here to avoid circular imports
@@ -406,7 +397,7 @@ class ContextProcessor:
             new_sl=new_sl,
             new_tp=new_tp,
             telegram_message_id=message.telegram_message_id,
-            correlation_id=correlation_id
+            correlation_id=correlation_id,
         )
 
         return {
@@ -414,7 +405,7 @@ class ContextProcessor:
             "processor": "modify",
             "new_sl": new_sl,
             "new_tp": new_tp,
-            "error": result.get("error")
+            "error": result.get("error"),
         }
 
     async def _create_audit_trail(
@@ -423,11 +414,11 @@ class ContextProcessor:
         analysis_result: ContextAnalysisResult,
         message: TelegramMessage,
         success: bool,
-        error_message: str | None
+        error_message: str | None,
     ) -> None:
         """
         Create audit trail in position_updates table with LLM confidence scores.
-        
+
         Args:
             position: Target position
             analysis_result: LLM analysis result
@@ -446,7 +437,7 @@ class ContextProcessor:
                     new_value=f"action: {analysis_result.action}, params: {analysis_result.parameters}",
                     telegram_message_id=message.telegram_message_id,
                     success=success,
-                    error_message=error_message or analysis_result.reasoning
+                    error_message=error_message or analysis_result.reasoning,
                 )
 
                 session.add(update_record)
@@ -456,10 +447,7 @@ class ContextProcessor:
             self.logger.error(f"Failed to create audit trail: {e}")
 
     async def _log_validation_failure(
-        self,
-        analysis_result: ContextAnalysisResult,
-        message: TelegramMessage,
-        errors: list[str]
+        self, analysis_result: ContextAnalysisResult, message: TelegramMessage, errors: list[str]
     ) -> None:
         """Log validation failure for analysis result."""
         self.logger.error(
@@ -470,12 +458,13 @@ class ContextProcessor:
                     "confidence": analysis_result.confidence,
                     "target_position": analysis_result.target_position,
                     "validation_errors": errors,
-                    "message_hash": self._hash_text(message.raw_text)
+                    "message_hash": self._hash_text(message.raw_text),
                 }
-            }
+            },
         )
 
     def _hash_text(self, text: str) -> str:
         """Hash text for logging without exposing content."""
         import hashlib
-        return hashlib.sha256(text.encode('utf-8')).hexdigest()[:16]
+
+        return hashlib.sha256(text.encode("utf-8")).hexdigest()[:16]

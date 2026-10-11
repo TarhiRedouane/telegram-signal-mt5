@@ -34,7 +34,9 @@ async def test_open_market_order_submits_mt5_buy_request():
     fake_mt5.TRADE_RETCODE_DONE = 100
     fake_mt5.symbol_select.return_value = True
     fake_mt5.symbol_info_tick.return_value = SimpleNamespace(bid=4100.0, ask=4101.0)
-    fake_mt5.order_send.return_value = SimpleNamespace(retcode=fake_mt5.TRADE_RETCODE_DONE, order=123456)
+    fake_mt5.order_send.return_value = SimpleNamespace(
+        retcode=fake_mt5.TRADE_RETCODE_DONE, order=123456
+    )
 
     signal = SimpleNamespace(
         id=7,
@@ -105,19 +107,21 @@ async def test_signal_execution_claim_blocks_replays_and_retries_legacy_action_r
     repository = SignalRepository(database)
 
     try:
-        signal_id = await repository.save_signal({
-            "telegram_message_id": 1001,
-            "telegram_chat_id": -1001,
-            "sender": "signal_user",
-            "timestamp": datetime.now(),
-            "raw_text": "SELL GOLD",
-            "parsed_action": "SELL",
-            "symbol": "GOLD",
-            "entry_price": 4100.0,
-            "confidence_score": 0.95,
-            "parser_type": ParserType.REGEX,
-            "status": SignalStatus.PENDING,
-        })
+        signal_id = await repository.save_signal(
+            {
+                "telegram_message_id": 1001,
+                "telegram_chat_id": -1001,
+                "sender": "signal_user",
+                "timestamp": datetime.now(),
+                "raw_text": "SELL GOLD",
+                "parsed_action": "SELL",
+                "symbol": "GOLD",
+                "entry_price": 4100.0,
+                "confidence_score": 0.95,
+                "parser_type": ParserType.REGEX,
+                "status": SignalStatus.PENDING,
+            }
+        )
 
         assert await repository.claim_signal_for_execution(signal_id) is True
         assert await repository.claim_signal_for_execution(signal_id) is False

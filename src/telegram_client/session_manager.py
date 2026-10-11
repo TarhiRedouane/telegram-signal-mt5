@@ -92,7 +92,7 @@ class SessionManager:
             self._phone_code_hash = sent_code.phone_code_hash
 
             # Log the type of verification sent
-            code_type = getattr(sent_code.type, '__class__.__name__', 'Unknown')
+            code_type = getattr(sent_code.type, "__class__.__name__", "Unknown")
             self.logger.info(f"Verification code sent via {code_type}")
 
             return True
@@ -135,13 +135,17 @@ class SessionManager:
 
                 # Get code from user input
                 # Note: input() requires terminal interaction, acceptable for authentication flow
-                verification_code = input("\nVerification code sent. Please enter it (usually 5-6 digits): ").strip()
+                verification_code = input(
+                    "\nVerification code sent. Please enter it (usually 5-6 digits): "
+                ).strip()
 
                 if not verification_code:
                     self.logger.warning("Empty verification code entered")
                     continue
 
-                self.logger.info(f"Attempting to verify code (attempt {attempt + 1}/{max_attempts})")
+                self.logger.info(
+                    f"Attempting to verify code (attempt {attempt + 1}/{max_attempts})"
+                )
 
                 # Sign in with the verification code
                 await self.client.client.sign_in(
@@ -156,7 +160,9 @@ class SessionManager:
             except PhoneCodeEmptyError:
                 self.logger.warning("Empty verification code provided")
             except PhoneCodeInvalidError:
-                self.logger.warning(f"Invalid verification code (attempt {attempt + 1}/{max_attempts})")
+                self.logger.warning(
+                    f"Invalid verification code (attempt {attempt + 1}/{max_attempts})"
+                )
             except PhoneCodeExpiredError:
                 self.logger.error("Verification code expired, need to request new code")
                 return False
@@ -170,10 +176,14 @@ class SessionManager:
                 self.logger.error(f"Verification failed: {e}")
 
             if attempt < max_attempts - 1:
-                self.logger.warning(f"Invalid code. {max_attempts - attempt - 1} attempts remaining")
+                self.logger.warning(
+                    f"Invalid code. {max_attempts - attempt - 1} attempts remaining"
+                )
                 # User feedback requires console output during interactive authentication
                 if attempt < max_attempts - 1:
-                    print(f"Invalid code. Please try again ({max_attempts - attempt - 1} attempts remaining)")
+                    print(
+                        f"Invalid code. Please try again ({max_attempts - attempt - 1} attempts remaining)"
+                    )
 
         self.logger.error("Max verification attempts reached")
         return False
@@ -223,13 +233,16 @@ class SessionManager:
 
                 # Get password from user - use getpass for secure password input
                 import getpass
+
                 password = getpass.getpass("Cloud password: ").strip()
 
                 if not password:
                     self.logger.warning("Empty password entered")
                     continue
 
-                self.logger.info(f"Attempting 2FA verification (attempt {attempt + 1}/{max_attempts})")
+                self.logger.info(
+                    f"Attempting 2FA verification (attempt {attempt + 1}/{max_attempts})"
+                )
 
                 # Sign in with password
                 await self.client.client.sign_in(password=password)
@@ -238,12 +251,18 @@ class SessionManager:
                 return True
 
             except Exception as e:
-                self.logger.warning(f"2FA verification failed (attempt {attempt + 1}/{max_attempts}): {e}")
+                self.logger.warning(
+                    f"2FA verification failed (attempt {attempt + 1}/{max_attempts}): {e}"
+                )
 
             if attempt < max_attempts - 1:
-                self.logger.warning(f"Invalid password. {max_attempts - attempt - 1} attempts remaining")
+                self.logger.warning(
+                    f"Invalid password. {max_attempts - attempt - 1} attempts remaining"
+                )
                 if attempt < max_attempts - 1:
-                    print(f"Invalid password. Please try again ({max_attempts - attempt - 1} attempts remaining)")
+                    print(
+                        f"Invalid password. Please try again ({max_attempts - attempt - 1} attempts remaining)"
+                    )
 
         self.logger.error("Max 2FA attempts reached")
         return False

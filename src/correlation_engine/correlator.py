@@ -25,6 +25,7 @@ from .time_matcher import TimeMatcher
 @dataclass
 class TelegramMessage:
     """Telegram message data structure for correlation processing."""
+
     telegram_message_id: int
     telegram_chat_id: int
     sender: str
@@ -36,6 +37,7 @@ class TelegramMessage:
 @dataclass
 class CorrelationResult:
     """Result of correlation attempt with metadata."""
+
     position: Position | None
     correlation_type: str
     confidence: float
@@ -46,7 +48,7 @@ class CorrelationResult:
 class CorrelationEngine:
     """
     Main correlation engine for message-to-position linking.
-    
+
     Handles both exact reply correlation and time-based fallback matching
     with proper logging and performance monitoring.
     """
@@ -54,7 +56,7 @@ class CorrelationEngine:
     def __init__(self, db_manager: DatabaseManager, telegram_client=None):
         """
         Initialize correlation engine with database and Telegram dependencies.
-        
+
         Args:
             db_manager: Database manager for repository access
             telegram_client: Telegram client for retrieving parent messages
@@ -82,10 +84,10 @@ class CorrelationEngine:
     async def correlate_message(self, message: TelegramMessage) -> Position | None:
         """
         Main correlation interface - correlate message to position.
-        
+
         Args:
             message: Telegram message to correlate
-            
+
         Returns:
             Associated position if correlation found, None otherwise
         """
@@ -98,11 +100,11 @@ class CorrelationEngine:
             self.logger.info(
                 f"Starting correlation for message {message.telegram_message_id}",
                 extra={
-                    'correlation_id': correlation_id,
-                    'message_id': message.telegram_message_id,
-                    'chat_id': message.telegram_chat_id,
-                    'has_reply': message.reply_to_message_id is not None
-                }
+                    "correlation_id": correlation_id,
+                    "message_id": message.telegram_message_id,
+                    "chat_id": message.telegram_chat_id,
+                    "has_reply": message.reply_to_message_id is not None,
+                },
             )
 
             # Try exact reply correlation first (highest confidence)
@@ -116,12 +118,12 @@ class CorrelationEngine:
                     self.logger.info(
                         f"Reply correlation successful in {duration_ms:.1f}ms",
                         extra={
-                            'correlation_id': correlation_id,
-                            'correlation_type': result.correlation_type,
-                            'confidence': result.confidence,
-                            'position_id': result.position.id,
-                            'duration_ms': duration_ms
-                        }
+                            "correlation_id": correlation_id,
+                            "correlation_type": result.correlation_type,
+                            "confidence": result.confidence,
+                            "position_id": result.position.id,
+                            "duration_ms": duration_ms,
+                        },
                     )
                     return result.position
 
@@ -135,12 +137,12 @@ class CorrelationEngine:
                 self.logger.info(
                     f"Time-based correlation successful in {duration_ms:.1f}ms",
                     extra={
-                        'correlation_id': correlation_id,
-                        'correlation_type': result.correlation_type,
-                        'confidence': result.confidence,
-                        'position_id': result.position.id,
-                        'duration_ms': duration_ms
-                    }
+                        "correlation_id": correlation_id,
+                        "correlation_type": result.correlation_type,
+                        "confidence": result.confidence,
+                        "position_id": result.position.id,
+                        "duration_ms": duration_ms,
+                    },
                 )
                 return result.position
 
@@ -149,10 +151,10 @@ class CorrelationEngine:
             self.logger.info(
                 f"No correlation found for message {message.telegram_message_id} in {duration_ms:.1f}ms",
                 extra={
-                    'correlation_id': correlation_id,
-                    'duration_ms': duration_ms,
-                    'attempts': 'reply+time' if message.reply_to_message_id else 'time_only'
-                }
+                    "correlation_id": correlation_id,
+                    "duration_ms": duration_ms,
+                    "attempts": "reply+time" if message.reply_to_message_id else "time_only",
+                },
             )
             return None
 
@@ -164,21 +166,23 @@ class CorrelationEngine:
             self.logger.error(
                 f"Error correlating message {message.telegram_message_id}: {e}",
                 extra={
-                    'correlation_id': correlation_id,
-                    'error': str(e),
-                    'duration_ms': duration_ms
-                }
+                    "correlation_id": correlation_id,
+                    "error": str(e),
+                    "duration_ms": duration_ms,
+                },
             )
             return None
 
-    async def _try_reply_correlation(self, message: TelegramMessage, correlation_id: str) -> CorrelationResult | None:
+    async def _try_reply_correlation(
+        self, message: TelegramMessage, correlation_id: str
+    ) -> CorrelationResult | None:
         """
         Attempt exact reply correlation using reply chain traversal.
-        
+
         Args:
             message: Message with reply_to_message_id
             correlation_id: Unique correlation ID for logging
-            
+
         Returns:
             CorrelationResult if successful, None otherwise
         """
@@ -188,14 +192,12 @@ class CorrelationEngine:
         try:
             # Trace reply chain to find root message
             root_message_id = await self.reply_tracer.trace_reply_chain(
-                message.reply_to_message_id,
-                message.telegram_chat_id
+                message.reply_to_message_id, message.telegram_chat_id
             )
 
             if not root_message_id:
                 self.logger.debug(
-                    "No root message found in reply chain",
-                    extra={'correlation_id': correlation_id}
+                    "No root message found in reply chain", extra={"correlation_id": correlation_id}
                 )
                 return None
 
@@ -204,7 +206,7 @@ class CorrelationEngine:
             if not position:
                 self.logger.debug(
                     f"No position found for root message {root_message_id}",
-                    extra={'correlation_id': correlation_id}
+                    extra={"correlation_id": correlation_id},
                 )
                 return None
 
@@ -216,10 +218,10 @@ class CorrelationEngine:
                 confidence=1.0,
                 position_id=position.id,
                 extra_data={
-                    'original_reply_to': message.reply_to_message_id,
-                    'chain_length': 1 if root_message_id == message.reply_to_message_id else 2,
-                    'correlation_method': 'reply_chain'
-                }
+                    "original_reply_to": message.reply_to_message_id,
+                    "chain_length": 1 if root_message_id == message.reply_to_message_id else 2,
+                    "correlation_method": "reply_chain",
+                },
             )
 
             return CorrelationResult(
@@ -227,61 +229,55 @@ class CorrelationEngine:
                 correlation_type="REPLY",
                 confidence=1.0,
                 correlation_id=correlation_db_id,
-                metadata={
-                    'root_message_id': root_message_id,
-                    'chain_traversal': True
-                }
+                metadata={"root_message_id": root_message_id, "chain_traversal": True},
             )
 
         except Exception as e:
             self.logger.error(
-                f"Error in reply correlation: {e}",
-                extra={'correlation_id': correlation_id}
+                f"Error in reply correlation: {e}", extra={"correlation_id": correlation_id}
             )
             return None
 
-    async def _try_time_based_correlation(self, message: TelegramMessage, correlation_id: str) -> CorrelationResult | None:
+    async def _try_time_based_correlation(
+        self, message: TelegramMessage, correlation_id: str
+    ) -> CorrelationResult | None:
         """
         Attempt time-based correlation for orphaned messages.
-        
+
         Args:
             message: Message to correlate
             correlation_id: Unique correlation ID for logging
-            
+
         Returns:
             CorrelationResult if successful, None otherwise
         """
         try:
             # Use time matcher to find candidate positions
-            candidates = await self.time_matcher.find_matches(
-                message=message,
-                window_minutes=5
-            )
+            candidates = await self.time_matcher.find_matches(message=message, window_minutes=5)
 
             if not candidates:
                 self.logger.debug(
-                    "No time-based candidates found",
-                    extra={'correlation_id': correlation_id}
+                    "No time-based candidates found", extra={"correlation_id": correlation_id}
                 )
                 return None
 
             ranked_candidates = sorted(
                 candidates,
-                key=lambda candidate: candidate['confidence'],
+                key=lambda candidate: candidate["confidence"],
                 reverse=True,
             )
             if (
                 len(ranked_candidates) > 1
-                and ranked_candidates[0]['confidence'] - ranked_candidates[1]['confidence'] < 0.1
+                and ranked_candidates[0]["confidence"] - ranked_candidates[1]["confidence"] < 0.1
             ):
                 self.logger.warning(
                     "Time-based correlation is ambiguous; refusing to select a position",
                     extra={
-                        'correlation_id': correlation_id,
-                        'top_position_id': ranked_candidates[0]['position'].id,
-                        'second_position_id': ranked_candidates[1]['position'].id,
-                        'confidence_gap': (
-                            ranked_candidates[0]['confidence'] - ranked_candidates[1]['confidence']
+                        "correlation_id": correlation_id,
+                        "top_position_id": ranked_candidates[0]["position"].id,
+                        "second_position_id": ranked_candidates[1]["position"].id,
+                        "confidence_gap": (
+                            ranked_candidates[0]["confidence"] - ranked_candidates[1]["confidence"]
                         ),
                     },
                 )
@@ -290,21 +286,21 @@ class CorrelationEngine:
             # Select best candidate (highest confidence)
             best_candidate = ranked_candidates[0]
 
-            if best_candidate['confidence'] < 0.75:
+            if best_candidate["confidence"] < 0.75:
                 self.logger.debug(
                     f"Best candidate confidence {best_candidate['confidence']:.2f} below threshold",
-                    extra={'correlation_id': correlation_id}
+                    extra={"correlation_id": correlation_id},
                 )
                 return None
 
-            position = best_candidate['position']
-            signal = best_candidate.get('signal') or getattr(position, 'signal', None)
+            position = best_candidate["position"]
+            signal = best_candidate.get("signal") or getattr(position, "signal", None)
             if signal is None:
                 signal = await self.signal_repo.get_by_id(position.signal_id)
             if signal is None:
                 self.logger.warning(
                     "Matched position has no associated signal",
-                    extra={'correlation_id': correlation_id, 'position_id': position.id},
+                    extra={"correlation_id": correlation_id, "position_id": position.id},
                 )
                 return None
             position.signal = signal
@@ -314,42 +310,38 @@ class CorrelationEngine:
                 parent_id=signal.telegram_message_id,
                 child_id=message.telegram_message_id,
                 correlation_type=CorrelationType.FOLLOWUP,
-                confidence=best_candidate['confidence'],
+                confidence=best_candidate["confidence"],
                 position_id=position.id,
                 extra_data={
-                    'time_window_minutes': 5,
-                    'candidates_count': len(candidates),
-                    'correlation_method': 'time_based',
-                    'time_proximity_score': best_candidate.get('time_score', 0.0),
-                    'text_similarity_score': best_candidate.get('text_score', 0.0)
-                }
+                    "time_window_minutes": 5,
+                    "candidates_count": len(candidates),
+                    "correlation_method": "time_based",
+                    "time_proximity_score": best_candidate.get("time_score", 0.0),
+                    "text_similarity_score": best_candidate.get("text_score", 0.0),
+                },
             )
 
             return CorrelationResult(
                 position=position,
                 correlation_type="TIME_BASED",
-                confidence=best_candidate['confidence'],
+                confidence=best_candidate["confidence"],
                 correlation_id=correlation_db_id,
-                metadata={
-                    'candidates_evaluated': len(candidates),
-                    'time_based': True
-                }
+                metadata={"candidates_evaluated": len(candidates), "time_based": True},
             )
 
         except Exception as e:
             self.logger.error(
-                f"Error in time-based correlation: {e}",
-                extra={'correlation_id': correlation_id}
+                f"Error in time-based correlation: {e}", extra={"correlation_id": correlation_id}
             )
             return None
 
     async def get_position_by_message_id(self, telegram_message_id: int) -> Position | None:
         """
         Get position associated with Telegram message ID.
-        
+
         Args:
             telegram_message_id: Telegram message ID to look up
-            
+
         Returns:
             Position if found, None otherwise
         """
@@ -372,15 +364,17 @@ class CorrelationEngine:
             self.logger.error(f"Error getting position by message ID {telegram_message_id}: {e}")
             return None
 
-    async def find_recent_positions_in_window(self, symbol: str, start_time: datetime, end_time: datetime) -> list[Position]:
+    async def find_recent_positions_in_window(
+        self, symbol: str, start_time: datetime, end_time: datetime
+    ) -> list[Position]:
         """
         Find recent positions within time window for time-based matching.
-        
+
         Args:
             symbol: Trading symbol to filter by
             start_time: Window start time
             end_time: Window end time
-            
+
         Returns:
             List of positions in time window
         """
@@ -393,9 +387,9 @@ class CorrelationEngine:
 
             # Filter by symbol and time window
             filtered_signals = [
-                signal for signal in recent_signals
-                if signal.symbol == symbol
-                and start_time <= signal.timestamp <= end_time
+                signal
+                for signal in recent_signals
+                if signal.symbol == symbol and start_time <= signal.timestamp <= end_time
             ]
 
             # Get positions for filtered signals
@@ -413,10 +407,10 @@ class CorrelationEngine:
     async def get_signal_by_message_id(self, telegram_message_id: int) -> Signal | None:
         """
         Get signal by Telegram message ID.
-        
+
         Args:
             telegram_message_id: Telegram message ID
-            
+
         Returns:
             Signal if found, None otherwise
         """
@@ -430,13 +424,14 @@ class CorrelationEngine:
         """Get correlation statistics for monitoring."""
         success_rate = (
             self._successful_correlations / self._correlation_attempts
-            if self._correlation_attempts > 0 else 0.0
+            if self._correlation_attempts > 0
+            else 0.0
         )
 
         return {
-            'total_attempts': self._correlation_attempts,
-            'successful_correlations': self._successful_correlations,
-            'reply_correlations': self._reply_correlations,
-            'time_based_correlations': self._time_based_correlations,
-            'success_rate': round(success_rate, 3)
+            "total_attempts": self._correlation_attempts,
+            "successful_correlations": self._successful_correlations,
+            "reply_correlations": self._reply_correlations,
+            "time_based_correlations": self._time_based_correlations,
+            "success_rate": round(success_rate, 3),
         }

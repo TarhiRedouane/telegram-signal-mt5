@@ -14,6 +14,7 @@ from src.utils.circuit_breaker import circuit_breaker
 
 class HealthStatus(Enum):
     """Health status levels for system components."""
+
     HEALTHY = "healthy"
     DEGRADED = "degraded"
     UNHEALTHY = "unhealthy"
@@ -28,7 +29,7 @@ class ComponentHealth:
         status: HealthStatus = HealthStatus.UNHEALTHY,
         message: str = "",
         last_check: datetime | None = None,
-        details: dict[str, Any] | None = None
+        details: dict[str, Any] | None = None,
     ):
         self.name = name
         self.status = status
@@ -43,7 +44,7 @@ class ComponentHealth:
             "status": self.status.value,
             "message": self.message,
             "last_check": self.last_check.isoformat(),
-            "details": self.details
+            "details": self.details,
         }
 
 
@@ -56,7 +57,7 @@ class HealthMonitor:
     def __init__(self, check_interval: int = 60):
         """
         Initialize health monitor.
-        
+
         Args:
             check_interval: Health check interval in seconds (default 60)
         """
@@ -70,7 +71,7 @@ class HealthMonitor:
         self.telegram_client = None
         self.mt5_connection = None  # For future stories
         self._mt5_trade_allowed: bool | None = None  # last AutoTrading state, to log only changes
-        self.openai_client = None   # For future stories
+        self.openai_client = None  # For future stories
 
         self.logger.info(f"Health monitor initialized with {check_interval}s interval")
 
@@ -154,9 +155,7 @@ class HealthMonitor:
             await self._check_telegram_health()
         else:
             self._update_component_health(
-                "telegram",
-                HealthStatus.UNHEALTHY,
-                "Telegram client not configured"
+                "telegram", HealthStatus.UNHEALTHY, "Telegram client not configured"
             )
 
         # Check MT5 connection (future implementation)
@@ -166,7 +165,7 @@ class HealthMonitor:
             self._update_component_health(
                 "mt5",
                 HealthStatus.DEGRADED,  # DEGRADED since MT5 is not required for MVP
-                "MT5 connection not configured"
+                "MT5 connection not configured",
             )
 
         # Check OpenAI client (future implementation)
@@ -176,7 +175,7 @@ class HealthMonitor:
             self._update_component_health(
                 "openai",
                 HealthStatus.DEGRADED,  # DEGRADED since OpenAI is not critical
-                "OpenAI client not configured"
+                "OpenAI client not configured",
             )
 
         # Log overall system health status
@@ -202,31 +201,25 @@ class HealthMonitor:
                         "connected_groups": status.get("connected_groups_count", 0),
                         "connection_failures": status.get("connection_failures", 0),
                         "last_client_health_check": status.get("last_health_check"),
-                        "auto_reconnect_enabled": status.get("auto_reconnect_enabled", False)
-                    }
+                        "auto_reconnect_enabled": status.get("auto_reconnect_enabled", False),
+                    },
                 )
             elif is_connected and not is_authorized:
                 self._update_component_health(
-                    "telegram",
-                    HealthStatus.DEGRADED,
-                    "Connected but not authorized"
+                    "telegram", HealthStatus.DEGRADED, "Connected but not authorized"
                 )
                 # Log ERROR level alert as required by AC 5
                 self.logger.error("Telegram connection degraded: user not authorized")
             else:
                 self._update_component_health(
-                    "telegram",
-                    HealthStatus.UNHEALTHY,
-                    "Not connected to Telegram"
+                    "telegram", HealthStatus.UNHEALTHY, "Not connected to Telegram"
                 )
                 # Log ERROR level alert as required by AC 5
                 self.logger.error("Telegram connection failed: not connected")
 
         except Exception as e:
             self._update_component_health(
-                "telegram",
-                HealthStatus.UNHEALTHY,
-                f"Health check failed: {e}"
+                "telegram", HealthStatus.UNHEALTHY, f"Health check failed: {e}"
             )
             # Log ERROR level alert as required by AC 5
             self.logger.error(f"Telegram health check exception: {e}")
@@ -265,7 +258,7 @@ class HealthMonitor:
                         "pool_size": status["pool_size"],
                         "active_connections": status["active_connections"],
                         "healthy_connections": status["healthy_connections"],
-                    }
+                    },
                 )
             elif status["active_connections"] > 0:
                 self._update_component_health(
@@ -276,22 +269,18 @@ class HealthMonitor:
                         "pool_size": status["pool_size"],
                         "active_connections": status["active_connections"],
                         "healthy_connections": status["healthy_connections"],
-                    }
+                    },
                 )
                 self.logger.error("MT5 connection degraded: connected but ping failed")
             else:
                 self._update_component_health(
-                    "mt5",
-                    HealthStatus.UNHEALTHY,
-                    "Not connected to MT5 terminal"
+                    "mt5", HealthStatus.UNHEALTHY, "Not connected to MT5 terminal"
                 )
                 self.logger.error("MT5 connection failed: not connected")
 
         except Exception as e:
             self._update_component_health(
-                "mt5",
-                HealthStatus.UNHEALTHY,
-                f"Health check failed: {e}"
+                "mt5", HealthStatus.UNHEALTHY, f"Health check failed: {e}"
             )
             self.logger.error(f"MT5 health check exception: {e}")
 
@@ -304,14 +293,10 @@ class HealthMonitor:
                 "openai",
                 HealthStatus.HEALTHY,
                 "API reachable",
-                details={"model": self.openai_client.model}
+                details={"model": self.openai_client.model},
             )
         except Exception as e:
-            self._update_component_health(
-                "openai",
-                HealthStatus.DEGRADED,
-                f"API unreachable: {e}"
-            )
+            self._update_component_health("openai", HealthStatus.DEGRADED, f"API unreachable: {e}")
             self.logger.error(f"OpenAI health check failed: {e}")
 
     def _update_component_health(
@@ -319,7 +304,7 @@ class HealthMonitor:
         component: str,
         status: HealthStatus,
         message: str,
-        details: dict[str, Any] | None = None
+        details: dict[str, Any] | None = None,
     ) -> None:
         """Update health status for a component."""
         self._component_healths[component] = ComponentHealth(
@@ -327,7 +312,7 @@ class HealthMonitor:
             status=status,
             message=message,
             last_check=datetime.now(UTC),
-            details=details or {}
+            details=details or {},
         )
 
         # Log health status changes
@@ -343,12 +328,15 @@ class HealthMonitor:
         if not self._component_healths:
             return
 
-        healthy_count = sum(1 for h in self._component_healths.values()
-                          if h.status == HealthStatus.HEALTHY)
-        degraded_count = sum(1 for h in self._component_healths.values()
-                           if h.status == HealthStatus.DEGRADED)
-        unhealthy_count = sum(1 for h in self._component_healths.values()
-                            if h.status == HealthStatus.UNHEALTHY)
+        healthy_count = sum(
+            1 for h in self._component_healths.values() if h.status == HealthStatus.HEALTHY
+        )
+        degraded_count = sum(
+            1 for h in self._component_healths.values() if h.status == HealthStatus.DEGRADED
+        )
+        unhealthy_count = sum(
+            1 for h in self._component_healths.values() if h.status == HealthStatus.UNHEALTHY
+        )
 
         total_count = len(self._component_healths)
 

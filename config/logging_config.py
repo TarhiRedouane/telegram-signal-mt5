@@ -16,9 +16,11 @@ from typing import Any, Dict, Optional
 
 
 # Context variables for tracking correlation IDs and user context
-correlation_id_var: ContextVar[Optional[str]] = ContextVar('correlation_id', default=None)
-user_context_var: ContextVar[Optional[Dict[str, Any]]] = ContextVar('user_context', default=None)
-service_context_var: ContextVar[Optional[Dict[str, Any]]] = ContextVar('service_context', default=None)
+correlation_id_var: ContextVar[Optional[str]] = ContextVar("correlation_id", default=None)
+user_context_var: ContextVar[Optional[Dict[str, Any]]] = ContextVar("user_context", default=None)
+service_context_var: ContextVar[Optional[Dict[str, Any]]] = ContextVar(
+    "service_context", default=None
+)
 
 
 class StructuredFormatter(logging.Formatter):
@@ -26,7 +28,7 @@ class StructuredFormatter(logging.Formatter):
     JSON structured logging formatter with correlation IDs and context.
     Follows the logging requirements from architecture specs.
     """
-    
+
     def format(self, record: logging.LogRecord) -> str:
         """Format log record as structured JSON."""
         # Build base log entry
@@ -36,15 +38,15 @@ class StructuredFormatter(logging.Formatter):
             "component": record.name,
             "message": record.getMessage(),
         }
-        
+
         # Add context information
         context = {}
-        
+
         # Add correlation ID if available
         correlation_id = correlation_id_var.get()
         if correlation_id:
             context["correlation_id"] = correlation_id
-            
+
         # Add service context (component, method, line number)
         service_context = service_context_var.get()
         if service_context:
@@ -54,58 +56,64 @@ class StructuredFormatter(logging.Formatter):
             context["service_context"] = {
                 "module": record.module,
                 "function": record.funcName,
-                "line": record.lineno
+                "line": record.lineno,
             }
-        
+
         # Add user context with hashed sensitive data
         user_context = user_context_var.get()
         if user_context:
             # Hash sensitive information like usernames
             sanitized_user_context = {}
             for key, value in user_context.items():
-                if key in ['username', 'user_id', 'telegram_id']:
+                if key in ["username", "user_id", "telegram_id"]:
                     # Hash sensitive identifiers
                     if value:
-                        sanitized_user_context[f"{key}_hash"] = self._hash_sensitive_data(str(value))
+                        sanitized_user_context[f"{key}_hash"] = self._hash_sensitive_data(
+                            str(value)
+                        )
                 else:
                     sanitized_user_context[key] = value
             context["user_context"] = sanitized_user_context
-        
+
         # Add context to log entry if not empty
         if context:
             log_entry["context"] = context
-            
+
         # Add exception information if present
         if record.exc_info:
             log_entry["exception"] = self.formatException(record.exc_info)
-            
+
         # Add extra fields from LoggerAdapter or manual addition
-        if hasattr(record, 'extra_fields'):
+        if hasattr(record, "extra_fields"):
             log_entry.update(record.extra_fields)
-        
+
         return json.dumps(log_entry, default=str)
-    
+
     def _hash_sensitive_data(self, data: str) -> str:
         """Hash sensitive data using SHA256."""
-        return hashlib.sha256(data.encode('utf-8')).hexdigest()[:16]  # First 16 chars for readability
+        return hashlib.sha256(data.encode("utf-8")).hexdigest()[
+            :16
+        ]  # First 16 chars for readability
 
 
 class ContextualLoggerAdapter(logging.LoggerAdapter):
     """
     Logger adapter that adds contextual information to log records.
     """
-    
+
     def process(self, msg: Any, kwargs: Dict[str, Any]) -> tuple[Any, Dict[str, Any]]:
         """Process log message and add contextual information."""
         # Add extra fields if provided
-        if 'extra_fields' in kwargs:
-            extra = kwargs.setdefault('extra', {})
-            extra['extra_fields'] = kwargs.pop('extra_fields')
-            
+        if "extra_fields" in kwargs:
+            extra = kwargs.setdefault("extra", {})
+            extra["extra_fields"] = kwargs.pop("extra_fields")
+
         return msg, kwargs
 
 
-def setup_logging(log_level: str = "INFO", log_dir: str = "logs", structured: bool = True) -> dict[str, Any]:
+def setup_logging(
+    log_level: str = "INFO", log_dir: str = "logs", structured: bool = True
+) -> dict[str, Any]:
     """
     Setup application logging with rotating file handlers and structured JSON logging.
 
@@ -228,10 +236,10 @@ def get_trade_logger() -> logging.Logger:
 def get_contextual_logger(name: str) -> ContextualLoggerAdapter:
     """
     Get a contextual logger adapter that supports extra fields.
-    
+
     Args:
         name: Logger name (typically __name__)
-    
+
     Returns:
         ContextualLoggerAdapter instance
     """
@@ -241,19 +249,20 @@ def get_contextual_logger(name: str) -> ContextualLoggerAdapter:
 
 # Correlation ID and context management functions
 
+
 def set_correlation_id(correlation_id: Optional[str] = None) -> str:
     """
     Set correlation ID for current context.
-    
+
     Args:
         correlation_id: Correlation ID to set (generates new UUID if None)
-    
+
     Returns:
         The correlation ID that was set
     """
     if correlation_id is None:
         correlation_id = str(uuid.uuid4())
-    
+
     correlation_id_var.set(correlation_id)
     return correlation_id
 
@@ -271,7 +280,7 @@ def clear_correlation_id() -> None:
 def set_user_context(user_context: Dict[str, Any]) -> None:
     """
     Set user context for current logging context.
-    
+
     Args:
         user_context: User context information (will be sanitized automatically)
     """
@@ -291,19 +300,16 @@ def clear_user_context() -> None:
 def set_service_context(component: str, method: str, line: Optional[int] = None) -> None:
     """
     Set service context for current logging context.
-    
+
     Args:
         component: Component or module name
         method: Method or function name
         line: Line number (optional)
     """
-    context = {
-        "component": component,
-        "method": method
-    }
+    context = {"component": component, "method": method}
     if line:
         context["line"] = line
-        
+
     service_context_var.set(context)
 
 

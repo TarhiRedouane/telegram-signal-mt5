@@ -89,9 +89,8 @@ class SymbolPolicy:
             )
 
         # Phase 1 keeps current GOLD range behavior for parity.
-        if (
-            canonical_symbol in {"GOLD", "XAUUSD"}
-            and (entry_price < settings.gold_price_min or entry_price > settings.gold_price_max)
+        if canonical_symbol in {"GOLD", "XAUUSD"} and (
+            entry_price < settings.gold_price_min or entry_price > settings.gold_price_max
         ):
             return (
                 f"GOLD price {entry_price} outside valid range "
