@@ -56,6 +56,10 @@ Done when: entry is delayed during a wide spread and fires once it normalises (u
 - [ ] Store setups, zone watches, ladder legs, `planned_legs`, `be_done` in the database (repository pattern).
 - [ ] Reload at startup, restart watcher tasks, re-check open legs against MT5.
 - [ ] Drop entries whose positions no longer exist in MT5.
+- [ ] Time-based correlation for late messages: `time_matcher` loads candidate signals from the last
+      few minutes before *now* (`get_recent_signals`), not before the message's own timestamp, so a
+      follow-up processed late (catch-up after restart/reconnect) never time-matches (found in 5.2 QA).
+      Anchor the window on the message timestamp. Reply-chain correlation is not affected.
 
 Done when: kill the bot mid-ladder, restart, TP1 hit → remaining legs still go to break-even.
 

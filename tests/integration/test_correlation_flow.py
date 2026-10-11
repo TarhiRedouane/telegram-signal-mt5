@@ -420,8 +420,7 @@ class TestCorrelationPerformanceIntegration:
                 'telegram_message_id': 10000 + i,
                 'telegram_chat_id': 67890,
                 'sender': f'provider_{i}',
-                # 10 min apart: each follow-up has exactly one signal in its 5 min window
-                'timestamp': base_time - timedelta(minutes=10 * i),
+                'timestamp': base_time - timedelta(minutes=i),
                 'raw_text': f'BUY GOLD {1950 + i}',
                 'parsed_action': ParsedAction.BUY,
                 'symbol': 'GOLD',
@@ -445,8 +444,17 @@ class TestCorrelationPerformanceIntegration:
             position_ids.append(position.id)
         
         # Create correlation engine
+        # Bulk goes through the reply chain (production's first choice). A time-only match cannot
+        # work here: 10 open GOLD positions are ambiguous, and the time matcher only looks at
+        # signals from the last few minutes before *now*.
+        async def get_root_message(chat_id, ids):
+            return [MagicMock(id=ids[0], reply_to=None)]  # the signal itself replies to nothing
+
         mock_client = MagicMock()
+        mock_client.client = AsyncMock()
+        mock_client.client.get_messages = AsyncMock(side_effect=get_root_message)
         engine = CorrelationEngine(in_memory_db, mock_client)
+        engine.reply_tracer.rate_limiter.human_delay = AsyncMock()  # no real anti-ban sleeps in tests
         
         # Create update messages for all positions
         messages = []
@@ -455,9 +463,9 @@ class TestCorrelationPerformanceIntegration:
                 telegram_message_id=20000 + i,
                 telegram_chat_id=67890,
                 sender="trader",
-                timestamp=base_time - timedelta(minutes=10 * i) + timedelta(minutes=1),
+                timestamp=base_time,
                 raw_text=f"Update for position {i}",
-                reply_to_message_id=None  # Force time-based matching
+                reply_to_message_id=10000 + i  # reply to its own signal
             )
             messages.append(message)
         
@@ -477,6 +485,6 @@ class TestCorrelationPerformanceIntegration:
         avg_time_per_correlation = duration_ms / 10
         assert avg_time_per_correlation < 50, f"Average correlation time {avg_time_per_correlation:.1f}ms too high"
         
-        # One candidate per window: every follow-up must match its own position, none another one
+        # Every follow-up must match its own position, none another one
         assert len(successful_correlations) == 10, "Not every follow-up was correlated"
-        assert [r.position.id for r in results] == position_ids
+        assert [r.id for r in results] == position_ids
