@@ -85,7 +85,7 @@ pytest tests/unit/test_correlator.py::test_name  # single test
 pytest --cov=src                        # coverage report
 
 # Lint/format/type-check (run all three before commit)
-black src/ tests/
+black .
 ruff check src/ tests/
 mypy src/
 ```
