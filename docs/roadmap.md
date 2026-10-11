@@ -82,7 +82,8 @@ Done when: every event above produces one readable DM on the demo account.
       returns True at once, so OpenAI is called anyway (found in 5.1 QA). Await the queued slot or
       drop the queue. Low urgency: LLM is the fallback path only.
 - [ ] One formatting-only commit: `black src/ tests/` (most files were never formatted, so
-      `black --check` fails). Do it before step 19 so refactor diffs stay readable.
+      `black --check` fails). Do it before step 19 so refactor diffs stay readable. Story 5.3
+      (91 files incl. `main.py`, `cli.py`, `config/`, `scripts/`: run `black .`, not only `src/ tests/`).
 
 Done when: full unit suite green and fast.
 
