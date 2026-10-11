@@ -70,6 +70,8 @@ Done when: every event above produces one readable DM on the demo account.
 - [x] Find and fix the hanging test(s) so `pytest tests/unit` finishes in < 2 min.
 - [x] Fix or remove the failing tests (there were 146 + 10 errors once `pytest.ini` was really applied).
 - [x] Stop the noisy `'NoneType' object has no attribute 'upper'` error when the LLM returns no action.
+- [ ] Integration suite green, no hang (25 failed + 1 hang today), and a coverage baseline for
+      `main.py` (story 5.2). Needed before the step 19 refactor stories.
 - [ ] Optional: GitHub Actions running `pytest tests/unit`, `ruff`, `mypy src/`.
 - [ ] LLM rate limiter really waits: `APIRateLimiter.acquire()` queues the request at the limit but
       returns True at once, so OpenAI is called anyway (found in 5.1 QA). Await the queued slot or
