@@ -67,6 +67,9 @@ from src.utils.currency_config import currency_config
 from decimal import Decimal
 from telethon.utils import get_peer_id
 
+TRADE_RETCODE_NO_CHANGES = 10025  # MetaTrader5.TRADE_RETCODE_NO_CHANGES ("No changes in request")
+BE_RETRY_ERROR_AFTER = 10  # consecutive MT5 failures on one ticket before an ERROR log (once)
+
 
 class ApplicationManager:
     """
@@ -567,7 +570,11 @@ class ApplicationManager:
             new_sl=float(new_sl) if new_sl is not None else None,
             new_tp=float(new_tp) if new_tp is not None else None,
         )
-        if not update_result.success:
+        # NO_CHANGES: MT5 already holds these levels, so they are in force
+        if (
+            not update_result.success
+            and getattr(update_result, "retcode", None) != TRADE_RETCODE_NO_CHANGES
+        ):
             self.logger.warning(
                 f"Failed to apply levels to ticket {position.mt5_ticket}: "
                 f"{update_result.error_message}"
@@ -843,7 +850,7 @@ class ApplicationManager:
         linked = watch.linked_setup
         if linked is not None and existing is linked:
             watch.fills += 1
-            if linked.be_done:
+            if linked.be_done or linked.be_pending:
                 self.logger.info(
                     f"Zone {zone.low}-{zone.high} confirmed but TP1 already hit: no more legs"
                 )
@@ -907,13 +914,17 @@ class ApplicationManager:
             sl = setup.sl if "sl" in changed else None
             if (
                 sl is not None
-                and setup.be_done
+                and (setup.be_done or setup.be_pending)
                 and not setup.locks_profit(sl, Decimal(str(position.open_price)))
             ):
                 sl = None  # after break-even only a profit-locking SL may replace it
             tp = setup.leg_tp(index) if "tp" in changed else None
-            if sl is not None or tp is not None:
-                await self._apply_position_levels(position, sl, tp)
+            if sl is None and tp is None:
+                continue
+            applied = await self._apply_position_levels(position, sl, tp)
+            if applied and sl is not None:
+                # After TP1 this SL locks profit (checked above): a pending break-even retry would loosen it
+                setup.retry_counts.pop(("be", position.mt5_ticket), None)
 
     def _disarm_or_drop(self, setup: PendingSetup, reason: str) -> None:
         """Stop trying to open the current entry; keep the setup if it already owns positions."""
@@ -1043,10 +1054,11 @@ class ApplicationManager:
                         return
                     # A candle-close invalidation is only enforced while the setup is watched
                     watch_close = setup.close_invalidation is not None
-                    if (
-                        setup.be_done
-                        or all_closed
-                        or (len(setup.positions) <= 1 and not watch_close)
+                    # A break-even or invalidation close still being retried keeps the watcher alive
+                    retrying = setup.be_pending or setup.close_pending
+                    if all_closed or (
+                        not retrying
+                        and (setup.be_done or (len(setup.positions) <= 1 and not watch_close))
                     ):
                         self._setup_aggregator.drop(setup, "idle timeout after fill")
                         return
@@ -1071,34 +1083,56 @@ class ApplicationManager:
         if self.mt5_connection_manager is None or self.position_manager is None:
             return False
         level, timeframe = setup.close_invalidation
-        rates = await self.mt5_connection_manager.get_closed_rates(setup.symbol, timeframe, 3)
-        if not rates:
+        if setup.close_pending:  # breach already known: retry only the legs whose close failed
+            targets = [p for p in setup.positions if ("close", p.mt5_ticket) in setup.retry_counts]
+        else:
+            rates = await self.mt5_connection_manager.get_closed_rates(setup.symbol, timeframe, 3)
+            if not rates:
+                return False
+            # Baseline: only candles closing after the fill count
+            if setup.close_check_time is None:
+                setup.close_check_time = rates[-1][0]
+                return False
+            broken = None
+            for candle_time, _open, _high, _low, close, _volume in rates:
+                if candle_time > setup.close_check_time:
+                    setup.close_check_time = candle_time
+                    if setup.closed_beyond_invalidation(close):
+                        broken = close
+            if broken is None:
+                return False
+            self.logger.warning(
+                f"Invalidation chat={setup.chat_id}: M{timeframe} closed at {broken} beyond {level}, closing legs"
+            )
+            setup.close_pending = True
+            setup.armed = setup.fire_now = False
+            targets = list(setup.positions)
+
+        for position in targets:
+            ticket = position.mt5_ticket
+            result = await self.position_manager.close_position_full(ticket)
+            if result.success or await self._leg_closed(ticket):
+                setup.retry_counts.pop(("close", ticket), None)
+                continue
+            self.logger.warning(
+                f"Close of ticket {ticket} failed: {result.error_message}; retrying next poll"
+            )
+            self._record_retry_failure(setup, "close", ticket, "still not closed")
+        if any(kind == "close" for kind, _ in setup.retry_counts):
             return False
-        if setup.close_check_time is None:  # baseline: only candles closing after the fill count
-            setup.close_check_time = rates[-1][0]
-            return False
-        broken = None
-        for candle_time, _open, _high, _low, close, _volume in rates:
-            if candle_time > setup.close_check_time:
-                setup.close_check_time = candle_time
-                if setup.closed_beyond_invalidation(close):
-                    broken = close
-        if broken is None:
-            return False
-        self.logger.warning(
-            f"Invalidation chat={setup.chat_id}: M{timeframe} closed at {broken} beyond {level}, closing legs"
-        )
-        for position in setup.positions:
-            result = await self.position_manager.close_position_full(position.mt5_ticket)
-            if not result.success:
-                self.logger.info(
-                    f"Close of ticket {position.mt5_ticket} skipped: {result.error_message}"
-                )
         self._setup_aggregator.drop(setup, f"M{timeframe} close beyond invalidation {level}")
         zone = self._setup_aggregator.get_zone(setup.chat_id)
         if zone is not None and zone.linked_setup is setup:
             self._setup_aggregator.drop_zone(zone, "scenario invalidated")
         return True
+
+    async def _leg_closed(self, ticket: int) -> bool:
+        """True when MT5 history shows the position closed (e.g. its SL hit before our close)."""
+        try:
+            return await self.position_manager.get_close_reason(ticket) is not None
+        except Exception as exc:
+            self.logger.warning(f"Close-reason check failed for ticket {ticket}: {exc}")
+            return False
 
     async def _maybe_fire_setup(self, setup: PendingSetup, price: Decimal) -> None:
         """Open every leg that is due at `price` (single entry -> all legs in the same tick)."""
@@ -1189,18 +1223,50 @@ class ApplicationManager:
                 reasons.append(None)
         if all(reason is not None for reason in reasons):
             return True
-        if not setup.be_done and reasons[0] == "tp":
-            setup.be_done = True
+        open_legs = [p for p, reason in zip(setup.positions, reasons) if reason is None]
+        if not setup.be_done and not setup.be_pending and reasons[0] == "tp":
+            # be_done only once MT5 accepted every SL move; until then retry each poll
+            setup.be_pending = True
             setup.armed = setup.fire_now = False
+            targets, triggered = open_legs, True
+        elif setup.be_pending:
             for position, reason in zip(setup.positions, reasons):
-                if reason is None:
-                    await self._apply_position_levels(
-                        position, Decimal(str(position.open_price)), None
-                    )
-            self.logger.info(
-                f"TP1 hit chat={setup.chat_id}: open legs moved to break-even, unfilled legs cancelled"
-            )
+                if reason is not None:  # closed meanwhile (e.g. its SL): nothing left to move
+                    setup.retry_counts.pop(("be", position.mt5_ticket), None)
+            targets = [p for p in open_legs if ("be", p.mt5_ticket) in setup.retry_counts]
+            triggered = False
+        else:
+            return False
+
+        for position in targets:
+            if await self._apply_position_levels(position, Decimal(str(position.open_price)), None):
+                setup.retry_counts.pop(("be", position.mt5_ticket), None)
+            else:
+                self._record_retry_failure(
+                    setup, "be", position.mt5_ticket, "still not at break-even"
+                )
+        pending = [ticket for kind, ticket in setup.retry_counts if kind == "be"]
+        if pending:
+            if triggered:  # per-attempt failures are logged by _apply_position_levels
+                self.logger.warning(
+                    f"TP1 hit chat={setup.chat_id}: break-even pending for tickets {pending}, "
+                    "retrying each poll; unfilled legs cancelled"
+                )
+            return False
+        setup.be_pending, setup.be_done = False, True
+        self.logger.info(
+            f"TP1 hit chat={setup.chat_id}: open legs moved to break-even, unfilled legs cancelled"
+        )
         return False
+
+    def _record_retry_failure(self, setup: PendingSetup, kind: str, ticket: int, what: str) -> None:
+        """Count a failed break-even/close attempt; one ERROR log when a ticket keeps failing."""
+        count = setup.retry_counts.get((kind, ticket), 0) + 1
+        setup.retry_counts[(kind, ticket)] = count
+        if count == BE_RETRY_ERROR_AFTER:
+            self.logger.error(
+                f"{what} after {count} attempts, ticket {ticket} chat={setup.chat_id}; still retrying"
+            )
 
     async def _risk_guard_refusal(self, signal, volume: float) -> str | None:
         """Account-wide limits before any order; None = allowed. MT5 unreadable -> refused (fail closed)."""

@@ -210,7 +210,7 @@ Bug fixes change behaviour, so they are not part of the move-only refactor. Deta
 [architecture/review-2026-10.md](architecture/review-2026-10.md) section 5. Order: money first, smallest first.
 - [x] 20.1 One "new trade" rule: a French signal (`JE VENDS GOLD 4150 …`) within 5 min of an open trade in the
       same chat is time-matched as a follow-up and never executed (F20).
-- [ ] 20.2 Break-even is marked done before it is applied; retry until every open leg's SL moved. Same for the
+- [x] 20.2 Break-even is marked done before it is applied; retry until every open leg's SL moved. Same for the
       invalidation close (F21).
 - [ ] 20.3 Chat-scoped message ids: unique `(telegram_chat_id, telegram_message_id)`, chat id on every lookup,
       Alembic migration; back up `signal_ea.db` first (F19).

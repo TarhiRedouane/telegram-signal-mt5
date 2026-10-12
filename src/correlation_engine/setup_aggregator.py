@@ -224,6 +224,10 @@ class PendingSetup:
         False  # leg 1 fired before any TP: it took half the risk, later TPs split the rest
     )
     be_done: bool = False
+    be_pending: bool = False  # TP1 hit, break-even not yet accepted by MT5 on every open leg
+    close_pending: bool = False  # invalidation hit, some leg not yet closed
+    # Consecutive MT5 failures per ("be" | "close", ticket); a key present = that leg still needs a retry
+    retry_counts: dict[tuple[str, int], int] = field(default_factory=dict)
     first_fill_at: datetime | None = None
     hold_at: int | None = (
         None  # stop opening legs at this many positions (early leg waits for its zone)
