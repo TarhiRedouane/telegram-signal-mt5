@@ -12,6 +12,7 @@ from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from typing import Any
 
+from src.correlation_engine.setup_aggregator import looks_like_new_trade
 from src.database.models import Position, Signal
 from src.database.repository import PositionRepository, SignalRepository
 
@@ -78,7 +79,9 @@ class TimeMatcher:
         self._successful_matches = 0
         self._candidate_evaluations = 0
 
-    async def find_matches(self, message: Any, window_minutes: int = None) -> list[dict[str, Any]]:
+    async def find_matches(
+        self, message: Any, window_minutes: int | None = None
+    ) -> list[dict[str, Any]]:
         """
         Find time-based correlation matches for orphaned message.
 
@@ -95,7 +98,8 @@ class TimeMatcher:
         try:
             self._match_attempts += 1
 
-            if self._looks_like_new_trade(message.raw_text):
+            # Same rule as the router: a new trade is never a follow-up of an open position
+            if looks_like_new_trade(message.raw_text):
                 self.logger.debug(
                     "Skipping time correlation for a new trade announcement",
                     extra={"message_id": message.telegram_message_id},
@@ -223,12 +227,10 @@ class TimeMatcher:
                 filtered_signals.append(signal)
 
             # Get positions for filtered signals
-            candidate_positions = []
+            candidate_positions: list[Position] = []
             for signal in filtered_signals:
                 positions = await self.position_repo.get_positions_by_signal(signal.id)
-                for position in positions:
-                    if position.is_open:
-                        candidate_positions.append(position)
+                candidate_positions.extend(p for p in positions if p.is_open)
 
             self.logger.debug(
                 f"Found {len(candidate_positions)} candidate positions from "
@@ -451,13 +453,6 @@ class TimeMatcher:
                     detected.add("GBPUSD")
 
         return detected
-
-    def _looks_like_new_trade(self, text: str) -> bool:
-        """Keep explicit BUY/SELL entries out of the contextual update matcher."""
-        has_action = re.search(r"\b(?:buy|sell|achat|vente|long|short)\b", text, re.IGNORECASE)
-        has_symbol = re.search(r"\b(?:gold|or|xau|xauusd)\b", text, re.IGNORECASE)
-        has_price = re.search(r"\b\d{3,5}(?:[.,]\d+)?\b", text)
-        return bool(has_action and has_symbol and has_price)
 
     def get_matcher_stats(self) -> dict[str, Any]:
         """Get time matcher statistics for monitoring."""

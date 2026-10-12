@@ -208,7 +208,7 @@ demo run identical to before (same log decisions on a replayed message set).
 ### 20. Live-path fixes (found by the 19.1 review, before the refactor)
 Bug fixes change behaviour, so they are not part of the move-only refactor. Details and evidence:
 [architecture/review-2026-10.md](architecture/review-2026-10.md) section 5. Order: money first, smallest first.
-- [ ] 20.1 One "new trade" rule: a French signal (`JE VENDS GOLD 4150 …`) within 5 min of an open trade in the
+- [x] 20.1 One "new trade" rule: a French signal (`JE VENDS GOLD 4150 …`) within 5 min of an open trade in the
       same chat is time-matched as a follow-up and never executed (F20).
 - [ ] 20.2 Break-even is marked done before it is applied; retry until every open leg's SL moved. Same for the
       invalidation close (F21).
