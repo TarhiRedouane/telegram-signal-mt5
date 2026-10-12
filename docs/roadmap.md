@@ -25,8 +25,8 @@ Known gaps:
   them yet. `main.py` coverage is 48 % (see step 19).
 - Edits to already-executed signals are ignored (logged only).
 
-Order of work: **1 (done) → 5 (test suite health) → 19 (architecture review/simplify) → 4 → 3 → 6 →
-8 → 9**, then **18** (channels per broker) → **16** (control page), the rest in any order.
+Order of work: **1 (done) → 5 (done) → 19 review (done, story 19.1) → 20 (live-path fixes) → 19
+refactor (stories 19.2-19.9) → 4 → 3 → 6 → 8 → 9**, then **18** (channels per broker) → **16** (control page), the rest in any order.
 Each step ships on its own.
 
 ---
@@ -101,6 +101,8 @@ Done when: every closed demo trade has a complete journal row.
 ### 7. Performance by source
 - [ ] Report (script or command) of win rate, average R, total R, max drawdown by chat,
       message type, session (Asia / London / New York) and weekday.
+- [ ] Sessions via stdlib `zoneinfo`: add `tzdata` to requirements (Windows has no system tz database;
+      today `tzdata` only comes through `pendulum`, which story 19.3 removes).
 
 Done when: one command prints the table for a date range.
 
@@ -189,17 +191,36 @@ Coverage baseline (story 5.2, 2026-10-09, `pytest --cov=main --cov=src`): `main.
   `_shutdown_monitoring_components`, `_cancel_component_tasks`, `_shutdown_logging`,
   `signal_shutdown`, `signal_handler`, `main`.
 Cover the trading paths (at least the ones a refactor story moves) before moving them.
-- [ ] Review (architect / tech lead): current structure, responsibilities per file, dead code,
+- [x] Review (architect / tech lead): current structure, responsibilities per file, dead code,
       duplicated logic, unused dependencies (APScheduler, pendulum, aiohttp, aiofiles), modules that
       exist but are bypassed (`close_processor`, `alert_manager`, `queue_manager`, `models`).
-- [ ] Target structure, e.g. split `main.py` into: app wiring/lifecycle, message router,
+      Story 19.1: [architecture/review-2026-10.md](architecture/review-2026-10.md).
+- [x] Target structure, e.g. split `main.py` into: app wiring/lifecycle, message router,
       setup/zone orchestration (ladder, legs, invalidation), order execution (sizing + risk guard + MT5).
+      Plan: `src/app/` (router, zones, setups, execution) + `telegram_client/poller.py`, stories 19.2-19.9.
 - [ ] Refactor in small stories, behaviour unchanged: move code, no new features; each story keeps
       the full unit suite green (needs step 5 first: suite must finish and be green).
 - [ ] Delete dead code and unused dependencies found by the review.
 
 Done when: no file over ~600 lines without a reason, `main.py` only wires components, all tests green,
 demo run identical to before (same log decisions on a replayed message set).
+
+### 20. Live-path fixes (found by the 19.1 review, before the refactor)
+Bug fixes change behaviour, so they are not part of the move-only refactor. Details and evidence:
+[architecture/review-2026-10.md](architecture/review-2026-10.md) section 5. Order: money first, smallest first.
+- [ ] 20.1 One "new trade" rule: a French signal (`JE VENDS GOLD 4150 …`) within 5 min of an open trade in the
+      same chat is time-matched as a follow-up and never executed (F20).
+- [ ] 20.2 Break-even is marked done before it is applied; retry until every open leg's SL moved. Same for the
+      invalidation close (F21).
+- [ ] 20.3 Chat-scoped message ids: unique `(telegram_chat_id, telegram_message_id)`, chat id on every lookup,
+      Alembic migration; back up `signal_ea.db` first (F19).
+- [ ] 20.4 Store the real fill price as `open_price`, not the quote/mid (F22).
+- [ ] 20.5 MT5 startup retry (no 60 s hang on every call) and cache the resolved broker symbol name (F23, F28).
+- [ ] 20.6 `cli.py stop` checks the PID's command line before killing (F27).
+Later steps: F25 (positions never marked closed) → step 6, F26 (one leg updated) → step 13, F29 (filling mode,
+magic) → step 17/18, F24 (no per-chat ordering) → story 19.8.
+
+Done when: each fix has a test that failed before the fix; full suite green.
 
 ### 18. Telegram channels per broker
 Each broker instance listens only to the channels configured for it, e.g. VT → A, B, C;
