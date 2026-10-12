@@ -167,7 +167,7 @@ class DatabaseBenchmark:
         tasks = []
         for i in range(count):
             message_id = 10000 + (i % len(signals))
-            tasks.append(signal_repo.find_by_message_id(message_id))
+            tasks.append(signal_repo.find_by_message_id(message_id, chat_id=-100123456789))
 
         await asyncio.gather(*tasks)
 

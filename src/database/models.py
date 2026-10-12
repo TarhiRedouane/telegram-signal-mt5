@@ -122,9 +122,8 @@ class Signal(Base):
     __tablename__ = "signals"
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
-    telegram_message_id: Mapped[int] = mapped_column(
-        Integer, unique=True, nullable=False, index=True
-    )
+    # Message ids are per chat: unique together with telegram_chat_id (uq_signals_chat_message)
+    telegram_message_id: Mapped[int] = mapped_column(Integer, nullable=False, index=True)
     telegram_chat_id: Mapped[int] = mapped_column(Integer, nullable=False, index=True)
     sender: Mapped[str] = mapped_column(String(100), nullable=False)
     timestamp: Mapped[datetime] = mapped_column(DateTime, nullable=False, index=True)
@@ -155,6 +154,7 @@ class Signal(Base):
         ),
         Index("idx_signals_status_timestamp", "status", "timestamp"),
         Index("idx_signals_symbol_timestamp", "symbol", "timestamp"),
+        Index("uq_signals_chat_message", "telegram_chat_id", "telegram_message_id", unique=True),
     )
 
     def __repr__(self) -> str:

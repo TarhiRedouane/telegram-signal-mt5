@@ -20,7 +20,12 @@ from typing import (
 
 from sqlalchemy import and_, asc, delete, desc, func, or_, select, text, update
 from sqlalchemy.exc import IntegrityError, SQLAlchemyError
-from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
+from sqlalchemy.ext.asyncio import (
+    AsyncConnection,
+    AsyncSession,
+    async_sessionmaker,
+    create_async_engine,
+)
 from sqlalchemy.orm import selectinload
 
 from .models import (
@@ -100,12 +105,39 @@ class DatabaseManager:
             # Create tables if they don't exist
             async with self.engine.begin() as conn:
                 await conn.run_sync(Base.metadata.create_all)
+                await self._upgrade_signal_message_index(conn)
 
             logger.info("Database initialized successfully")
 
         except Exception as e:
             logger.error(f"Failed to initialize database: {e}")
             raise DatabaseError(f"Database initialization failed: {e}")
+
+    @staticmethod
+    async def _upgrade_signal_message_index(conn: AsyncConnection) -> None:
+        """Pre-20.3 DBs: message id was unique across chats. create_all does not touch indexes
+        of an existing table, so swap them here (index-only, idempotent, same transaction)."""
+        old = (
+            await conn.execute(
+                text(
+                    "SELECT sql FROM sqlite_master "
+                    "WHERE type='index' AND name='ix_signals_telegram_message_id'"
+                )
+            )
+        ).scalar()
+        if old is None or "UNIQUE" not in old.upper():
+            return
+        await conn.execute(text("DROP INDEX ix_signals_telegram_message_id"))
+        await conn.execute(
+            text("CREATE INDEX ix_signals_telegram_message_id ON signals (telegram_message_id)")
+        )
+        await conn.execute(
+            text(
+                "CREATE UNIQUE INDEX IF NOT EXISTS uq_signals_chat_message "
+                "ON signals (telegram_chat_id, telegram_message_id)"
+            )
+        )
+        logger.info("signals: message id unique per chat (index upgraded)")
 
     async def _apply_sqlite_optimizations(self):
         """Apply SQLite performance optimizations."""
@@ -274,7 +306,7 @@ class SignalRepository(BaseRepository[Signal]):
         """
         Persist parsed signal with validation.
 
-        Duplicate Telegram message IDs are treated as idempotent writes so repeated
+        A duplicate (chat, message) pair is treated as an idempotent write so repeated
         mirroring/re-delivery of the same message does not fail persistence.
 
         Args:
@@ -284,9 +316,10 @@ class SignalRepository(BaseRepository[Signal]):
             Signal ID
         """
         message_id = signal_data.get("telegram_message_id")
+        chat_id = signal_data.get("telegram_chat_id")
 
-        if message_id is not None:
-            existing_signal = await self.find_by_message_id(message_id)
+        if message_id is not None and chat_id is not None:
+            existing_signal = await self.find_by_message_id(message_id, chat_id=chat_id)
             if existing_signal is not None:
                 logger.info(
                     "Signal already exists for telegram message %s; returning existing signal id %s",
@@ -300,8 +333,8 @@ class SignalRepository(BaseRepository[Signal]):
             logger.info(f"Saved signal {signal.id} for message {signal.telegram_message_id}")
             return signal.id
         except RepositoryError as e:
-            if message_id is not None:
-                existing_signal = await self.find_by_message_id(message_id)
+            if message_id is not None and chat_id is not None:
+                existing_signal = await self.find_by_message_id(message_id, chat_id=chat_id)
                 if existing_signal is not None:
                     logger.info(
                         "Duplicate signal detected during create for telegram message %s; returning existing id %s",
@@ -315,11 +348,13 @@ class SignalRepository(BaseRepository[Signal]):
             logger.error(f"Failed to save signal: {e}")
             raise
 
-    async def find_by_message_id(self, message_id: int) -> Signal | None:
-        """Find signal by Telegram message ID."""
+    async def find_by_message_id(self, message_id: int, *, chat_id: int) -> Signal | None:
+        """Find signal by Telegram message ID in one chat (message ids are per chat)."""
         try:
             async with self.db_manager.get_session() as session:
-                stmt = select(Signal).where(Signal.telegram_message_id == message_id)
+                stmt = select(Signal).where(
+                    Signal.telegram_chat_id == chat_id, Signal.telegram_message_id == message_id
+                )
                 result = await session.execute(stmt)
                 return result.scalar_one_or_none()
         except SQLAlchemyError as e:

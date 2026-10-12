@@ -322,7 +322,7 @@ class ApplicationManager:
             edited
             and self._signal_repository is not None
             and await self._signal_repository.find_by_message_id(
-                int(metadata.get("telegram_message_id", 0))
+                int(metadata.get("telegram_message_id", 0)), chat_id=chat_id
             )
         ):
             # ponytail: edits of executed signals are not applied to their positions yet
@@ -746,8 +746,8 @@ class ApplicationManager:
         tps = sorted(
             {t for t in watch.targets if (t < zone.low if sell else t > zone.high)}, reverse=sell
         )
-        # ponytail: signals.telegram_message_id is unique; once the post's id is used, later orders of
-        # the same post get a synthetic negative id. Give positions their own key if replies need it.
+        # ponytail: signals are unique per (chat, message id); once the post's id is used, later orders
+        # of the same post get a synthetic negative id. Give positions their own key if replies need it.
         used = watch.fills > 0 or watch.linked_setup is not None
         setup = PendingSetup(
             chat_id=watch.chat_id,
@@ -1440,7 +1440,7 @@ class ApplicationManager:
 
         try:
             signal_record = await self._signal_repository.find_by_message_id(
-                parsed_signal.telegram_message_id
+                parsed_signal.telegram_message_id, chat_id=parsed_signal.telegram_chat_id
             )
             if signal_record is None:
                 self.logger.warning("Signal record missing before MT5 execution")

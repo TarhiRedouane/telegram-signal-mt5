@@ -273,11 +273,13 @@ class TestCorrelationEngine:
         )
 
         # Execute
-        result = await correlation_engine.get_position_by_message_id(11111)
+        result = await correlation_engine.get_position_by_message_id(11111, chat_id=-100123)
 
         # Assertions
         assert result == sample_position
-        correlation_engine.signal_repo.find_by_message_id.assert_called_once_with(11111)
+        correlation_engine.signal_repo.find_by_message_id.assert_called_once_with(
+            11111, chat_id=-100123
+        )
 
     def test_get_correlation_stats(self, correlation_engine):
         """Test correlation statistics retrieval."""

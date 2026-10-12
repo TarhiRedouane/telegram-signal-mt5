@@ -202,7 +202,9 @@ class CorrelationEngine:
                 return None
 
             # Find position associated with root message
-            position = await self.get_position_by_message_id(root_message_id)
+            position = await self.get_position_by_message_id(
+                root_message_id, chat_id=message.telegram_chat_id
+            )
             if not position:
                 self.logger.debug(
                     f"No position found for root message {root_message_id}",
@@ -335,19 +337,22 @@ class CorrelationEngine:
             )
             return None
 
-    async def get_position_by_message_id(self, telegram_message_id: int) -> Position | None:
+    async def get_position_by_message_id(
+        self, telegram_message_id: int, *, chat_id: int
+    ) -> Position | None:
         """
         Get position associated with Telegram message ID.
 
         Args:
             telegram_message_id: Telegram message ID to look up
+            chat_id: Chat the message id belongs to (message ids are per chat)
 
         Returns:
             Position if found, None otherwise
         """
         try:
             # Find signal by message ID
-            signal = await self.signal_repo.find_by_message_id(telegram_message_id)
+            signal = await self.signal_repo.find_by_message_id(telegram_message_id, chat_id=chat_id)
             if not signal:
                 return None
 
@@ -404,18 +409,21 @@ class CorrelationEngine:
             self.logger.error(f"Error finding positions in time window: {e}")
             return []
 
-    async def get_signal_by_message_id(self, telegram_message_id: int) -> Signal | None:
+    async def get_signal_by_message_id(
+        self, telegram_message_id: int, *, chat_id: int
+    ) -> Signal | None:
         """
         Get signal by Telegram message ID.
 
         Args:
             telegram_message_id: Telegram message ID
+            chat_id: Chat the message id belongs to
 
         Returns:
             Signal if found, None otherwise
         """
         try:
-            return await self.signal_repo.find_by_message_id(telegram_message_id)
+            return await self.signal_repo.find_by_message_id(telegram_message_id, chat_id=chat_id)
         except Exception as e:
             self.logger.error(f"Error getting signal by message ID {telegram_message_id}: {e}")
             return None

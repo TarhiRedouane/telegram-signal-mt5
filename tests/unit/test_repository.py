@@ -214,13 +214,13 @@ class TestSignalRepository:
         """Test find_by_message_id method."""
         await signal_repo.create(**sample_signal_data)
 
-        signal = await signal_repo.find_by_message_id(12345)
+        signal = await signal_repo.find_by_message_id(12345, chat_id=-100123456789)
         assert signal is not None
         assert signal.telegram_message_id == 12345
         assert signal.symbol == "GOLD"
 
         # Test non-existent message ID
-        signal = await signal_repo.find_by_message_id(99999)
+        signal = await signal_repo.find_by_message_id(99999, chat_id=-100123456789)
         assert signal is None
 
     async def test_save_signal_duplicate_message_is_idempotent(

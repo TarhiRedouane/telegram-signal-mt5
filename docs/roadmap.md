@@ -212,7 +212,7 @@ Bug fixes change behaviour, so they are not part of the move-only refactor. Deta
       same chat is time-matched as a follow-up and never executed (F20).
 - [x] 20.2 Break-even is marked done before it is applied; retry until every open leg's SL moved. Same for the
       invalidation close (F21).
-- [ ] 20.3 Chat-scoped message ids: unique `(telegram_chat_id, telegram_message_id)`, chat id on every lookup,
+- [x] 20.3 Chat-scoped message ids: unique `(telegram_chat_id, telegram_message_id)`, chat id on every lookup,
       Alembic migration; back up `signal_ea.db` first (F19).
 - [ ] 20.4 Store the real fill price as `open_price`, not the quote/mid (F22).
 - [ ] 20.5 MT5 startup retry (no 60 s hang on every call) and cache the resolved broker symbol name (F23, F28).

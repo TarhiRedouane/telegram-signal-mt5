@@ -154,6 +154,7 @@ async def test_application_skips_mt5_when_signal_was_already_claimed():
     application.logger = MagicMock()
     signal = SimpleNamespace(
         telegram_message_id=40,
+        telegram_chat_id=-100,
         parsed_action=ParsedAction.SELL,
         symbol="GOLD",
     )
