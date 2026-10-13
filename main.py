@@ -1489,13 +1489,27 @@ class ApplicationManager:
                 )
                 return None
 
+            # Break-even and profit-lock checks use open_price: store the fill, not the quote
+            fill_price = getattr(order_result, "fill_price", None)
+            if fill_price is None:
+                open_price = float(parsed_signal.entry_price)
+                self.logger.warning(
+                    f"Ticket {order_result.ticket}: fill price unknown, storing signal price {open_price}"
+                )
+            else:
+                open_price = fill_price
+                self.logger.info(
+                    f"Ticket {order_result.ticket} filled at {fill_price} "
+                    f"(aimed {float(parsed_signal.entry_price)})"
+                )
+
             position = None
             if self._position_repository is not None:
                 position = await self._position_repository.create(
                     signal_id=signal_record.id,
                     mt5_ticket=order_result.ticket,
                     open_time=datetime.now(UTC),
-                    open_price=float(parsed_signal.entry_price),
+                    open_price=open_price,
                     volume=volume,
                     current_sl=(
                         float(parsed_signal.stop_loss)

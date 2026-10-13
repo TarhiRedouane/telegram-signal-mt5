@@ -61,6 +61,8 @@ async def test_open_market_order_submits_mt5_buy_request():
 
     assert result.success is True
     assert result.ticket == 123456
+    # No `price` on the result and MagicMock positions: never stored as a fill (story 20.4)
+    assert result.fill_price is None
     fake_mt5.order_send.assert_called_once()
     request = fake_mt5.order_send.call_args[0][0]
     assert request["action"] == fake_mt5.TRADE_ACTION_DEAL
@@ -68,6 +70,127 @@ async def test_open_market_order_submits_mt5_buy_request():
     assert request["type"] == fake_mt5.ORDER_TYPE_SELL
     assert request["price"] == 4100.0
     assert request["volume"] == 0.1
+
+
+def _fill_test_manager(order_result, positions=None):
+    """PositionManager + fake MT5 where order_send returns `order_result` (story 20.4)."""
+    connection = MagicMock()
+    connection.connected = True
+    connection_manager = MagicMock()
+    connection_manager._build_price_lookup_candidates.return_value = ["GOLD"]
+    connection_manager._resolve_broker_symbol_name.return_value = "Gold"
+    open_ctx = AsyncMock()
+    open_ctx.__aenter__.return_value = connection
+    open_ctx.__aexit__.return_value = False
+    connection_manager.get_connection.return_value = open_ctx
+
+    fake_mt5 = MagicMock()
+    fake_mt5.TRADE_RETCODE_DONE = 100
+    fake_mt5.TRADE_RETCODE_DONE_PARTIAL = 10
+    fake_mt5.symbol_info_tick.return_value = SimpleNamespace(bid=4100.0, ask=4101.0)
+    fake_mt5.order_send.return_value = order_result
+    if isinstance(positions, Exception):
+        fake_mt5.positions_get.side_effect = positions
+    else:
+        fake_mt5.positions_get.return_value = positions
+    signal = SimpleNamespace(
+        parsed_action=ParsedAction.BUY,
+        symbol="GOLD",
+        entry_price=4100.0,
+        stop_loss=4088.0,
+        take_profit=4125.0,
+    )
+    return PositionManager(connection_manager=connection_manager), fake_mt5, signal
+
+
+@pytest.mark.asyncio
+async def test_open_market_order_returns_the_deal_price_as_fill():
+    manager, fake_mt5, signal = _fill_test_manager(
+        SimpleNamespace(retcode=100, order=555, price=4101.3)
+    )
+    with patch("src.mt5_executor.position_manager.mt5", fake_mt5):
+        result = await manager.open_market_order(signal, volume=0.1)
+
+    assert result.success is True
+    assert result.fill_price == 4101.3
+    fake_mt5.positions_get.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_open_market_order_reads_position_open_price_when_deal_price_is_zero():
+    manager, fake_mt5, signal = _fill_test_manager(
+        SimpleNamespace(retcode=100, order=555, price=0.0),
+        positions=[SimpleNamespace(ticket=555, price_open=4101.8)],
+    )
+    with patch("src.mt5_executor.position_manager.mt5", fake_mt5):
+        result = await manager.open_market_order(signal, volume=0.1)
+
+    assert result.success is True
+    assert result.fill_price == 4101.8
+    fake_mt5.positions_get.assert_called_once_with(ticket=555)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("positions", [None, [], RuntimeError("terminal busy")])
+async def test_open_market_order_stays_filled_when_fill_price_is_unknown(positions):
+    manager, fake_mt5, signal = _fill_test_manager(
+        SimpleNamespace(retcode=100, order=555, price=0.0), positions=positions
+    )
+    with patch("src.mt5_executor.position_manager.mt5", fake_mt5):
+        result = await manager.open_market_order(signal, volume=0.1)
+
+    assert result.success is True
+    assert result.ticket == 555
+    assert result.fill_price is None
+
+
+def _execution_app(order_result):
+    application = ApplicationManager.__new__(ApplicationManager)
+    application.mt5_connection_manager = MagicMock()
+    application._signal_repository = AsyncMock()
+    application._signal_repository.find_by_message_id.return_value = SimpleNamespace(
+        id=3, status="PENDING"
+    )
+    application._signal_repository.claim_signal_for_execution.return_value = True
+    application._risk_guard_refusal = AsyncMock(return_value=None)
+    application.position_manager = AsyncMock()
+    application.position_manager.open_market_order.return_value = order_result
+    application._position_repository = AsyncMock()
+    application.logger = MagicMock()
+    signal = SimpleNamespace(
+        telegram_message_id=40,
+        telegram_chat_id=-100,
+        parsed_action=ParsedAction.BUY,
+        symbol="GOLD",
+        entry_price=4100.0,
+        stop_loss=4088.0,
+        take_profit=4125.0,
+    )
+    return application, signal
+
+
+@pytest.mark.asyncio
+async def test_execution_stores_the_fill_price_as_open_price():
+    application, signal = _execution_app(
+        SimpleNamespace(success=True, ticket=555, fill_price=4101.3)
+    )
+
+    await application._execute_signal_on_mt5(signal, volume=0.1)
+
+    kwargs = application._position_repository.create.await_args.kwargs
+    assert kwargs["open_price"] == 4101.3
+    application.logger.warning.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_execution_falls_back_to_the_signal_price_with_a_warning():
+    application, signal = _execution_app(SimpleNamespace(success=True, ticket=555, fill_price=None))
+
+    await application._execute_signal_on_mt5(signal, volume=0.1)
+
+    kwargs = application._position_repository.create.await_args.kwargs
+    assert kwargs["open_price"] == 4100.0
+    assert "fill price unknown" in application.logger.warning.call_args.args[0]
 
 
 @pytest.mark.asyncio

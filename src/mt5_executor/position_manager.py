@@ -43,6 +43,7 @@ class MT5Result:
     error_message: str | None = None
     retcode: int | None = None
     execution_time_ms: float | None = None
+    fill_price: float | None = None
 
 
 class PositionManager:
@@ -439,6 +440,7 @@ class PositionManager:
                     operation="open_market_order",
                     retcode=result.retcode,
                     execution_time_ms=0.0,
+                    fill_price=self._fill_price(result, ticket),
                 )
 
         except asyncio.CancelledError:
@@ -452,6 +454,26 @@ class PositionManager:
                 operation="open_market_order",
                 error_message=f"Exception: {e!s}",
             )
+
+    def _fill_price(self, result: Any, ticket: int | None) -> float | None:
+        """Price MT5 filled at: the deal price, else the position's open price (some brokers
+        return 0.0 in the result). None when neither is a positive number."""
+
+        def positive(value: Any) -> float | None:
+            # Mocks and missing attributes are not prices
+            if isinstance(value, int | float) and not isinstance(value, bool) and value > 0:
+                return float(value)
+            return None
+
+        price = positive(getattr(result, "price", None))
+        if price is not None or ticket is None:
+            return price
+        try:
+            positions = mt5.positions_get(ticket=ticket)
+            return positive(getattr(positions[0], "price_open", None)) if positions else None
+        except Exception as exc:
+            self.logger.debug(f"Fill price lookup failed for ticket {ticket}: {exc}")
+            return None
 
     @circuit_breaker(failure_threshold=3, recovery_timeout=30)
     @retry_on_failure(max_attempts=3, delay=1.0, backoff=2.0)
