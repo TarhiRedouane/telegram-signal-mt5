@@ -215,7 +215,7 @@ Bug fixes change behaviour, so they are not part of the move-only refactor. Deta
 - [x] 20.3 Chat-scoped message ids: unique `(telegram_chat_id, telegram_message_id)`, chat id on every lookup,
       Alembic migration; back up `signal_ea.db` first (F19).
 - [x] 20.4 Store the real fill price as `open_price`, not the quote/mid (F22).
-- [ ] 20.5 MT5 startup retry (no 60 s hang on every call) and cache the resolved broker symbol name (F23, F28).
+- [x] 20.5 MT5 startup retry (no 60 s hang on every call) and cache the resolved broker symbol name (F23, F28).
 - [ ] 20.6 `cli.py stop` checks the PID's command line before killing (F27).
 Later steps: F25 (positions never marked closed) → step 6, F26 (one leg updated) → step 13, F29 (filling mode,
 magic) → step 17/18, F24 (no per-chat ordering) → story 19.8.
