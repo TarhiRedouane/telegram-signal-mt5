@@ -120,10 +120,26 @@ class SignalEAManager:
             print(f"{self.name} is not running")
 
     def is_running(self) -> bool:
-        """Check if Signal EA is currently running."""
+        """Check if Signal EA is currently running: the PID file's process must run this main.py."""
         pid = self.get_pid()
         # psutil, not os.kill(pid, 0): on Windows signal 0 is CTRL_C_EVENT and would stop the bot
-        return pid is not None and psutil.pid_exists(pid)
+        if pid is None or not psutil.pid_exists(pid):
+            return False
+        # Windows reuses PIDs: after a crash the stale file can name another program (e.g. MT5).
+        # Exact match on the absolute path start() passes; no abspath(): a relative "main.py" of
+        # another process would resolve against this CLI's cwd, not that process's.
+        main_script = os.path.normcase(str(PROJECT_ROOT / "main.py"))
+        try:
+            process = psutil.Process(pid)
+            if any(os.path.normcase(arg) == main_script for arg in process.cmdline()):
+                return True
+            name = process.name()
+        except psutil.Error:
+            return False  # cannot tell: never treat it as the bot (stop would kill it)
+        self.logger.warning(
+            f"PID {pid} in {self.pid_file} is not the bot ({name}); ignoring stale PID file"
+        )
+        return False
 
     def get_pid(self) -> int | None:
         """Get the PID of the running Signal EA process."""
