@@ -7,6 +7,7 @@ import asyncio
 import hashlib
 import logging
 import os
+import time
 from contextlib import asynccontextmanager
 from datetime import UTC, datetime
 from decimal import Decimal
@@ -384,6 +385,11 @@ class MT5ConnectionManager:
         self._shutdown = False
         self._initialization_lock = asyncio.Lock()
         self._initialization_task = None
+        # Failed startup connects are retried on use, with backoff (story 20.5)
+        self._init_failures = 0
+        self._next_init_attempt = 0.0
+        # candidate -> broker symbol name; the broker's list is fixed for a session
+        self._symbol_name_cache: dict[str, str] = {}
         # MetaTrader5's python API is one real IPC session per process --
         # self._session is that single real connection. The queue below just
         # limits concurrent checkouts of it, it does not create separate
@@ -408,17 +414,23 @@ class MT5ConnectionManager:
             session = MT5Connection(self.next_connection_id)
             self.next_connection_id += 1
 
-            if await session.connect(
+            if not await session.connect(
                 self.login, self.password, self.server, self.path, self.portable, self.account_mode
             ):
-                self._session = session
-                self.connections = {session.id: session}
-                for _ in range(self.max_connections):
-                    await self.connection_queue.put(session)
-            else:
-                self.logger.warning(f"Failed to initialize connection {session.id}")
+                self._note_init_failure()
+                return
 
+            self._session = session
+            self.connections = {session.id: session}
+            for _ in range(self.max_connections):
+                await self.connection_queue.put(session)
             self._initialized = True
+            self._symbol_name_cache.clear()
+            if self._init_failures:
+                self.logger.info(
+                    f"MT5 connection established after {self._init_failures} failed attempts"
+                )
+            self._init_failures = 0
             log_mt5_operation(
                 self.logger,
                 "pool_initialized",
@@ -431,10 +443,20 @@ class MT5ConnectionManager:
 
         except Exception as e:
             self.logger.error(f"Failed to initialize MT5 connection pool: {e}")
+            self._note_init_failure()
             raise
 
+    def _note_init_failure(self) -> None:
+        """Schedule the next startup attempt: reconnect_delay, doubled per failure, max 60 s."""
+        self._init_failures += 1
+        delay = min(self.reconnect_delay * 2 ** (self._init_failures - 1), 60)
+        self._next_init_attempt = time.monotonic() + delay
+        self.logger.warning(
+            f"MT5 connection failed (attempt {self._init_failures}); next try on use after {delay}s"
+        )
+
     async def _ensure_initialized(self) -> None:
-        """Ensure connection pool is initialized (lazy initialization)."""
+        """Ensure connection pool is initialized (lazy, retried after a failed connect)."""
         if self._initialized:
             return
 
@@ -442,12 +464,18 @@ class MT5ConnectionManager:
             # Double-check after acquiring lock
             if self._initialized:
                 return
+            # Inside the backoff window (or shutting down): fail fast, no new connect
+            if self._shutdown or time.monotonic() < self._next_init_attempt:
+                return
 
             # Initialize the pool
             if self._initialization_task is None:
                 self._initialization_task = asyncio.create_task(self._initialize_pool())
 
-            await self._initialization_task
+            try:
+                await self._initialization_task
+            finally:
+                self._initialization_task = None
 
     @asynccontextmanager
     async def get_connection(self):
@@ -541,6 +569,7 @@ class MT5ConnectionManager:
                         self.account_mode,
                     )
                     if success:
+                        self._symbol_name_cache.clear()
                         self.logger.info(f"Successfully reconnected connection {connection.id}")
                         return True
 
@@ -903,7 +932,11 @@ class MT5ConnectionManager:
         return symbol_policy.get_broker_lookup_candidates(symbol)
 
     def _resolve_broker_symbol_name(self, candidate: str) -> str:
-        """Resolve candidate to the exact broker symbol name when possible."""
+        """Resolve candidate to the exact broker symbol name when possible (cached per session)."""
+        cached = self._symbol_name_cache.get(candidate)
+        if cached is not None:
+            return cached
+
         symbols_get = getattr(mt5, "symbols_get", None)
         if mt5 is None or not callable(symbols_get):
             return candidate
@@ -911,34 +944,31 @@ class MT5ConnectionManager:
         try:
             all_symbols = symbols_get()
             if not all_symbols:
+                # Terminal may not have loaded its symbols yet: do not cache
                 return candidate
-
-            # 1) Exact match first.
-            for symbol_info in all_symbols:
-                name = getattr(symbol_info, "name", None)
-                if name == candidate:
-                    return name
-
-            # 2) Case-insensitive match.
-            candidate_upper = candidate.upper()
-            for symbol_info in all_symbols:
-                name = getattr(symbol_info, "name", None)
-                if isinstance(name, str) and name.upper() == candidate_upper:
-                    return name
-
-            # 3) Normalized match (ignore '/', '.', '#').
-            def _normalize_symbol_key(value: str) -> str:
-                return value.upper().replace("/", "").replace(".", "").replace("#", "")
-
-            candidate_key = _normalize_symbol_key(candidate)
-            for symbol_info in all_symbols:
-                name = getattr(symbol_info, "name", None)
-                if isinstance(name, str) and _normalize_symbol_key(name) == candidate_key:
-                    return name
+            names = [
+                name
+                for name in (getattr(info, "name", None) for info in all_symbols)
+                if isinstance(name, str)
+            ]
         except Exception as exc:
             self.logger.debug(f"Symbol name resolution failed for '{candidate}': {exc}")
+            return candidate
 
-        return candidate
+        def _normalize_symbol_key(value: str) -> str:
+            return value.upper().replace("/", "").replace(".", "").replace("#", "")
+
+        candidate_upper = candidate.upper()
+        candidate_key = _normalize_symbol_key(candidate)
+        # 1) Exact match, 2) case-insensitive, 3) normalized (ignore '/', '.', '#'); else as is
+        resolved = (
+            next((name for name in names if name == candidate), None)
+            or next((name for name in names if name.upper() == candidate_upper), None)
+            or next((name for name in names if _normalize_symbol_key(name) == candidate_key), None)
+            or candidate
+        )
+        self._symbol_name_cache[candidate] = resolved
+        return resolved
 
     async def get_current_price(self, symbol: str) -> Decimal | None:
         """

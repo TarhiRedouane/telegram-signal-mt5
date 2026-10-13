@@ -1651,7 +1651,10 @@ class ApplicationManager:
                 self.health_monitor.set_mt5_connection(self.mt5_connection_manager)
 
             await self.mt5_connection_manager._ensure_initialized()
-            self.logger.info("MT5 runtime initialized")
+            if self.mt5_connection_manager._initialized:
+                self.logger.info("MT5 runtime initialized")
+            else:
+                self.logger.warning("MT5 not reachable yet; will retry on next MT5 call")
         except asyncio.CancelledError:
             raise
         except Exception as e:

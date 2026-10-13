@@ -4,6 +4,7 @@ Tests connection pooling, validation, error handling, and recovery.
 """
 
 import asyncio
+import time
 import pytest
 from unittest.mock import Mock, AsyncMock, patch, MagicMock
 from datetime import datetime, UTC
@@ -896,3 +897,185 @@ def mt5_error_responses():
         "network_error": (5, "Network connection failed"),
         "trading_disabled": (133, "Trading is disabled"),
     }
+
+
+class TestStartupRetryAndSymbolCache:
+    """Story 20.5: MT5 startup retry (F23) and broker symbol-name cache (F28)."""
+
+    HEALTHY = ConnectionHealth(
+        is_healthy=True,
+        connected=True,
+        last_ping=None,
+        error_message=None,
+        response_time_ms=1.0,
+    )
+
+    @pytest.fixture
+    def mt5_mock(self):
+        mock_mt5 = Mock()
+        with patch("src.mt5_executor.connection.mt5", mock_mt5):
+            yield mock_mt5
+
+    @pytest.fixture
+    def manager(self, mt5_mock):  # noqa: ARG002 - mt5 must be patched for every manager test
+        mt5_settings = MT5Settings(
+            login=12345,
+            password="test_password",
+            server="TestServer-Demo",
+            path="C:/MT5_Test/terminal64.exe",
+            timeout_seconds=60,
+            max_connections=3,
+            reconnect_delay=2,
+        )
+        with patch("src.mt5_executor.connection.settings") as mock_settings:
+            mock_settings.get_mt5_settings.return_value = mt5_settings
+            yield MT5ConnectionManager()
+
+    @staticmethod
+    def fake_connect(results: list[bool], calls: list[int]):
+        async def connect(self, *_args, **_kwargs):
+            calls.append(self.id)
+            await asyncio.sleep(0)
+            ok = results.pop(0)
+            self.connected = ok
+            return ok
+
+        return connect
+
+    @pytest.mark.asyncio
+    async def test_failed_connect_leaves_pool_uninitialized(self, manager):
+        calls: list[int] = []
+        with patch.object(MT5Connection, "connect", self.fake_connect([False], calls)):
+            await manager._ensure_initialized()
+
+        assert manager._initialized is False
+        assert manager._initialization_task is None
+        assert manager.connection_queue.qsize() == 0
+
+    @pytest.mark.asyncio
+    async def test_retry_after_window_recovers_without_restart(self, manager):
+        calls: list[int] = []
+        with (
+            patch.object(MT5Connection, "connect", self.fake_connect([False, True], calls)),
+            patch.object(MT5Connection, "ping", AsyncMock(return_value=self.HEALTHY)),
+        ):
+            await manager._ensure_initialized()
+            assert manager._initialized is False
+
+            manager._next_init_attempt = 0.0  # throttle window has passed
+            async with asyncio.timeout(2):
+                async with manager.get_connection() as conn:
+                    assert conn.connected is True
+
+        assert len(calls) == 2
+        assert manager._initialized is True
+        assert manager._init_failures == 0
+        assert manager.connection_queue.qsize() == manager.max_connections
+
+    @pytest.mark.asyncio
+    async def test_inside_window_fails_fast_without_new_attempt(self, manager):
+        calls: list[int] = []
+        with patch.object(MT5Connection, "connect", self.fake_connect([False], calls)):
+            await manager._ensure_initialized()
+            assert manager.timeout_seconds == 60
+            async with asyncio.timeout(2):  # old behaviour: waits 60 s on the empty queue
+                with pytest.raises(RuntimeError, match="initialization failed"):
+                    async with manager.get_connection():
+                        pass
+
+        assert len(calls) == 1
+
+    @pytest.mark.asyncio
+    async def test_retry_delay_doubles_and_caps(self, manager):
+        manager.reconnect_delay = 20
+        calls: list[int] = []
+        delays = []
+        with patch.object(
+            MT5Connection, "connect", self.fake_connect([False, False, False, True], calls)
+        ):
+            for _ in range(4):
+                before = time.monotonic()
+                manager._next_init_attempt = 0.0
+                await manager._ensure_initialized()
+                delays.append(manager._next_init_attempt - before)
+
+        assert delays[0] == pytest.approx(20, abs=1)
+        assert delays[1] == pytest.approx(40, abs=1)
+        assert delays[2] == pytest.approx(60, abs=1)  # capped, not 80
+        assert manager._initialized is True
+        assert manager._init_failures == 0
+
+    @pytest.mark.asyncio
+    async def test_no_connect_attempt_during_shutdown(self, manager):
+        calls: list[int] = []
+        manager._shutdown = True
+        with patch.object(MT5Connection, "connect", self.fake_connect([True], calls)):
+            await manager._ensure_initialized()
+
+        assert calls == []
+        assert manager._initialized is False
+
+    @pytest.mark.asyncio
+    async def test_concurrent_callers_share_one_attempt(self, manager):
+        calls: list[int] = []
+        with patch.object(
+            MT5Connection, "connect", self.fake_connect([False, False, False], calls)
+        ):
+            await asyncio.gather(*(manager._ensure_initialized() for _ in range(3)))
+
+        assert len(calls) == 1
+
+    @pytest.mark.asyncio
+    async def test_symbol_name_resolved_once(self, manager, mt5_mock):
+        mt5_mock.symbols_get.return_value = [SimpleNamespace(name="Gold")]
+        mt5_mock.symbol_info_tick.return_value = Mock(bid=4100.0, ask=4100.2)
+        connection = Mock(connected=True)
+
+        with patch.object(manager, "get_connection") as get_conn:
+            get_conn.return_value.__aenter__ = AsyncMock(return_value=connection)
+            get_conn.return_value.__aexit__ = AsyncMock(return_value=None)
+            await manager.get_current_price("GOLD")
+            await manager.get_current_price("GOLD")
+
+        assert mt5_mock.symbols_get.call_count == 1
+        mt5_mock.symbol_info_tick.assert_called_with("Gold")
+
+    @pytest.mark.asyncio
+    async def test_unmatched_candidate_is_cached_as_itself(self, manager, mt5_mock):
+        mt5_mock.symbols_get.return_value = [SimpleNamespace(name="EURUSD")]
+
+        assert manager._resolve_broker_symbol_name("XAUUSD") == "XAUUSD"
+        assert manager._resolve_broker_symbol_name("XAUUSD") == "XAUUSD"
+        assert mt5_mock.symbols_get.call_count == 1
+
+    @pytest.mark.parametrize("listing", [[], None, RuntimeError("terminal busy")])
+    def test_failed_symbol_listing_is_not_cached(self, manager, mt5_mock, listing):
+        if isinstance(listing, Exception):
+            mt5_mock.symbols_get.side_effect = listing
+        else:
+            mt5_mock.symbols_get.return_value = listing
+
+        assert manager._resolve_broker_symbol_name("GOLD") == "GOLD"
+        assert manager._resolve_broker_symbol_name("GOLD") == "GOLD"
+        assert mt5_mock.symbols_get.call_count == 2
+
+    @pytest.mark.asyncio
+    async def test_reconnect_clears_symbol_cache(self, manager, mt5_mock):
+        mt5_mock.symbols_get.return_value = [SimpleNamespace(name="Gold")]
+        manager._resolve_broker_symbol_name("GOLD")
+        unhealthy = ConnectionHealth(
+            is_healthy=False,
+            connected=False,
+            last_ping=None,
+            error_message="down",
+            response_time_ms=None,
+        )
+        connection = Mock(id=1)
+        connection.ping = AsyncMock(return_value=unhealthy)
+        connection.disconnect = AsyncMock()
+        connection.connect = AsyncMock(return_value=True)
+
+        assert await manager._reconnect_connection(connection) is True
+
+        manager._resolve_broker_symbol_name("GOLD")
+        assert mt5_mock.symbols_get.call_count == 2
