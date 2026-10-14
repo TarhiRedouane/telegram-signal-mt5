@@ -21,8 +21,8 @@ Known gaps:
   legs without break-even management.
 - Nothing records trade results (profit, R, close reason), so we can't tell which signals work.
 - `AlertManager` exists but is never called: the bot acts silently.
-- Unit + integration suites green and fast since stories 5.1/5.2 (693 passed, ~1 min); no CI runs
-  them yet. `main.py` coverage is 48 % (see step 19).
+- Unit + integration suites green and fast since stories 5.1/5.2 (745 passed on 2026-10-13, ~1.5 min); no CI runs
+  them yet. `main.py` coverage is 51 % (see step 19).
 - Edits to already-executed signals are ignored (logged only).
 
 Order of work: **1 (done) → 5 (done) → 19 review (done, story 19.1) → 20 (live-path fixes) → 19
@@ -217,8 +217,14 @@ Bug fixes change behaviour, so they are not part of the move-only refactor. Deta
 - [x] 20.4 Store the real fill price as `open_price`, not the quote/mid (F22).
 - [x] 20.5 MT5 startup retry (no 60 s hang on every call) and cache the resolved broker symbol name (F23, F28).
 - [x] 20.6 `cli.py stop` checks the PID's command line before killing (F27).
+Found by the review re-run on 2026-10-13 (review section 6), also before 19.2:
+- [ ] 20.7 Size and risk-check complete single-message signals on the live price, not the post's entry; tighter
+      live-price deviation rule in `symbol_policy` (`GOLD_MAX_PRICE_DEVIATION` is 100 points) (F35).
+- [ ] 20.8 Telegram polling fallback survives errors (per-iteration catch, flood-wait back-off) (F36).
+- [ ] 20.9 A filled order always yields a tracked position, even when the DB write fails (F37).
 Later steps: F25 (positions never marked closed) → step 6, F26 (one leg updated) → step 13, F29 (filling mode,
-magic) → step 17/18, F24 (no per-chat ordering) → story 19.8.
+magic) → step 17/18, F24 (no per-chat ordering) → story 19.8, F41 (partial fill volume) → step 6,
+F40 (author's profit-lock SL ignored) → step 11/13.
 
 Done when: each fix has a test that failed before the fix; full suite green.
 
