@@ -83,6 +83,10 @@ class ApplicationManager:
     Manages all system components and handles shutdown procedures.
     """
 
+    # Signals filled in this run: proof of fill when the EXECUTED write failed (story 20.11).
+    # Immutable class default, reassigned per fill, so app objects built without __init__ work too.
+    _filled_signal_ids: frozenset[int] = frozenset()
+
     def __init__(self):
         self.logger = get_logger(__name__)
         self.shutdown_event = asyncio.Event()
@@ -1618,11 +1622,18 @@ class ApplicationManager:
 
             claimed = await self._signal_repository.claim_signal_for_execution(signal_record.id)
             status = getattr(signal_record.status, "value", signal_record.status)
-            extra_leg = not claimed and allow_reuse and status == SignalStatus.EXECUTED.value
+            extra_leg = (
+                not claimed
+                and allow_reuse
+                and (
+                    status == SignalStatus.EXECUTED.value
+                    or await self._signal_already_filled(signal_record.id, status)
+                )
+            )
             if not claimed and not extra_leg:
                 self.logger.info(
                     f"MT5 execution skipped for signal {signal_record.id}: "
-                    "already claimed or processed"
+                    f"already claimed or processed (status={status})"
                 )
                 return None
 
@@ -1658,6 +1669,7 @@ class ApplicationManager:
                     f"MT5 order rejected for {parsed_signal.symbol}: {order_result.error_message}"
                 )
                 return None
+            self._filled_signal_ids = self._filled_signal_ids | {signal_record.id}
 
             # Break-even and profit-lock checks use open_price: store the fill, not the quote
             fill_price = getattr(order_result, "fill_price", None)
@@ -1704,14 +1716,17 @@ class ApplicationManager:
 
             if not extra_leg:
                 try:
-                    await self._signal_repository.update_signal_status(
+                    marked = await self._signal_repository.update_signal_status(
                         signal_id=signal_record.id,
                         status=SignalStatus.EXECUTED,
                     )
+                    failure = "row not found" if marked is False else None
                 except Exception as exc:
+                    failure = str(exc)
+                if failure is not None:
                     self.logger.error(
                         f"Ticket {order_result.ticket} filled but signal {signal_record.id} "
-                        f"was not marked EXECUTED ({exc})"
+                        f"was not marked EXECUTED ({failure})"
                     )
 
             self.logger.info(
@@ -1721,6 +1736,30 @@ class ApplicationManager:
         except Exception as exc:
             self.logger.error(f"Failed to execute signal on MT5: {exc}", exc_info=True)
             return None
+
+    async def _signal_already_filled(self, signal_id: int, status: str) -> bool:
+        """Proof of fill for an extra leg of a signal not marked EXECUTED (story 20.11): filled by
+        this run, else a position for it in the DB (survives a restart). No proof -> no order."""
+        if signal_id in self._filled_signal_ids:
+            source = "filled by this run"
+        else:
+            get_positions = getattr(self._position_repository, "get_positions_by_signal", None)
+            if get_positions is None:
+                return False
+            try:
+                if not await get_positions(signal_id):
+                    return False
+            except Exception as exc:
+                self.logger.warning(
+                    f"Signal {signal_id}: position lookup failed ({exc}); next leg not opened"
+                )
+                return False
+            source = "position in DB"
+        self.logger.warning(
+            f"Signal {signal_id} not marked EXECUTED in the DB (status={status}) but already "
+            f"filled ({source}): opening the next leg"
+        )
+        return True
 
     async def _poll_telegram_groups(self) -> None:
         """Fallback polling loop to ingest channel messages when push events are not received.

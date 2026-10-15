@@ -228,7 +228,7 @@ Found in the live log on 2026-10-15:
 - [x] 20.10 "sell gold now" waits for the entry price (next message, e.g. "4146"), then fires only when the market is
       within the entry tolerance or better, up to the default SL distance; no entry within 5 min = no trade.
 Found by the 20.9 QA review on 2026-10-15 (low; fails safe):
-- [ ] 20.11 A failed `EXECUTED` status write after a fill leaves the signal `VALIDATED`, so the setup's next ladder leg
+- [x] 20.11 A failed `EXECUTED` status write after a fill leaves the signal `VALIDATED`, so the setup's next ladder leg
       is refused as "already claimed" and the setup is disarmed with the misleading log "order not filled". Allow the
       extra leg for a signal this setup already filled, or log the real reason (story 20.9, QA Results).
 Later steps: F25 (positions never marked closed) → step 6, F26 (one leg updated) → step 13, F29 (filling mode,
