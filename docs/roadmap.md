@@ -231,6 +231,16 @@ Found by the 20.9 QA review on 2026-10-15 (low; fails safe):
 - [x] 20.11 A failed `EXECUTED` status write after a fill leaves the signal `VALIDATED`, so the setup's next ladder leg
       is refused as "already claimed" and the setup is disarmed with the misleading log "order not filled". Allow the
       extra leg for a signal this setup already filled, or log the real reason (story 20.9, QA Results).
+Found by the review re-run on 2026-10-15 (review section 7), before 19.2:
+- [ ] 20.12 Setup legs never fire closer to the SL than the policy minimum (`GOLD_MIN_SL_DISTANCE`): a multi-TP complete
+      signal, an in-zone leg or a "sell gold now" leg filled near its SL is sized on that tiny distance (2 × 7.5 lots
+      on $10k for a 0.2 stop). Keep waiting instead of firing (F43).
+- [ ] 20.13 The price-less opener only matches the short form ("sell gold now", "je vends gold maintenant"), so result
+      posts and commentary ("Gold sell setup closed in profit") no longer start a setup, re-open a filled one, or
+      replace an opposite-side setup and drop its open legs' break-even tracking (F44).
+- [ ] 20.14 Opposite "buy/sell gold now" while a trade is open (user rule, replaces D5 for setups with open legs): under
+      300 pips from the open entry → refused, open trade untouched; 300 pips or more → one counter-trade at half risk,
+      default TP 100 pips, open trade keeps break-even and invalidation. Hedging accounts only.
 Later steps: F25 (positions never marked closed) → step 6, F26 (one leg updated) → step 13, F29 (filling mode,
 magic) → step 17/18, F24 (no per-chat ordering) → story 19.8, F41 (partial fill volume) → step 6,
 F40 (author's profit-lock SL ignored) → step 11/13.

@@ -1245,6 +1245,8 @@ class ApplicationManager:
         if k is None:
             setup.armed = setup.fire_now = False
             return False
+        if self._too_close_to_sl(setup, price):
+            return False
         index = len(setup.positions)
         if k > 0 and setup.blind and not setup.tps:
             return False  # extra legs wait for the author's targets
@@ -1322,6 +1324,27 @@ class ApplicationManager:
         late_tp = leg_tp if leg_tp is not None and leg_tp != signal.take_profit else None
         if late_sl is not None or late_tp is not None:
             await self._apply_position_levels(position, late_sl, late_tp)
+        return True
+
+    def _too_close_to_sl(self, setup: PendingSetup, price: Decimal) -> bool:
+        """A leg filled next to its SL would be sized on a tiny distance (F43): wait while the
+        market is on the safe side but under the policy minimum from the received SL, lowered to
+        the author's own distance from the nearest entry edge. At or beyond the SL: not handled."""
+        minimum = symbol_policy.get_min_sl_distance(setup.symbol)
+        if minimum is None or setup.sl is None:
+            return False
+        sell = setup.action == ParsedAction.SELL
+        gap = setup.sl - price if sell else price - setup.sl
+        edges = [abs(edge - setup.sl) for edge in (setup.low, setup.high) if edge is not None]
+        minimum = min([minimum, *edges])
+        if not 0 < gap < minimum:
+            return False
+        if not setup.sl_wait_logged:
+            setup.sl_wait_logged = True
+            self.logger.info(
+                f"Setup leg waiting chat={setup.chat_id} {setup.action.value} price {price} is "
+                f"{gap} from SL {setup.sl} (minimum {minimum})"
+            )
         return True
 
     async def _track_setup_legs(self, setup: PendingSetup) -> bool:

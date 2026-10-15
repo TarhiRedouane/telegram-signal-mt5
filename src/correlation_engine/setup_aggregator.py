@@ -278,6 +278,7 @@ class PendingSetup:
         None  # (level, timeframe min): exit on candle close
     )
     close_check_time: int | None = None  # last candle time checked for close invalidation
+    sl_wait_logged: bool = False  # "leg waiting, too close to the SL" already logged
 
     def set_sl(self, level: Decimal, close_tf: int | None, far: Decimal | None = None) -> bool:
         """Hard SL at `level`, or for a candle-close invalidation a protective SL beyond it.
