@@ -223,7 +223,7 @@ Found by the review re-run on 2026-10-13 (review section 6), also before 19.2:
 - [ ] Decide (user): tighter live-price deviation rule in `symbol_policy` (`GOLD_MAX_PRICE_DEVIATION` is 100 points);
       left out of 20.7, it changes which signals are traded.
 - [ ] 20.8 Telegram polling fallback survives errors (per-iteration catch, flood-wait back-off) (F36).
-- [ ] 20.9 A filled order always yields a tracked position, even when the DB write fails (F37).
+- [x] 20.9 A filled order always yields a tracked position, even when the DB write fails (F37).
 Later steps: F25 (positions never marked closed) → step 6, F26 (one leg updated) → step 13, F29 (filling mode,
 magic) → step 17/18, F24 (no per-chat ordering) → story 19.8, F41 (partial fill volume) → step 6,
 F40 (author's profit-lock SL ignored) → step 11/13.

@@ -35,7 +35,7 @@ from src.database import (
     get_signal_repository,
     initialize_database,
 )
-from src.database.models import PositionStatus, SignalStatus
+from src.database.models import Position, PositionStatus, SignalStatus
 from src.correlation_engine.correlator import (
     CorrelationEngine,
     TelegramMessage as CorrelationMessage,
@@ -592,8 +592,17 @@ class ApplicationManager:
             position_update["current_sl"] = float(new_sl)
         if new_tp is not None:
             position_update["current_tp"] = float(new_tp)
-        if self._position_repository is not None:
-            await self._position_repository.update_position_mt5_data(position.id, position_update)
+        # MT5 holds the levels now: a failed DB write is logged, not a failed modify
+        if self._position_repository is not None and position.id is not None:
+            try:
+                await self._position_repository.update_position_mt5_data(
+                    position.id, position_update
+                )
+            except Exception as exc:
+                self.logger.error(
+                    f"Ticket {position.mt5_ticket} levels SL={new_sl}, TP={new_tp} applied in MT5 "
+                    f"but not saved ({exc})"
+                )
         self.logger.info(
             f"Applied levels to ticket {position.mt5_ticket}: SL={new_sl}, TP={new_tp}"
         )
@@ -1567,33 +1576,46 @@ class ApplicationManager:
                     f"(aimed {float(parsed_signal.entry_price)})"
                 )
 
-            position = None
-            if self._position_repository is not None:
-                position = await self._position_repository.create(
-                    signal_id=signal_record.id,
-                    mt5_ticket=order_result.ticket,
-                    open_time=datetime.now(UTC),
-                    open_price=open_price,
-                    volume=volume,
-                    current_sl=(
-                        float(parsed_signal.stop_loss)
-                        if parsed_signal.stop_loss is not None
-                        else None
-                    ),
-                    current_tp=(
-                        float(parsed_signal.take_profit)
-                        if parsed_signal.take_profit is not None
-                        else None
-                    ),
-                    status=PositionStatus.OPEN,
-                    last_sync=datetime.now(UTC),
+            position_fields = {
+                "signal_id": signal_record.id,
+                "mt5_ticket": order_result.ticket,
+                "open_time": datetime.now(UTC),
+                "open_price": open_price,
+                "volume": volume,
+                "current_sl": (
+                    float(parsed_signal.stop_loss) if parsed_signal.stop_loss is not None else None
+                ),
+                "current_tp": (
+                    float(parsed_signal.take_profit)
+                    if parsed_signal.take_profit is not None
+                    else None
+                ),
+                "status": PositionStatus.OPEN,
+                "last_sync": datetime.now(UTC),
+            }
+            # The order is live in MT5 from here: a DB failure must not turn it into "not filled"
+            try:
+                if self._position_repository is None:
+                    raise RuntimeError("position repository unavailable")
+                position = await self._position_repository.create(**position_fields)
+            except Exception as exc:
+                position = Position(**position_fields)
+                self.logger.error(
+                    f"Ticket {order_result.ticket} filled but its position was not saved ({exc}); "
+                    "tracking it in memory, DB row missing"
                 )
 
             if not extra_leg:
-                await self._signal_repository.update_signal_status(
-                    signal_id=signal_record.id,
-                    status=SignalStatus.EXECUTED,
-                )
+                try:
+                    await self._signal_repository.update_signal_status(
+                        signal_id=signal_record.id,
+                        status=SignalStatus.EXECUTED,
+                    )
+                except Exception as exc:
+                    self.logger.error(
+                        f"Ticket {order_result.ticket} filled but signal {signal_record.id} "
+                        f"was not marked EXECUTED ({exc})"
+                    )
 
             self.logger.info(
                 f"MT5 execution successful: {signal_record.id} -> ticket {order_result.ticket} volume={volume}"
