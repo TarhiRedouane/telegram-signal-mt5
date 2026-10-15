@@ -218,8 +218,10 @@ Bug fixes change behaviour, so they are not part of the move-only refactor. Deta
 - [x] 20.5 MT5 startup retry (no 60 s hang on every call) and cache the resolved broker symbol name (F23, F28).
 - [x] 20.6 `cli.py stop` checks the PID's command line before killing (F27).
 Found by the review re-run on 2026-10-13 (review section 6), also before 19.2:
-- [ ] 20.7 Size and risk-check complete single-message signals on the live price, not the post's entry; tighter
-      live-price deviation rule in `symbol_policy` (`GOLD_MAX_PRICE_DEVIATION` is 100 points) (F35).
+- [x] 20.7 Size and risk-check complete single-message signals on the live price, not the post's entry; SL never under
+      20 pips from the market (`GOLD_MIN_SL_DISTANCE=2.0`) unless the post's own stop is tighter (F35).
+- [ ] Decide (user): tighter live-price deviation rule in `symbol_policy` (`GOLD_MAX_PRICE_DEVIATION` is 100 points);
+      left out of 20.7, it changes which signals are traded.
 - [ ] 20.8 Telegram polling fallback survives errors (per-iteration catch, flood-wait back-off) (F36).
 - [ ] 20.9 A filled order always yields a tracked position, even when the DB write fails (F37).
 Later steps: F25 (positions never marked closed) → step 6, F26 (one leg updated) → step 13, F29 (filling mode,

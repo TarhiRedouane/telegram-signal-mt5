@@ -64,6 +64,7 @@ from src.signal_parser.patterns import close_timeframe, is_candle_close_remark, 
 from src.risk_manager import risk_guard
 from src.risk_manager.position_sizer import leg_volume
 from src.utils.currency_config import currency_config
+from src.utils.formatters import normalize_price
 from decimal import Decimal
 from telethon.utils import get_peer_id
 
@@ -417,8 +418,13 @@ class ApplicationManager:
                     or close_timeframe(parsed_signal.raw_text) is not None
                 ):
                     self._start_setup(parsed_signal)
-                else:
+                elif await self._use_live_price_for_sizing(parsed_signal):
                     await self._handle_parsed_signal(parsed_signal)
+                else:
+                    self.logger.info(
+                        f"Signal rejected - no usable live price for sizing chat={metadata.get('telegram_chat_id')} "
+                        f"message_id={metadata.get('telegram_message_id')}"
+                    )
             else:
                 self.logger.info(
                     f"Signal rejected - live price check failed for chat={metadata.get('telegram_chat_id')} "
@@ -1359,6 +1365,64 @@ class ApplicationManager:
             )
             return False
 
+        return True
+
+    async def _use_live_price_for_sizing(self, parsed_signal) -> bool:
+        """Complete single-message signal: size and risk-check on the live price, as setup legs do.
+
+        The order fills at market, so the post's entry would understate the SL distance when the
+        market is away from it (F35). Only the complete-signal branch calls this: a setup keeps
+        the author's entry as its zone. A stop closer to the market than the policy minimum (gold:
+        20 pips) is moved out to it, unless the post's own stop is tighter. False = no order (price
+        unreadable, or market already at or beyond the SL)."""
+        stop_loss = parsed_signal.stop_loss
+        if not isinstance(stop_loss, Decimal):  # an LLM signal can carry "break_even" here
+            self.logger.warning(
+                f"Signal refused: SL {stop_loss!r} is not a price, cannot size "
+                f"message_id={parsed_signal.telegram_message_id}"
+            )
+            return False
+
+        price = None
+        if self.mt5_connection_manager is not None:
+            price = await self.mt5_connection_manager.get_current_price(parsed_signal.symbol)
+        if price is None:
+            self.logger.warning(
+                f"Signal refused: no live price to size {parsed_signal.symbol} "
+                f"message_id={parsed_signal.telegram_message_id}"
+            )
+            return False
+
+        sell = parsed_signal.parsed_action == ParsedAction.SELL
+        if price >= stop_loss if sell else price <= stop_loss:
+            self.logger.warning(
+                f"Signal refused: market {price} already at or beyond SL {stop_loss} "
+                f"({parsed_signal.parsed_action.value} {parsed_signal.symbol} "
+                f"message_id={parsed_signal.telegram_message_id})"
+            )
+            return False
+
+        # Stop never under the policy minimum from the market, unless the post's own stop is tighter
+        minimum = symbol_policy.get_min_sl_distance(parsed_signal.symbol)
+        if minimum is not None:
+            minimum = min(minimum, abs(parsed_signal.entry_price - stop_loss))
+            if abs(price - stop_loss) < minimum:
+                moved = price + minimum if sell else price - minimum
+                moved = Decimal(str(normalize_price(float(moved), parsed_signal.symbol)))
+                self.logger.info(
+                    f"Single signal chat={parsed_signal.telegram_chat_id} "
+                    f"message_id={parsed_signal.telegram_message_id}: SL moved {stop_loss} -> {moved} "
+                    f"(minimum {minimum} from market {price})"
+                )
+                stop_loss = parsed_signal.stop_loss = moved
+
+        if price != parsed_signal.entry_price:
+            self.logger.info(
+                f"Single signal chat={parsed_signal.telegram_chat_id} "
+                f"message_id={parsed_signal.telegram_message_id}: sized on live price {price} "
+                f"(post entry {parsed_signal.entry_price}), SL distance {abs(price - stop_loss)}"
+            )
+            parsed_signal.entry_price = price
         return True
 
     async def _handle_parsed_signal(

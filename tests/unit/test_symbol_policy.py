@@ -48,3 +48,13 @@ class TestSymbolPolicy:
         assert "EURUSD" in candidates
         assert "EUR/USD." in candidates
         assert "EUR/USD#" in candidates
+
+
+def test_min_sl_distance_is_the_gold_setting_in_price_units(monkeypatch):
+    """Story 20.7: 20 pips at 0.10/pip = 2.0 price units, gold only."""
+    from config.settings import settings
+
+    monkeypatch.setattr(settings, "gold_min_sl_distance", Decimal("2.0"), raising=False)
+    assert symbol_policy.get_min_sl_distance("GOLD") == Decimal("2.0")
+    assert symbol_policy.get_min_sl_distance("xau") == Decimal("2.0")
+    assert symbol_policy.get_min_sl_distance("BTCUSD") is None

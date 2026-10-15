@@ -78,6 +78,7 @@ async def test_router_executes_french_signal_instead_of_correlating_it():
     app.regex_parser = RegexParser()
     app._correlation_engine = engine
     app._validate_live_price = AsyncMock(return_value=True)
+    app._use_live_price_for_sizing = AsyncMock(return_value=True)
     app._handle_parsed_signal = AsyncMock()
     app._handle_correlated_message = AsyncMock()
 

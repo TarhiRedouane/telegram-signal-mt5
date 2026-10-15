@@ -68,6 +68,9 @@ class Settings:
         self.gold_default_sl_distance: Decimal = Decimal(
             os.getenv("GOLD_DEFAULT_SL_DISTANCE", "10.0")
         )
+        # Single signals: SL never closer than this to the market (2.0 = 20 pips), unless the
+        # post's own stop is tighter
+        self.gold_min_sl_distance: Decimal = Decimal(os.getenv("GOLD_MIN_SL_DISTANCE", "2.0"))
         self.gold_entry_tolerance: Decimal = Decimal(os.getenv("GOLD_ENTRY_TOLERANCE", "1.0"))
         # Zone rejection: deepest sweep beyond the zone edge still counted as liquidity grab,
         # and SL buffer beyond the sweep extreme (price units)

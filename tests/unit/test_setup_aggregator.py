@@ -172,6 +172,7 @@ async def test_main_routes_complete_signal_to_instant_path_and_incomplete_to_set
     app = ApplicationManager()
     app.regex_parser = RegexParser()
     app._validate_live_price = AsyncMock(return_value=True)
+    app._use_live_price_for_sizing = AsyncMock(return_value=True)
     app._handle_parsed_signal = AsyncMock()
     app._start_setup = MagicMock()
 
@@ -408,6 +409,7 @@ async def test_main_routes_zone_post_to_watch_and_regular_signals_unchanged():
     app = ApplicationManager()
     app.regex_parser = RegexParser()
     app._validate_live_price = AsyncMock(return_value=True)
+    app._use_live_price_for_sizing = AsyncMock(return_value=True)
     app._handle_parsed_signal = AsyncMock()
     app._start_setup = MagicMock()
     app._start_zone_watch = MagicMock()

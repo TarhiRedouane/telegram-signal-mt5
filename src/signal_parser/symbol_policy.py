@@ -112,6 +112,12 @@ class SymbolPolicy:
             return settings.gold_default_sl_distance
         return None
 
+    def get_min_sl_distance(self, symbol: str) -> Decimal | None:
+        """Return the closest a single signal's SL may sit to the market (price units)."""
+        if self.canonicalize_symbol(symbol) in {"GOLD", "XAUUSD"}:
+            return settings.gold_min_sl_distance
+        return None
+
     def get_entry_tolerance(self, symbol: str) -> Decimal | None:
         """Return price tolerance around a setup entry zone."""
         if self.canonicalize_symbol(symbol) in {"GOLD", "XAUUSD"}:
