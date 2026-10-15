@@ -222,8 +222,15 @@ Found by the review re-run on 2026-10-13 (review section 6), also before 19.2:
       20 pips from the market (`GOLD_MIN_SL_DISTANCE=2.0`) unless the post's own stop is tighter (F35).
 - [ ] Decide (user): tighter live-price deviation rule in `symbol_policy` (`GOLD_MAX_PRICE_DEVIATION` is 100 points);
       left out of 20.7, it changes which signals are traded.
-- [ ] 20.8 Telegram polling fallback survives errors (per-iteration catch, flood-wait back-off) (F36).
+- [x] 20.8 Telegram polling fallback survives errors (per-iteration catch, flood-wait back-off) (F36).
 - [x] 20.9 A filled order always yields a tracked position, even when the DB write fails (F37).
+Found in the live log on 2026-10-15:
+- [ ] 20.10 "sell gold now" waits for the entry price (next message, e.g. "4146"), then fires only when the market is
+      within the entry tolerance or better, up to the default SL distance; no entry within 5 min = no trade.
+Found by the 20.9 QA review on 2026-10-15 (low; fails safe):
+- [ ] 20.11 A failed `EXECUTED` status write after a fill leaves the signal `VALIDATED`, so the setup's next ladder leg
+      is refused as "already claimed" and the setup is disarmed with the misleading log "order not filled". Allow the
+      extra leg for a signal this setup already filled, or log the real reason (story 20.9, QA Results).
 Later steps: F25 (positions never marked closed) → step 6, F26 (one leg updated) → step 13, F29 (filling mode,
 magic) → step 17/18, F24 (no per-chat ordering) → story 19.8, F41 (partial fill volume) → step 6,
 F40 (author's profit-lock SL ignored) → step 11/13.

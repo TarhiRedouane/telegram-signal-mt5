@@ -66,10 +66,13 @@ from src.risk_manager.position_sizer import leg_volume
 from src.utils.currency_config import currency_config
 from src.utils.formatters import normalize_price
 from decimal import Decimal
+from telethon.errors import FloodWaitError
 from telethon.utils import get_peer_id
 
 TRADE_RETCODE_NO_CHANGES = 10025  # MetaTrader5.TRADE_RETCODE_NO_CHANGES ("No changes in request")
 BE_RETRY_ERROR_AFTER = 10  # consecutive MT5 failures on one ticket before an ERROR log (once)
+POLL_INTERVAL_S = 3  # Telegram polling fallback: delay between passes when healthy
+POLL_MAX_BACKOFF_S = 60  # cap of the doubled delay while passes keep failing
 
 
 class ApplicationManager:
@@ -1626,7 +1629,13 @@ class ApplicationManager:
             return None
 
     async def _poll_telegram_groups(self) -> None:
-        """Fallback polling loop to ingest channel messages when push events are not received."""
+        """Fallback polling loop to ingest channel messages when push events are not received.
+
+        Survives errors (story 20.8): a failed seed leaves the group unseeded (never polled from
+        min_id=0, seed retried next pass); a poll error is logged and the pass delay backs off
+        3 -> 60 s; a flood wait is honoured and ends the pass; a message that raises is logged and
+        re-fetched next pass (dedupe skips it), later messages of the batch wait for that pass.
+        """
         if self.telegram_client is None or self.telegram_client.client is None:
             self.logger.warning("Telegram polling fallback skipped: Telegram client unavailable")
             return
@@ -1636,90 +1645,148 @@ class ApplicationManager:
             return
 
         client = self.telegram_client.client
-        last_seen: dict[int, int] = {}
+        last_seen: dict[int, int] = {}  # only seeded groups; never poll a group missing here
+        delay = POLL_INTERVAL_S
+        failed_passes = 0
+        started = False
 
         try:
-            # Seed per-group last seen IDs so only newer messages are processed.
-            for entity in self._connected_group_entities:
-                latest = await client.get_messages(entity, limit=1)
-                if latest and len(latest) > 0:
-                    last_seen[int(entity.id)] = int(latest[0].id)
-                    self.logger.info(
-                        "Telegram polling seed "
-                        f"chat={get_peer_id(entity)} title='{getattr(entity, 'title', str(entity.id))}' "
-                        f"last_message_id={int(latest[0].id)}"
-                    )
-                else:
-                    last_seen[int(entity.id)] = 0
-                    self.logger.info(
-                        "Telegram polling seed "
-                        f"chat={get_peer_id(entity)} title='{getattr(entity, 'title', str(entity.id))}' "
-                        "last_message_id=0"
-                    )
-
-            self.logger.info(
-                f"Telegram polling fallback started for {len(self._connected_group_entities)} group(s)"
-            )
-
             while True:
-                await asyncio.sleep(3)
+                if started:
+                    await asyncio.sleep(delay)
+                pass_failed = False
+                flooded = False
+                trace = failed_passes == 0  # traceback on the first failure of a streak only
 
+                # Seed per-group last seen IDs so only newer messages are processed.
                 for entity in self._connected_group_entities:
-                    entity_id = int(entity.id)
-                    min_id = last_seen.get(entity_id, 0)
-
-                    messages = await client.get_messages(entity, min_id=min_id, limit=20)
-                    if not messages:
+                    if int(entity.id) in last_seen:
                         continue
+                    chat_id = get_peer_id(entity)
+                    title = getattr(entity, "title", str(entity.id))
+                    try:
+                        latest = await client.get_messages(entity, limit=1)
+                    except FloodWaitError as exc:
+                        await self._telegram_poll_flood_wait(exc, chat_id)
+                        pass_failed = flooded = True
+                        break
+                    except Exception as exc:
+                        self.logger.error(
+                            f"Telegram polling seed failed chat={chat_id} title='{title}': {exc}",
+                            exc_info=trace,
+                        )
+                        pass_failed, trace = True, False
+                        continue
+                    last_id = int(latest[0].id) if latest and len(latest) > 0 else 0
+                    last_seen[int(entity.id)] = last_id
+                    self.logger.info(
+                        "Telegram polling seed "
+                        f"chat={chat_id} title='{title}' last_message_id={last_id}"
+                    )
 
-                    ordered_messages = sorted(messages, key=lambda msg: msg.id)
-                    for message in ordered_messages:
-                        if not getattr(message, "text", None):
-                            continue
-
+                if not started:
+                    self.logger.info(
+                        "Telegram polling fallback started for "
+                        f"{len(self._connected_group_entities)} group(s)"
+                    )
+                    started = True
+                elif not flooded:
+                    for entity in self._connected_group_entities:
+                        entity_id = int(entity.id)
+                        if entity_id not in last_seen:
+                            continue  # seed failed: polling from min_id=0 would replay old posts
                         chat_id = get_peer_id(entity)
+                        try:
+                            messages = await client.get_messages(
+                                entity, min_id=last_seen[entity_id], limit=20
+                            )
+                        except FloodWaitError as exc:
+                            # Flood waits apply to the account: stop this pass
+                            await self._telegram_poll_flood_wait(exc, chat_id)
+                            pass_failed = True
+                            break
+                        except Exception as exc:
+                            self.logger.error(
+                                f"Telegram polling failed chat={chat_id}: {exc}", exc_info=trace
+                            )
+                            pass_failed, trace = True, False
+                            continue
+                        if messages:
+                            await self._process_polled_messages(
+                                entity, chat_id, messages, last_seen
+                            )
 
-                        from_id = getattr(message, "from_id", None)
-                        sender = "unknown_sender"
-                        if (
-                            from_id is not None
-                            and hasattr(from_id, "user_id")
-                            and from_id.user_id is not None
-                        ):
-                            sender = f"user_{from_id.user_id}"
-                        elif (
-                            from_id is not None
-                            and hasattr(from_id, "channel_id")
-                            and from_id.channel_id is not None
-                        ):
-                            sender = f"channel_{from_id.channel_id}"
-
-                        metadata = {
-                            "telegram_message_id": int(message.id),
-                            "telegram_chat_id": int(chat_id),
-                            "sender": sender,
-                            "timestamp": message.date if message.date else datetime.now(UTC),
-                            "raw_text": message.text or "",
-                            "reply_to_message_id": (
-                                message.reply_to.reply_to_msg_id if message.reply_to else None
-                            ),
-                            "chat_title": getattr(entity, "title", str(entity_id)),
-                            "is_forwarded": getattr(message, "forward", None) is not None,
-                            "message_type": "text",
-                            "edit_date": getattr(message, "edit_date", None),
-                        }
-
-                        await self._on_telegram_message(metadata)
-
-                    newest_id = int(ordered_messages[-1].id)
-                    if newest_id > min_id:
-                        last_seen[entity_id] = newest_id
+                if pass_failed:
+                    failed_passes += 1
+                    delay = min(delay * 2, POLL_MAX_BACKOFF_S)
+                elif failed_passes:
+                    self.logger.info(
+                        f"Telegram polling recovered after {failed_passes} failed pass(es)"
+                    )
+                    failed_passes = 0
+                    delay = POLL_INTERVAL_S
 
         except asyncio.CancelledError:
             self.logger.info("Telegram polling fallback stopped")
             raise
-        except Exception as e:
-            self.logger.error(f"Telegram polling fallback failed: {e}", exc_info=True)
+
+    async def _telegram_poll_flood_wait(self, exc: FloodWaitError, chat_id: int) -> None:
+        self.logger.warning(
+            f"Telegram polling flood wait chat={chat_id}: waiting {exc.seconds}s before next pass"
+        )
+        await asyncio.sleep(exc.seconds)
+
+    async def _process_polled_messages(
+        self, entity: Any, chat_id: int, messages: list[Any], last_seen: dict[int, int]
+    ) -> None:
+        """Hand polled messages to the handler in id order; last_seen advances per message.
+
+        A message that raises is logged and stops the batch: it is re-fetched next pass (the
+        handler's dedupe skips it) and the later messages are processed then.
+        """
+        entity_id = int(entity.id)
+        for message in sorted(messages, key=lambda msg: msg.id):
+            if getattr(message, "text", None):
+                from_id = getattr(message, "from_id", None)
+                sender = "unknown_sender"
+                if (
+                    from_id is not None
+                    and hasattr(from_id, "user_id")
+                    and from_id.user_id is not None
+                ):
+                    sender = f"user_{from_id.user_id}"
+                elif (
+                    from_id is not None
+                    and hasattr(from_id, "channel_id")
+                    and from_id.channel_id is not None
+                ):
+                    sender = f"channel_{from_id.channel_id}"
+
+                metadata = {
+                    "telegram_message_id": int(message.id),
+                    "telegram_chat_id": int(chat_id),
+                    "sender": sender,
+                    "timestamp": message.date if message.date else datetime.now(UTC),
+                    "raw_text": message.text or "",
+                    "reply_to_message_id": (
+                        message.reply_to.reply_to_msg_id if message.reply_to else None
+                    ),
+                    "chat_title": getattr(entity, "title", str(entity_id)),
+                    "is_forwarded": getattr(message, "forward", None) is not None,
+                    "message_type": "text",
+                    "edit_date": getattr(message, "edit_date", None),
+                }
+
+                try:
+                    await self._on_telegram_message(metadata)
+                except Exception as exc:
+                    self.logger.error(
+                        f"Telegram polling message failed chat={chat_id} "
+                        f"message_id={int(message.id)}: {exc}",
+                        exc_info=True,
+                    )
+                    return
+            last_seen[entity_id] = max(last_seen[entity_id], int(message.id))
 
     async def _initialize_mt5_connection(self) -> None:
         """Initialize MT5 connection manager in background and attach it to monitoring."""
