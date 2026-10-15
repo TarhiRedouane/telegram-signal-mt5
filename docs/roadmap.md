@@ -225,7 +225,7 @@ Found by the review re-run on 2026-10-13 (review section 6), also before 19.2:
 - [x] 20.8 Telegram polling fallback survives errors (per-iteration catch, flood-wait back-off) (F36).
 - [x] 20.9 A filled order always yields a tracked position, even when the DB write fails (F37).
 Found in the live log on 2026-10-15:
-- [ ] 20.10 "sell gold now" waits for the entry price (next message, e.g. "4146"), then fires only when the market is
+- [x] 20.10 "sell gold now" waits for the entry price (next message, e.g. "4146"), then fires only when the market is
       within the entry tolerance or better, up to the default SL distance; no entry within 5 min = no trade.
 Found by the 20.9 QA review on 2026-10-15 (low; fails safe):
 - [ ] 20.11 A failed `EXECUTED` status write after a fill leaves the signal `VALIDATED`, so the setup's next ladder leg

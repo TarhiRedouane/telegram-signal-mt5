@@ -54,10 +54,12 @@ from src.correlation_engine.setup_aggregator import (
     ZoneEntry,
     ZoneWatch,
     action_side,
+    bare_price,
     extract_followup,
     extract_zone_hint,
     has_action_word,
     looks_like_new_trade,
+    priceless_opener,
 )
 from src.signal_parser import ParsedAction
 from src.signal_parser.patterns import close_timeframe, is_candle_close_remark, sl_far
@@ -335,6 +337,17 @@ class ApplicationManager:
                 "ignored; adjust the position manually if levels changed"
             )
             return
+        opener = priceless_opener(raw_text)
+        if opener is not None:
+            # "sell gold now" with no price: wait for the entry, never fire at market
+            if (pending_setup is None and zone_watch is None) or (
+                pending_setup is not None and pending_setup.action != opener[0]
+            ):
+                self._start_awaiting_entry(metadata, *opener)
+                return
+            if pending_setup is not None and pending_setup.positions and not pending_setup.armed:
+                self._reopen_awaiting_entry(pending_setup, raw_text)
+                return
         if pending_setup is not None and not looks_like_new_trade(raw_text):
             await self._handle_setup_followup(pending_setup, raw_text)
             return
@@ -614,9 +627,7 @@ class ApplicationManager:
     def _start_setup(self, parsed_signal) -> None:
         """Buffer an incomplete BUY/SELL setup and watch price until it can fire."""
         setup, rearm_changes = self._setup_aggregator.start(parsed_signal, datetime.now(UTC))
-        zone_watch = self._setup_aggregator.get_zone(setup.chat_id)
-        if zone_watch is not None and any(zone.action != setup.action for zone in zone_watch.zones):
-            self._setup_aggregator.drop_zone(zone_watch, f"opposite {setup.action.value} signal")
+        self._drop_opposite_zone(setup)
         state = (
             "started" if rearm_changes is None else f"re-armed (positions={len(setup.positions)})"
         )
@@ -631,6 +642,58 @@ class ApplicationManager:
             )
         elif "sl" in rearm_changes or "tp" in rearm_changes:
             asyncio.create_task(self._apply_setup_levels(setup, rearm_changes))
+
+    def _drop_opposite_zone(self, setup: PendingSetup) -> None:
+        zone_watch = self._setup_aggregator.get_zone(setup.chat_id)
+        if zone_watch is not None and any(zone.action != setup.action for zone in zone_watch.zones):
+            self._setup_aggregator.drop_zone(zone_watch, f"opposite {setup.action.value} signal")
+
+    def _start_awaiting_entry(
+        self, metadata: dict[str, Any], side: ParsedAction, symbol: str
+    ) -> None:
+        """Price-less opener ("sell gold now"): setup with no entry yet; replaces an opposite-side setup (D5)."""
+        chat_id = int(metadata.get("telegram_chat_id", 0))
+        old = self._setup_aggregator.get(chat_id)
+        if old is not None:
+            self.logger.info(f"Replacing setup in chat {chat_id} (different side/symbol)")
+            if old.positions:
+                self.logger.warning(
+                    f"Opposite {side.value} opener: tickets {[p.mt5_ticket for p in old.positions]} "
+                    "stay open with their MT5 SL/TP, no more break-even tracking"
+                )
+        now = datetime.now(UTC)
+        setup = PendingSetup(
+            chat_id=chat_id,
+            message_id=int(metadata.get("telegram_message_id", 0)),
+            sender=str(metadata.get("sender", "unknown")),
+            timestamp=metadata.get("timestamp") or now,
+            action=side,
+            symbol=symbol,
+            low=None,
+            high=None,
+            raw_texts=[metadata.get("raw_text", "")],
+            last_update=now,
+            await_entry=True,
+        )
+        self._setup_aggregator.adopt(setup)
+        self._drop_opposite_zone(setup)
+        self.logger.info(
+            f"Setup started chat={chat_id} message_id={setup.message_id}: "
+            f"{side.value} {symbol}, awaiting entry"
+        )
+        self._component_tasks[f"setup_{chat_id}"] = asyncio.create_task(self._watch_setup(setup))
+
+    def _reopen_awaiting_entry(self, setup: PendingSetup, raw_text: str) -> None:
+        """Same-side "sell gold now" after a fill: one more order, at the entry the author gives next (D4)."""
+        setup.reopen()
+        setup.low = setup.high = None
+        setup.await_entry, setup.fire_now = True, False
+        setup.raw_texts.append(raw_text)
+        setup.last_update = datetime.now(UTC)
+        self.logger.info(
+            f"Setup re-armed chat={setup.chat_id} (positions={len(setup.positions)}): "
+            f"{setup.action.value} {setup.symbol}, awaiting entry"
+        )
 
     def _start_zone_watch(
         self, metadata: Dict[str, Any], symbol: str, zones: list, targets: list
@@ -984,7 +1047,11 @@ class ApplicationManager:
         """Fold a follow-up message into the chat's pending (or already-filled) setup."""
         if followup is None:
             followup = extract_followup(raw_text)
-            if followup.empty and self.llm_parser is not None:
+            # "sell gold now" then "4146": that is the entry, not a question for the LLM
+            entry = bare_price(raw_text) if setup.await_entry else None
+            if entry is not None:
+                followup.entry, followup.entry_high = entry
+            elif followup.empty and self.llm_parser is not None:
                 followup = await self._llm_setup_followup(setup, raw_text)
 
         if followup.cancel:
@@ -1011,17 +1078,25 @@ class ApplicationManager:
         changed = setup.apply(followup, raw_text, datetime.now(UTC))
         if not changed:
             return
-        self.logger.info(
-            f"Setup updated chat={setup.chat_id} {changed}: "
-            f"{setup.low}-{setup.high} SL={setup.sl} TPs={setup.tps}"
-        )
+        if setup.await_entry and "entry" in changed:
+            entry = setup.low if setup.low == setup.high else f"{setup.low}-{setup.high}"
+            self.logger.info(
+                f"Setup entry received chat={setup.chat_id} entry={entry}, "
+                f"waiting for price close or better (SL={setup.sl} TPs={setup.tps})"
+            )
+        else:
+            self.logger.info(
+                f"Setup updated chat={setup.chat_id} {changed}: "
+                f"{setup.low}-{setup.high} SL={setup.sl} TPs={setup.tps}"
+            )
         if "sl" in changed or "tp" in changed:
             await self._apply_setup_levels(setup, changed)
 
     async def _llm_setup_followup(self, setup: PendingSetup, raw_text: str) -> Followup:
         """LLM fallback for follow-ups regex could not classify (odd cancel/level phrasing)."""
+        entry = "pas encore donnée" if setup.low is None else f"{setup.low}-{setup.high}"
         context = (
-            f"Setup en attente: {setup.action.value} {setup.symbol} entrée {setup.low}-{setup.high}, "
+            f"Setup en attente: {setup.action.value} {setup.symbol} entrée {entry}, "
             f"SL {setup.sl}, TPs {setup.tps}. Le message suivant est une suite de ce setup."
         )
         try:
@@ -1160,6 +1235,8 @@ class ApplicationManager:
     async def _fire_next_leg(self, setup: PendingSetup, price: Decimal) -> bool:
         """Leg 0: SL+TP known (same live check as single-message signals) or price in zone.
         Next legs: price reached their ladder level. Returns True when a leg was opened."""
+        if setup.await_entry and setup.low is None:
+            return False  # "sell gold now": nothing to fire before the author gives the entry
         k = setup.next_leg()
         if k is None:
             setup.armed = setup.fire_now = False
@@ -1167,7 +1244,22 @@ class ApplicationManager:
         index = len(setup.positions)
         if k > 0 and setup.blind and not setup.tps:
             return False  # extra legs wait for the author's targets
-        if k == 0 and setup.is_complete:
+        if k == 0 and setup.await_entry:
+            # Entry given after "now": only close to it or better, never on "now" or the live check alone
+            better = setup.entry_gap(price)
+            if better is None:
+                return False
+            levels = setup.fire_levels(price, index)
+            if levels is None:
+                self._disarm_or_drop(setup, f"invalidated at price {price}")
+                return False
+            signal = setup.to_signal(entry=price, sl=levels[0], tp=levels[1])
+            self.logger.info(
+                f"Setup firing chat={setup.chat_id} {setup.action.value} price {price} vs entry "
+                f"{setup.legs()[0]} ({f'better by {better}' if better > 0 else 'close'})"
+                + ("" if setup.sl is not None else f", default SL {levels[0]} (none received)")
+            )
+        elif k == 0 and setup.is_complete:
             signal = setup.to_signal(entry=setup.low, sl=setup.sl, tp=setup.leg_tp(index))
             if not await self._validate_live_price(signal):
                 self._disarm_or_drop(setup, "live price check failed")
@@ -1206,6 +1298,8 @@ class ApplicationManager:
         if setup.planned_legs is None and not (blind and k == 0):
             setup.planned_legs = legs
         setup.positions.append(position)
+        if setup.await_entry:  # filled at the given entry: next legs ladder as usual, "now" spent
+            setup.await_entry = setup.fire_now = False
         now = datetime.now(UTC)
         setup.first_fill_at = setup.first_fill_at or now
         setup.last_update = now

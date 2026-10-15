@@ -29,11 +29,27 @@ def has_action_word(text: str) -> bool:
     return bool(_ACTION_WORD.search(text))
 
 
+def _named_symbol(text: str) -> str | None:
+    """Canonical symbol of the first enabled alias named as a whole word."""
+    aliases = "|".join(re.escape(a) for a in symbol_policy.get_enabled_aliases())
+    match = re.search(rf"(?<![\w/])(?:{aliases})(?![\w/])", text, re.IGNORECASE)
+    return symbol_policy.canonicalize_symbol(match.group(0)) if match else None
+
+
 def looks_like_new_trade(text: str) -> bool:
     """Action word + enabled symbol alias + price, all as whole words."""
-    aliases = "|".join(re.escape(a) for a in symbol_policy.get_enabled_aliases())
-    has_symbol = re.search(rf"(?<![\w/])(?:{aliases})(?![\w/])", text, re.IGNORECASE)
-    return bool(has_action_word(text) and has_symbol and _PRICE.search(text))
+    return bool(has_action_word(text) and _named_symbol(text) and _PRICE.search(text))
+
+
+# "je ne vends pas", "pas de sell", "n'achète", "don't buy": negation up to 3 words before the side word
+_NEGATED_SIDE = re.compile(
+    rf"(?:\bn['\u2019]\s*|\b(?:ne|pas|not|no|don['\u2019]?t)\b\W+(?:\w+\W+){{0,2}}){_ACTION_WORD.pattern}",
+    re.IGNORECASE,
+)
+_SIDE_HYPHEN = re.compile(rf"{_ACTION_WORD.pattern}-", re.IGNORECASE)  # "sell-off"
+_BARE_PRICE = re.compile(
+    r"\s*(\d{4}(?:[.,]\d{1,2})?)(?:\s*[-\u2013]\s*(\d{4}(?:[.,]\d{1,2})?))?\s*"
+)
 
 
 @dataclass
@@ -101,6 +117,30 @@ def action_side(text: str) -> ParsedAction | None:
     if buy == sell:
         return None
     return ParsedAction.BUY if buy else ParsedAction.SELL
+
+
+def priceless_opener(text: str) -> tuple[ParsedAction, str] | None:
+    """(side, symbol) for "sell gold now": one side + enabled symbol, no price, not negated."""
+    side = action_side(text)
+    if (
+        side is None
+        or _PRICE.search(text)
+        or _NEGATED_SIDE.search(text)
+        or _SIDE_HYPHEN.search(text)
+    ):
+        return None
+    symbol = _named_symbol(text)
+    return (side, symbol) if symbol else None
+
+
+def bare_price(text: str) -> tuple[Decimal, Decimal] | None:
+    """(low, high) when the message is only a price ("4146") or a range ("4146-4150")."""
+    match = _BARE_PRICE.fullmatch(text)
+    if match is None:
+        return None
+    a = _to_decimal(match.group(1))
+    b = _to_decimal(match.group(2)) if match.group(2) else a
+    return min(a, b), max(a, b)
 
 
 @dataclass
@@ -208,8 +248,8 @@ class PendingSetup:
     timestamp: datetime
     action: ParsedAction
     symbol: str
-    low: Decimal
-    high: Decimal
+    low: Decimal | None  # None: "sell gold now", entry not given yet
+    high: Decimal | None
     sl: Decimal | None = None
     tps: list[Decimal] = field(default_factory=list)  # nearest first; leg i closes at tps[i]
     raw_texts: list[str] = field(default_factory=list)
@@ -217,6 +257,8 @@ class PendingSetup:
     positions: list[Any] = field(default_factory=list)
     armed: bool = True  # waiting to open legs for the current entry
     fire_now: bool = False
+    # "sell gold now": leg 1 waits for the entry, then fires only close to it or better (entry_gap)
+    await_entry: bool = False
     ladder: bool = True  # False after a re-entry: one more order, no new ladder
     leg_base: int = 0  # positions opened before the current entry
     planned_legs: int | None = None  # frozen at first fill so later TPs can't add risk
@@ -307,11 +349,14 @@ class PendingSetup:
             n = self.planned_legs or max(
                 2 if self.blind else 1, min(len(self.tps), settings.setup_max_legs)
             )
-        if n == 1 or self.low == self.high:
-            first = self.low if self.action == ParsedAction.SELL else self.high
+        low, high = self.low, self.high
+        if low is None or high is None:
+            return []  # entry not given yet: callers check await_entry first
+        if n == 1 or low == high:
+            first = low if self.action == ParsedAction.SELL else high
             return [first] * n
-        step = (self.high - self.low) / (n - 1)
-        levels = [self.low + step * i for i in range(n)]
+        step = (high - low) / (n - 1)
+        levels = [low + step * i for i in range(n)]
         return levels if self.action == ParsedAction.SELL else levels[::-1]
 
     def next_leg(self) -> int | None:
@@ -351,10 +396,11 @@ class PendingSetup:
         if followup.now and not self.fire_now:
             self.fire_now = True
             changed.append("now")
+        # No entry yet ("sell gold now"): keep levels, fire_levels checks them at the fill price
         sl_ref = self.high if self.action == ParsedAction.SELL else self.low
         tp_ref = self.low if self.action == ParsedAction.SELL else self.high
         if followup.sl is not None:
-            if self._sl_ok(followup.sl, sl_ref):
+            if sl_ref is None or self._sl_ok(followup.sl, sl_ref):
                 if self.set_sl(followup.sl, followup.sl_close_tf, followup.sl_far):
                     changed.append("sl")
             else:
@@ -362,7 +408,7 @@ class PendingSetup:
                     f"Ignoring wrong-side SL {followup.sl} for {self.action.value} setup"
                 )
         tps = self._merge_tps(followup)
-        valid = [tp for tp in tps if self._tp_ok(tp, tp_ref)]
+        valid = [tp for tp in tps if tp_ref is None or self._tp_ok(tp, tp_ref)]
         if len(valid) < len(tps):
             logger.warning(
                 f"Ignoring wrong-side TPs {sorted(set(tps) - set(valid))} for {self.action.value} setup"
@@ -395,7 +441,21 @@ class PendingSetup:
         return tps
 
     def in_entry_zone(self, price: Decimal, tolerance: Decimal) -> bool:
+        if self.low is None or self.high is None:
+            return False
         return self.low - tolerance <= price <= self.high + tolerance
+
+    def entry_gap(self, price: Decimal) -> Decimal | None:
+        """await_entry leg 1: how much better than the entry `price` is (<= 0: close), or None
+        outside the band (worse by more than the entry tolerance, better by more than the
+        default SL distance) or while the entry is unknown."""
+        legs = self.legs()
+        tolerance = symbol_policy.get_entry_tolerance(self.symbol)
+        cap = symbol_policy.get_default_sl_distance(self.symbol)
+        if not legs or tolerance is None or cap is None:
+            return None
+        better = price - legs[0] if self.action == ParsedAction.SELL else legs[0] - price
+        return better if -tolerance <= better <= cap else None
 
     def is_expired(self, now: datetime, timeout_seconds: int) -> bool:
         return now - self.last_update > timedelta(seconds=timeout_seconds)
