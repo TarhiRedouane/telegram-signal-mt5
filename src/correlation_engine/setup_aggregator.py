@@ -41,12 +41,6 @@ def looks_like_new_trade(text: str) -> bool:
     return bool(has_action_word(text) and _named_symbol(text) and _PRICE.search(text))
 
 
-# "je ne vends pas", "pas de sell", "n'achète", "don't buy": negation up to 3 words before the side word
-_NEGATED_SIDE = re.compile(
-    rf"(?:\bn['\u2019]\s*|\b(?:ne|pas|not|no|don['\u2019]?t)\b\W+(?:\w+\W+){{0,2}}){_ACTION_WORD.pattern}",
-    re.IGNORECASE,
-)
-_SIDE_HYPHEN = re.compile(rf"{_ACTION_WORD.pattern}-", re.IGNORECASE)  # "sell-off"
 _BARE_PRICE = re.compile(
     r"\s*(\d{4}(?:[.,]\d{1,2})?)(?:\s*[-\u2013]\s*(\d{4}(?:[.,]\d{1,2})?))?\s*"
 )
@@ -119,18 +113,25 @@ def action_side(text: str) -> ParsedAction | None:
     return ParsedAction.BUY if buy else ParsedAction.SELL
 
 
+_EDGE_NOISE = re.compile(r"^\W+|\W+$")  # "  SELL GOLD NOW !!", "sell gold now 🔥"
+_SIDE = rf"(?:{_BUY_WORD.pattern}|{_SELL_WORD.pattern})"
+
+
 def priceless_opener(text: str) -> tuple[ParsedAction, str] | None:
-    """(side, symbol) for "sell gold now": one side + enabled symbol, no price, not negated."""
-    side = action_side(text)
-    if (
-        side is None
-        or _PRICE.search(text)
-        or _NEGATED_SIDE.search(text)
-        or _SIDE_HYPHEN.search(text)
-    ):
+    """(side, symbol) when the whole message is the short order "[je|j'] sell gold [now]".
+
+    Whole-message match: result posts and commentary ("Gold sell setup closed in profit") have
+    unbounded phrasing, the order form is short and fixed (story 20.13)."""
+    core = _EDGE_NOISE.sub("", text)
+    aliases = "|".join(re.escape(a) for a in symbol_policy.get_enabled_aliases())
+    order = (
+        rf"(?:je\s+|j['\u2019])?(?:{_SIDE}\s+(?:{aliases})|(?:{aliases})\s+{_SIDE})"
+        r"(?:\s+(?:now|maintenant))?"
+    )
+    if not re.fullmatch(order, core, re.IGNORECASE):
         return None
-    symbol = _named_symbol(text)
-    return (side, symbol) if symbol else None
+    side, symbol = action_side(core), _named_symbol(core)
+    return (side, symbol) if side and symbol else None
 
 
 def bare_price(text: str) -> tuple[Decimal, Decimal] | None:

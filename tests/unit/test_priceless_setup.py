@@ -1,4 +1,6 @@
-"""Story 20.10: "sell gold now" waits for its entry price, then fires only close to it or better."""
+"""Story 20.10: "sell gold now" waits for its entry price, then fires only close to it or better.
+
+Story 20.13: only the short whole-message form is an opener; result posts and commentary are not."""
 
 import logging
 from datetime import UTC, datetime, timedelta
@@ -51,6 +53,15 @@ def test_priceless_opener_detection():
         ("je vends gold maintenant", (sell, "GOLD")),
         ("buy xauusd now", (buy, "XAUUSD")),
         ("sell gold", (sell, "GOLD")),
+        # Story 20.13: whole-message short form only
+        ("gold sell now", (sell, "GOLD")),
+        ("Sell gold now 🔥", (sell, "GOLD")),
+        ("  SELL GOLD NOW !!", (sell, "GOLD")),
+        ("vends gold maintenant", (sell, "GOLD")),
+        ("j'achète gold maintenant", (buy, "GOLD")),
+        ("J\u2019achete gold now", (buy, "GOLD")),
+        ("je vends or maintenant", (sell, "GOLD")),
+        ("SELL GOLD\nNOW", (sell, "GOLD")),
     ]:
         assert priceless_opener(text) == expected, text
     for text in [
@@ -62,6 +73,15 @@ def test_priceless_opener_detection():
         "je ne vends pas gold",
         "gold sell-off",
         "pas de sell gold",
+        # Story 20.13: results and commentary
+        "TP1 HIT SELL GOLD +130 PIPS ✅",
+        "Gold sell setup closed in profit",
+        "XAUUSD sell running +50 pips",
+        "gold buy closed BE",
+        "Gold SL hit on sell",
+        "Les vendeurs de gold sont forts",
+        "on attend pour vendre gold",
+        "Attention gold, je pense sell plus tard",
     ]:
         assert priceless_opener(text) is None, text
 
@@ -252,6 +272,37 @@ async def test_edited_opener_with_a_price_keeps_waiting_for_the_band():
 async def test_negated_or_commentary_side_word_starts_nothing(text):
     app, opened = _zone_app("4146")
     await _send(app, 1, text)
+    assert app._setup_aggregator.get(ZONE_CHAT) is None and opened == []
+
+
+# --- Story 20.13 AC 3-5: result posts never touch a setup ----------------------------------------
+
+
+async def test_result_post_does_not_replace_a_filled_opposite_setup():
+    app, opened = _zone_app("4150")
+    for message_id, text in enumerate(["buy gold 4150", "sl 4135", "TP 4185"], start=1):
+        await _send(app, message_id, text)
+    buy = app._setup_aggregator.get(ZONE_CHAT)
+    await app._maybe_fire_setup(buy, Decimal("4150"))
+    assert len(opened) == 1 and not buy.armed
+    positions, watchers = list(buy.positions), app._watch_setup.call_count
+    await _send(app, 4, "Gold sell setup closed in profit")
+    assert app._setup_aggregator.get(ZONE_CHAT) is buy and buy.action == ParsedAction.BUY
+    assert buy.positions == positions and app._watch_setup.call_count == watchers
+
+
+async def test_result_post_after_a_fill_does_not_reopen_the_setup():
+    app, opened, setup = await _filled_sell()
+    await _send(app, 4, "TP1 HIT SELL GOLD +130 PIPS ✅")
+    await _send(app, 5, "4130")
+    await app._maybe_fire_setup(setup, Decimal("4130.5"))
+    assert len(opened) == 1 and not setup.armed
+
+
+async def test_result_post_in_an_empty_chat_starts_nothing():
+    app, opened = _zone_app("4146")
+    await _send(app, 1, "XAUUSD sell running +50 pips")
+    await _send(app, 2, "4146")
     assert app._setup_aggregator.get(ZONE_CHAT) is None and opened == []
 
 
