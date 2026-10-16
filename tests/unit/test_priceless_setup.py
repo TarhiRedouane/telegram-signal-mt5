@@ -337,14 +337,14 @@ async def test_opposite_opener_replaces_a_pending_setup():
     assert opened == [(Decimal("4136.5"), None, False)]  # BUY: default SL below
 
 
-async def test_opposite_opener_after_a_fill_warns_and_never_reenters_the_old_side(caplog):
+async def test_opposite_opener_near_a_filled_setup_is_refused(caplog):
+    # Story 20.14 replaced D5 for setups with open legs: under 300 pips from the entry -> refused
+    caplog.set_level(logging.INFO)
     app, opened, sell = await _filled_sell()
     await _send(app, 4, "buy gold now")
-    buy = app._setup_aggregator.get(ZONE_CHAT)
-    assert buy is not sell and buy.action == ParsedAction.BUY
-    warnings = [r for r in caplog.records if r.levelno == logging.WARNING]
-    assert any("[1]" in r.getMessage() for r in warnings)
-    await app._maybe_fire_setup(buy, Decimal("4150"))
+    assert app._setup_aggregator.get(ZONE_CHAT) is sell and sell.action == ParsedAction.SELL
+    assert "Reversal refused" in caplog.text
+    await app._maybe_fire_setup(sell, Decimal("4150"))
     assert len(opened) == 1
 
 

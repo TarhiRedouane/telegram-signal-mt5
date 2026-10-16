@@ -280,6 +280,9 @@ class PendingSetup:
     )
     close_check_time: int | None = None  # last candle time checked for close invalidation
     sl_wait_logged: bool = False  # "leg waiting, too close to the SL" already logged
+    # Opposite "now" far from an open trade (story 20.14): one order, half risk, default TP
+    counter: bool = False
+    counter_wait_logged: bool = False  # "counter-trade waiting, too close to the open trade" logged
 
     def set_sl(self, level: Decimal, close_tf: int | None, far: Decimal | None = None) -> bool:
         """Hard SL at `level`, or for a candle-close invalidation a protective SL beyond it.
@@ -496,13 +499,15 @@ class PendingSetup:
 
 
 class SetupAggregator:
-    """One pending setup per chat."""
+    """One pending setup per chat, plus held setups: open trades still managed while a
+    counter-trade is the chat's setup (story 20.14)."""
 
     # ponytail: in-memory; pending setups lost on restart — persist to DB if restarts mid-setup matter
 
     def __init__(self) -> None:
         self._setups: dict[int, PendingSetup] = {}
         self._zones: dict[int, ZoneWatch] = {}
+        self._held: dict[int, list[PendingSetup]] = {}
 
     def adopt(self, setup: PendingSetup) -> None:
         """Register a setup built elsewhere (confirmed zone rejection) as the chat's setup."""
@@ -560,10 +565,30 @@ class SetupAggregator:
     def get(self, chat_id: int) -> PendingSetup | None:
         return self._setups.get(chat_id)
 
-    def drop(self, setup: PendingSetup, reason: str) -> None:
+    def hold(self, setup: PendingSetup) -> None:
+        """Keep managing `setup` (break-even, invalidation) without it being the chat's setup."""
         if self._setups.get(setup.chat_id) is setup:
             del self._setups[setup.chat_id]
-            logger.info(
-                f"Setup dropped chat={setup.chat_id} message_id={setup.message_id} "
-                f"positions={len(setup.positions)}: {reason}"
-            )
+        self._held.setdefault(setup.chat_id, []).append(setup)
+
+    def held(self, chat_id: int) -> list[PendingSetup]:
+        return self._held.get(chat_id, [])
+
+    def is_watched(self, setup: PendingSetup) -> bool:
+        """The chat's setup or a held one: its watcher keeps running."""
+        return self._setups.get(setup.chat_id) is setup or any(
+            held is setup for held in self.held(setup.chat_id)
+        )
+
+    def drop(self, setup: PendingSetup, reason: str) -> None:
+        held = self.held(setup.chat_id)
+        if self._setups.get(setup.chat_id) is setup:
+            del self._setups[setup.chat_id]
+        elif any(h is setup for h in held):
+            self._held[setup.chat_id] = [h for h in held if h is not setup]
+        else:
+            return
+        logger.info(
+            f"Setup dropped chat={setup.chat_id} message_id={setup.message_id} "
+            f"positions={len(setup.positions)}: {reason}"
+        )

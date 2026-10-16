@@ -73,6 +73,8 @@ from telethon.utils import get_peer_id
 
 TRADE_RETCODE_NO_CHANGES = 10025  # MetaTrader5.TRADE_RETCODE_NO_CHANGES ("No changes in request")
 BE_RETRY_ERROR_AFTER = 10  # consecutive MT5 failures on one ticket before an ERROR log (once)
+MARGIN_MODE_RETAIL_HEDGING = 2  # MetaTrader5.ACCOUNT_MARGIN_MODE_RETAIL_HEDGING
+COUNTER_TRADE_RISK_SHARE = 0.5  # counter-trade risk = half of RISK_PERCENT (story 20.14)
 POLL_INTERVAL_S = 3  # Telegram polling fallback: delay between passes when healthy
 POLL_MAX_BACKOFF_S = 60  # cap of the doubled delay while passes keep failing
 
@@ -344,6 +346,13 @@ class ApplicationManager:
         opener = priceless_opener(raw_text)
         if opener is not None:
             # "sell gold now" with no price: wait for the entry, never fire at market
+            if (
+                pending_setup is not None
+                and pending_setup.action != opener[0]
+                and pending_setup.positions
+            ):
+                await self._reversal_opener(metadata, pending_setup, *opener)
+                return
             if (pending_setup is None and zone_watch is None) or (
                 pending_setup is not None and pending_setup.action != opener[0]
             ):
@@ -653,9 +662,10 @@ class ApplicationManager:
             self._setup_aggregator.drop_zone(zone_watch, f"opposite {setup.action.value} signal")
 
     def _start_awaiting_entry(
-        self, metadata: dict[str, Any], side: ParsedAction, symbol: str
+        self, metadata: dict[str, Any], side: ParsedAction, symbol: str, counter: bool = False
     ) -> None:
-        """Price-less opener ("sell gold now"): setup with no entry yet; replaces an opposite-side setup (D5)."""
+        """Price-less opener ("sell gold now"): setup with no entry yet; replaces an opposite-side setup (D5).
+        `counter`: one order at half risk next to a held open trade (story 20.14)."""
         chat_id = int(metadata.get("telegram_chat_id", 0))
         old = self._setup_aggregator.get(chat_id)
         if old is not None:
@@ -678,6 +688,8 @@ class ApplicationManager:
             raw_texts=[metadata.get("raw_text", "")],
             last_update=now,
             await_entry=True,
+            ladder=not counter,
+            counter=counter,
         )
         self._setup_aggregator.adopt(setup)
         self._drop_opposite_zone(setup)
@@ -686,6 +698,94 @@ class ApplicationManager:
             f"{side.value} {symbol}, awaiting entry"
         )
         self._component_tasks[f"setup_{chat_id}"] = asyncio.create_task(self._watch_setup(setup))
+
+    async def _reversal_opener(
+        self, metadata: dict[str, Any], setup: PendingSetup, side: ParsedAction, symbol: str
+    ) -> None:
+        """Opposite "now" while the chat's setup owns positions (story 20.14). All legs closed:
+        replaced as today (D5). Under the minimum reversal distance from an open leg: refused.
+        At or beyond it, on a hedging account: the open trade is held (break-even, invalidation
+        still managed) and a one-order, half-risk counter-trade waits for its entry."""
+        chat_id = setup.chat_id
+        legs = await self._open_legs(setup)
+        if not legs:
+            self._start_awaiting_entry(metadata, side, symbol)
+            return
+        price = None
+        if self.mt5_connection_manager is not None:
+            price = await self.mt5_connection_manager.get_current_price(symbol)
+        if price is None:
+            self.logger.warning(
+                f"Reversal refused chat={chat_id} {side.value}: live price unavailable"
+            )
+            return
+        far, gap = self._reversal_gap(legs, Decimal(str(price)), setup)
+        if not far:
+            self.logger.info(f"Reversal refused chat={chat_id} {side.value}: {gap}")
+            return
+        try:
+            account = await self.mt5_connection_manager.get_account_info()
+        except Exception as exc:
+            self.logger.warning(f"Account info unavailable: {exc}")
+            account = None
+        margin_mode = getattr(account, "margin_mode", None)
+        if margin_mode != MARGIN_MODE_RETAIL_HEDGING:
+            self.logger.warning(
+                f"Reversal refused chat={chat_id} {side.value}: account margin mode "
+                f"{margin_mode} is not hedging, an opposite order would net the open trade"
+            )
+            return
+        self._setup_aggregator.hold(setup)
+        setup.armed = setup.fire_now = False
+        task = self._component_tasks.pop(f"setup_{chat_id}", None)
+        if task is not None:  # the held watcher keeps a strong reference
+            self._component_tasks[f"setup_held_{chat_id}_{setup.message_id}"] = task
+        self.logger.info(
+            f"Reversal accepted chat={chat_id} {side.value} counter-trade ({gap}); "
+            f"{setup.action.value} tickets {[p.mt5_ticket for p in legs]} kept under management, "
+            "author's level changes now go to the counter-trade"
+        )
+        self._start_awaiting_entry(metadata, side, symbol, counter=True)
+
+    def _reversal_gap(
+        self, legs: list[Any], price: Decimal, held: PendingSetup
+    ) -> tuple[bool, str]:
+        """(far enough, description) of `price` against the nearest open leg of `held`.
+        No policy value -> never far enough (refused)."""
+        minimum = symbol_policy.get_min_reversal_distance(held.symbol)
+        nearest = min(legs, key=lambda leg: abs(price - Decimal(str(leg.open_price))))
+        distance = abs(price - Decimal(str(nearest.open_price)))
+        gap = (
+            f"market {price} is {distance} from open {held.action.value} entry "
+            f"{nearest.open_price} (minimum {minimum})"
+        )
+        return minimum is not None and distance >= minimum, gap
+
+    async def _counter_too_close(self, setup: PendingSetup, price: Decimal) -> bool:
+        """Counter-trade fire price checked again against the held open legs (story 20.14 rule 4)."""
+        for held in self._setup_aggregator.held(setup.chat_id):
+            if held.action == setup.action:
+                continue
+            legs = await self._open_legs(held)
+            if not legs:
+                continue
+            far, gap = self._reversal_gap(legs, price, held)
+            if far:
+                continue
+            if not setup.counter_wait_logged:
+                setup.counter_wait_logged = True
+                self.logger.info(
+                    f"Counter-trade waiting chat={setup.chat_id} {setup.action.value}: {gap}"
+                )
+            return True
+        return False
+
+    async def _open_legs(self, setup: PendingSetup) -> list[Any]:
+        """Positions of `setup` still open in MT5; an unreadable one counts as open (fail closed)."""
+        if self.position_manager is None:
+            return list(setup.positions)
+        reasons = await self._close_reasons(setup)
+        return [p for p, reason in zip(setup.positions, reasons) if reason is None]
 
     def _reopen_awaiting_entry(self, setup: PendingSetup, raw_text: str) -> None:
         """Same-side "sell gold now" after a fill: one more order, at the entry the author gives next (D4)."""
@@ -1127,7 +1227,7 @@ class ApplicationManager:
     async def _watch_setup(self, setup: PendingSetup) -> None:
         """Poll live price until the setup fires, expires, or is replaced/cancelled."""
         try:
-            while self._setup_aggregator.get(setup.chat_id) is setup:
+            while self._setup_aggregator.is_watched(setup):
                 now = datetime.now(UTC)
                 all_closed = bool(setup.positions) and await self._track_setup_legs(setup)
                 if setup.first_fill_at and now - setup.first_fill_at > timedelta(
@@ -1255,11 +1355,17 @@ class ApplicationManager:
             better = setup.entry_gap(price)
             if better is None:
                 return False
+            if setup.counter and await self._counter_too_close(setup, price):
+                return False
             levels = setup.fire_levels(price, index)
             if levels is None:
                 self._disarm_or_drop(setup, f"invalidated at price {price}")
                 return False
-            signal = setup.to_signal(entry=price, sl=levels[0], tp=levels[1])
+            tp = levels[1]
+            counter_tp = symbol_policy.get_counter_tp_distance(setup.symbol)
+            if tp is None and setup.counter and counter_tp is not None:
+                tp = price - counter_tp if setup.action == ParsedAction.SELL else price + counter_tp
+            signal = setup.to_signal(entry=price, sl=levels[0], tp=tp)
             self.logger.info(
                 f"Setup firing chat={setup.chat_id} {setup.action.value} price {price} vs entry "
                 f"{setup.legs()[0]} ({f'better by {better}' if better > 0 else 'close'})"
@@ -1293,6 +1399,8 @@ class ApplicationManager:
         )
         # Blind first leg: half the risk; remaining legs share the other half
         divisor = (2 if k == 0 else 2 * (legs - 1)) if blind else legs
+        if setup.counter:
+            divisor = round(divisor / COUNTER_TRADE_RISK_SHARE)
         volume = await self._order_volume(signal, divisor)
         position = await self._handle_parsed_signal(
             signal, volume=volume, allow_reuse=bool(setup.positions)
@@ -1351,15 +1459,7 @@ class ApplicationManager:
         """TP1 hit -> SL to break-even on open legs + stop unfilled legs. Returns True if all legs closed."""
         if self.position_manager is None:
             return False
-        reasons = []
-        for position in setup.positions:
-            try:
-                reasons.append(await self.position_manager.get_close_reason(position.mt5_ticket))
-            except Exception as exc:
-                self.logger.warning(
-                    f"Close-reason check failed for ticket {position.mt5_ticket}: {exc}"
-                )
-                reasons.append(None)
+        reasons = await self._close_reasons(setup)
         if all(reason is not None for reason in reasons):
             return True
         open_legs = [p for p, reason in zip(setup.positions, reasons) if reason is None]
@@ -1397,6 +1497,19 @@ class ApplicationManager:
             f"TP1 hit chat={setup.chat_id}: open legs moved to break-even, unfilled legs cancelled"
         )
         return False
+
+    async def _close_reasons(self, setup: PendingSetup) -> list[str | None]:
+        """MT5 close reason per leg ("tp", "sl", ...), None while open or unreadable."""
+        reasons: list[str | None] = []
+        for position in setup.positions:
+            try:
+                reasons.append(await self.position_manager.get_close_reason(position.mt5_ticket))
+            except Exception as exc:
+                self.logger.warning(
+                    f"Close-reason check failed for ticket {position.mt5_ticket}: {exc}"
+                )
+                reasons.append(None)
+        return reasons
 
     def _record_retry_failure(self, setup: PendingSetup, kind: str, ticket: int, what: str) -> None:
         """Count a failed break-even/close attempt; one ERROR log when a ticket keeps failing."""

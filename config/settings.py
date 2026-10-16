@@ -72,6 +72,14 @@ class Settings:
         # post's own stop is tighter
         self.gold_min_sl_distance: Decimal = Decimal(os.getenv("GOLD_MIN_SL_DISTANCE", "2.0"))
         self.gold_entry_tolerance: Decimal = Decimal(os.getenv("GOLD_ENTRY_TOLERANCE", "1.0"))
+        # Opposite "now" while a trade is open: refused closer than this to its entry (30.0 =
+        # 300 pips); at or beyond it, a counter-trade with this default TP (10.0 = 100 pips)
+        self.gold_min_reversal_distance: Decimal = Decimal(
+            os.getenv("GOLD_MIN_REVERSAL_DISTANCE", "30.0")
+        )
+        self.gold_counter_tp_distance: Decimal = Decimal(
+            os.getenv("GOLD_COUNTER_TP_DISTANCE", "10.0")
+        )
         # Zone rejection: deepest sweep beyond the zone edge still counted as liquidity grab,
         # and SL buffer beyond the sweep extreme (price units)
         self.gold_max_sweep: Decimal = Decimal(os.getenv("GOLD_MAX_SWEEP", "3.0"))

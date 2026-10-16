@@ -241,6 +241,8 @@ Found by the review re-run on 2026-10-15 (review section 7), before 19.2:
 - [ ] 20.14 Opposite "buy/sell gold now" while a trade is open (user rule, replaces D5 for setups with open legs): under
       300 pips from the open entry → refused, open trade untouched; 300 pips or more → one counter-trade at half risk,
       default TP 100 pips, open trade keeps break-even and invalidation. Hedging accounts only.
+- [ ] 20.15 Same 300-pip reversal rule for opposite signals that come with a price (`BUY GOLD 4118 SL 4108 TP 4128`, complete single-TP
+      signals on the instant path); today they replace the setup or open without the rule (20.14 R5, user 2026-10-16). Story not drafted yet.
 Later steps: F25 (positions never marked closed) → step 6, F26 (one leg updated) → step 13, F29 (filling mode,
 magic) → step 17/18, F24 (no per-chat ordering) → story 19.8, F41 (partial fill volume) → step 6,
 F40 (author's profit-lock SL ignored) → step 11/13,

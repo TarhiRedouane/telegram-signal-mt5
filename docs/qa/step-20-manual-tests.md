@@ -17,7 +17,7 @@ Run them on the **demo robot terminal** only (memory "Broker instances": live MT
 | T8 | `cli.py stop` never kills another program | 20.6 | Optional | Done |
 | T9 | Telegram polling survives a network cut | 20.8 | Optional | Done |
 | T10 | New French signal is not a follow-up | 20.1 | Optional | Done |
-| T11 | Opposite "now" during an open trade | 20.14 | **After 20.14 is built** (AC 16) | Draft |
+| T11 | Opposite "now" during an open trade | 20.14 | **After 20.14 is built** (AC 18) | Approved |
 
 No manual check needed: 20.3 (chat-scoped IDs, unit-tested); 20.10 (demo run already recorded 2026-10-15, ticket 55167224).
 
@@ -163,7 +163,7 @@ Holds an exclusive lock on the instance DB for 60 s, so the bot's writes fail wi
 
 ## T11 – Opposite "now" during an open trade (20.14, after it is built)
 
-Needs a **hedging** account. Steps from story 20.14 AC 16; re-read the story once built, the final log lines will be in its Dev Agent Record.
+Needs a **hedging** account. Steps from story 20.14 AC 18; re-read the story once built, the final log lines will be in its Dev Agent Record.
 
 | # | Action | Expected |
 |---|---|---|

@@ -118,6 +118,18 @@ class SymbolPolicy:
             return settings.gold_min_sl_distance
         return None
 
+    def get_min_reversal_distance(self, symbol: str) -> Decimal | None:
+        """Return how far the market must be from an open trade's entry for an opposite "now"."""
+        if self.canonicalize_symbol(symbol) in {"GOLD", "XAUUSD"}:
+            return settings.gold_min_reversal_distance
+        return None
+
+    def get_counter_tp_distance(self, symbol: str) -> Decimal | None:
+        """Return the counter-trade's TP distance (price units) when the author gives none."""
+        if self.canonicalize_symbol(symbol) in {"GOLD", "XAUUSD"}:
+            return settings.gold_counter_tp_distance
+        return None
+
     def get_entry_tolerance(self, symbol: str) -> Decimal | None:
         """Return price tolerance around a setup entry zone."""
         if self.canonicalize_symbol(symbol) in {"GOLD", "XAUUSD"}:
