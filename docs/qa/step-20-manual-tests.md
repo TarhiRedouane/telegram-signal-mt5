@@ -7,8 +7,8 @@ Run them on the **demo robot terminal** only (memory "Broker instances": live MT
 
 | # | Test | Story | Why | Status of the story |
 |---|---|---|---|---|
-| T1 | Result posts never start a setup | 20.13 | **Required** (AC 12), blocks Done | Ready for Review |
-| T2 | Setup leg waits when too close to the SL | 20.12 | **Required** (AC 15), blocks Done | Ready for Review |
+| T1 | Result posts never start a setup | 20.13 | Waived by user 2026-10-16; still worth a run | Done |
+| T2 | Setup leg waits when too close to the SL | 20.12 | Waived by user 2026-10-16; still worth a run | Done |
 | T3 | Single signal sized on live price, SL moved | 20.7 | Recommended | Done |
 | T4 | Fill price stored as `open_price` | 20.4 | Recommended (free, runs with T1-T3) | Done |
 | T5 | Break-even retried after a refused modify | 20.2 | Recommended before live | Done |
@@ -181,4 +181,4 @@ Copy the app.log lines into the story's Dev Agent Record (or send them to Dev/QA
 
 | Date | Test | Broker | Result | Tickets | Notes |
 |---|---|---|---|---|---|
-| | | | | | |
+| 2026-10-16 | T1, T2 | — | Waived | — | User closed 20.12 / 20.13 without the demo run; unit tests + QA review only |
